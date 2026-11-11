@@ -176,28 +176,28 @@ pub fn stat_bar(ui: &mut Ui, g: Glyph, label: &str, frac: f32, col: Color32, wid
     let pulse = if low { 0.5 + 0.5 * (t * 6.0).sin() } else { 0.0 };
     let p = ui.painter();
     let track = Rect::from_min_max(egui::pos2(rect.left() + 12.0, rect.top() + 3.0), egui::pos2(rect.right(), rect.bottom() - 3.0));
-    p.rect_filled(track, 6.0, Color32::from_rgb(18, 14, 11));
+    p.rect_filled(track, 0.0, Color32::from_rgb(18, 14, 11));
     let fill_col = if low { mix(col, Color32::from_rgb(235, 60, 50), pulse) } else { col };
     if frac > 0.0 {
         let inner = track.shrink(1.5);
         let fw = (inner.width() * frac).max(inner.height());
         let fr = Rect::from_min_size(inner.min, egui::vec2(fw, inner.height()));
-        p.rect_filled(fr, 5.0, fill_col.gamma_multiply(0.82));
+        p.rect_filled(fr, 0.0, fill_col.gamma_multiply(0.82));
         // lit upper half and a darker lower edge give the bar some body
         let top = Rect::from_min_size(fr.min, egui::vec2(fr.width(), fr.height() * 0.5));
-        p.rect_filled(top, 5.0, Color32::from_white_alpha(46));
-        p.rect_filled(Rect::from_min_max(egui::pos2(fr.left(), fr.bottom() - 2.0), fr.max), 2.0, Color32::from_black_alpha(55));
+        p.rect_filled(top, 0.0, Color32::from_white_alpha(46));
+        p.rect_filled(Rect::from_min_max(egui::pos2(fr.left(), fr.bottom() - 2.0), fr.max), 0.0, Color32::from_black_alpha(55));
     }
     for k in 1..4 {
         let x = track.left() + track.width() * k as f32 / 4.0;
         p.line_segment([egui::pos2(x, track.top() + 3.0), egui::pos2(x, track.bottom() - 3.0)], Stroke::new(1.0, Color32::from_black_alpha(70)));
     }
     let edge = if low { mix(Color32::from_rgb(90, 70, 50), Color32::from_rgb(240, 70, 60), pulse) } else { Color32::from_rgb(96, 78, 54) };
-    p.rect_stroke(track, 6.0, Stroke::new(1.2, edge), StrokeKind::Inside);
+    p.rect_stroke(track, 0.0, Stroke::new(1.2, edge), StrokeKind::Inside);
     if !label.is_empty() {
         let at = egui::pos2(track.left() + 20.0, track.center().y);
-        p.text(at + egui::vec2(1.0, 1.0), Align2::LEFT_CENTER, label, FontId::proportional(12.5), Color32::from_black_alpha(190));
-        p.text(at, Align2::LEFT_CENTER, label, FontId::proportional(12.5), Color32::from_rgb(246, 238, 222));
+        p.text(at + egui::vec2(1.0, 1.0), Align2::LEFT_CENTER, label, FontId::proportional(22.0), Color32::from_black_alpha(190));
+        p.text(at, Align2::LEFT_CENTER, label, FontId::proportional(22.0), Color32::from_rgb(246, 238, 222));
     }
     badge(p, egui::pos2(rect.left() + 11.0, rect.center().y), 10.5, g, if low { mix(col, Color32::from_rgb(255, 90, 80), pulse) } else { col });
     // the game redraws every frame, so the pulse needs no repaint request of its own
@@ -217,9 +217,9 @@ pub fn icon_only(ui: &mut Ui, g: Glyph, name: &str, key: Option<&str>, selected:
 }
 
 pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selected: bool, enabled: bool, tint: Color32) -> Response {
-    let font = FontId::proportional(15.0);
+    let font = FontId::proportional(22.0);
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, Color32::WHITE);
-    let key_galley = key.map(|k| ui.painter().layout_no_wrap(k.to_string(), FontId::proportional(11.5), Color32::WHITE));
+    let key_galley = key.map(|k| ui.painter().layout_no_wrap(k.to_string(), FontId::proportional(11.0), Color32::WHITE));
     let key_w = key_galley.as_ref().map_or(0.0, |k| k.size().x + 12.0);
     let w = 12.0 + 20.0 + 6.0 + galley.size().x + if key.is_some() { 8.0 + key_w } else { 0.0 } + 12.0;
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 36.0), if enabled { Sense::click() } else { Sense::hover() });
@@ -243,19 +243,19 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
     };
     let alpha = if enabled { 1.0 } else { 0.4 };
     let r = rect.shrink2(egui::vec2(0.0, 1.0));
-    p.rect_filled(r, 9.0, fill.gamma_multiply(alpha));
+    p.rect_filled(r, 0.0, fill.gamma_multiply(alpha));
     // a bright top lip and a dark base: the button reads as a raised key
-    p.rect_filled(Rect::from_min_size(r.min + egui::vec2(3.0, 1.0), egui::vec2(r.width() - 6.0, 2.0)), 1.0, Color32::from_white_alpha(if selected { 70 } else { 34 }));
+    p.rect_filled(Rect::from_min_size(r.min + egui::vec2(3.0, 1.0), egui::vec2(r.width() - 6.0, 2.0)), 0.0, Color32::from_white_alpha(if selected { 70 } else { 34 }));
     let stroke = if selected { Color32::from_rgb(244, 208, 120) } else if hovered { Color32::from_rgb(170, 138, 90) } else { Color32::from_rgb(98, 80, 56) };
-    p.rect_stroke(r, 9.0, Stroke::new(if selected { 1.8 } else { 1.2 }, stroke.gamma_multiply(alpha)), StrokeKind::Inside);
+    p.rect_stroke(r, 0.0, Stroke::new(if selected { 1.8 } else { 1.2 }, stroke.gamma_multiply(alpha)), StrokeKind::Inside);
     let icon_c = egui::pos2(r.left() + 12.0 + 10.0, r.center().y + if held { 1.0 } else { 0.0 });
     glyph(p, icon_c, 19.0, g, tint.gamma_multiply(alpha));
     let tx = icon_c.x + 16.0;
     p.galley(egui::pos2(tx, r.center().y - galley.size().y / 2.0), galley.clone(), Color32::from_rgb(244, 234, 214).gamma_multiply(alpha));
     if let Some(kg) = key_galley {
         let kr = Rect::from_min_size(egui::pos2(tx + galley.size().x + 8.0, r.center().y - 9.0), egui::vec2(kg.size().x + 10.0, 18.0));
-        p.rect_filled(kr, 5.0, Color32::from_black_alpha(120));
-        p.rect_stroke(kr, 5.0, Stroke::new(1.0, Color32::from_rgb(120, 100, 72).gamma_multiply(alpha)), StrokeKind::Inside);
+        p.rect_filled(kr, 0.0, Color32::from_black_alpha(120));
+        p.rect_stroke(kr, 0.0, Stroke::new(1.0, Color32::from_rgb(120, 100, 72).gamma_multiply(alpha)), StrokeKind::Inside);
         p.galley(kr.center() - kg.size() / 2.0, kg, Color32::from_rgb(214, 198, 168).gamma_multiply(alpha));
     }
     resp
@@ -263,11 +263,11 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
 
 /// A small rounded tag, for discoveries and states.
 pub fn chip(ui: &mut Ui, text: &str, fill: Color32, ink: Color32) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(12.0), ink);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(22.0), ink);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + egui::vec2(14.0, 6.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 8.0, fill);
-    p.rect_stroke(rect, 8.0, Stroke::new(1.0, ink.gamma_multiply(0.45)), StrokeKind::Inside);
+    p.rect_filled(rect, 0.0, fill);
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0, ink.gamma_multiply(0.45)), StrokeKind::Inside);
     p.galley(rect.center() - galley.size() / 2.0, galley, ink);
     resp
 }
@@ -297,6 +297,96 @@ pub fn heading(ui: &mut Ui, g: Glyph, text: &str, col: Color32) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::hover());
         badge(ui.painter(), rect.center(), 10.0, g, col);
-        ui.label(egui::RichText::new(text).size(17.0).strong());
+        ui.label(egui::RichText::new(text).size(22.0).strong());
     });
+}
+
+/// 8x8 pixel drawings of the vitals, `#` lit.
+fn vital_sprite(g: Glyph) -> [&'static str; 8] {
+    match g {
+        Glyph::Heart => [".##.##..", "#######.", "#######.", "#######.", ".#####..", "..###...", "...#....", "........"],
+        Glyph::Food => ["....###.", "...#####", "...#####", "..#####.", ".###....", "###.....", "##......", "........"],
+        Glyph::Drop => ["...#....", "...#....", "..###...", ".#####..", ".#####..", ".#####..", "..###...", "........"],
+        Glyph::Flame => ["...#....", "..##....", "..###.#.", ".#####..", "#######.", "#######.", ".#####..", "..###..."],
+        // breath: a bubble, with a pale glint
+        _ => ["..###...", ".#####..", "#######.", "#######.", "#######.", ".#####..", "..###...", "........"],
+    }
+}
+
+/// 8x8 pixel drawings of the food groups: grain, meat, fruit and greens.
+fn group_sprite(i: usize) -> [&'static str; 8] {
+    match i {
+        0 => ["...#....", "..#.#...", "...#.#..", "..#.#...", "...#.#..", "....#...", "....#...", "...#...."],
+        1 => ["....###.", "...#####", "...#####", "..#####.", ".###....", "###.....", "##......", "........"],
+        _ => ["....#...", "...#....", ".##.##..", "#######.", "#######.", "#######.", ".#####..", "..#.#..."],
+    }
+}
+
+/// A food group: its little sprite, then five blocks filled to how well fed on it (green once it counts).
+pub fn group_meter(ui: &mut Ui, i: usize, frac: f32, ok: bool) -> Response {
+    let px = 2.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(8.0 * px + 4.0 + 5.0 * 7.0 * px, 8.0 * px + 2.0), Sense::hover());
+    let p = ui.painter();
+    let col = [Color32::from_rgb(222, 186, 92), Color32::from_rgb(196, 92, 72), Color32::from_rgb(150, 200, 90)][i.min(2)];
+    let o = rect.min + egui::vec2(0.0, 1.0);
+    for (y, row) in group_sprite(i).iter().enumerate() {
+        for (x, c) in row.chars().enumerate() {
+            if c == '#' {
+                let r = Rect::from_min_size(o + egui::vec2(x as f32 * px, y as f32 * px), egui::vec2(px, px));
+                p.rect_filled(r.translate(egui::vec2(px, px)), 0.0, Color32::from_rgb(28, 20, 16));
+                p.rect_filled(r, 0.0, col);
+            }
+        }
+    }
+    let fill = if ok { Color32::from_rgb(120, 190, 100) } else { Color32::from_rgb(214, 130, 70) };
+    for k in 0..5 {
+        let r = Rect::from_min_size(o + egui::vec2(8.0 * px + 4.0 + k as f32 * 7.0 * px, 2.0 * px), egui::vec2(6.0 * px, 4.0 * px));
+        p.rect_filled(r.translate(egui::vec2(px, px)), 0.0, Color32::from_rgb(28, 20, 16));
+        let on = frac * 5.0 > k as f32 + 0.5;
+        p.rect_filled(r, 0.0, if on { fill } else { Color32::from_rgb(70, 56, 46) });
+    }
+    resp
+}
+
+/// A vital as a row of ten pixel icons, Minecraft-like: whole, half or empty, shaking a little when it runs low.
+/// Each icon pixel is `px` screen pixels.
+pub fn vital_icons(ui: &mut Ui, g: Glyph, frac: f32, col: Color32, px: f32) -> Response {
+    let frac = frac.clamp(0.0, 1.0);
+    let icon = 8.0 * px;
+    let gap = px;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(10.0 * (icon + gap), icon + 2.0 * px), Sense::hover());
+    let p = ui.painter();
+    let t = ui.input(|i| i.time) as f32;
+    let low = frac < 0.25;
+    let sprite = vital_sprite(g);
+    let dark = Color32::from_rgb(28, 20, 16);
+    let hollow = Color32::from_rgb(70, 56, 46);
+    let shine = Color32::from_rgba_unmultiplied(255, 255, 255, 90);
+    for k in 0..10 {
+        let fill = (frac * 10.0 - k as f32).clamp(0.0, 1.0);
+        let shown = if fill >= 0.75 { 2 } else if fill >= 0.25 { 1 } else { 0 };
+        // low: each icon jitters by a pixel now and then
+        let jy = if low && ((t * 9.0 + k as f32 * 1.7).sin() > 0.6) { -px } else { 0.0 };
+        let o = egui::pos2(rect.left() + k as f32 * (icon + gap), rect.top() + px + jy);
+        for (y, row) in sprite.iter().enumerate() {
+            for (x, c) in row.chars().enumerate() {
+                if c != '#' {
+                    continue;
+                }
+                let r = Rect::from_min_size(o + egui::vec2(x as f32 * px, y as f32 * px), egui::vec2(px, px));
+                // a dark outline pixel under every lit one, a pixel down and right: the icons stand off the panel
+                p.rect_filled(r.translate(egui::vec2(px, px)), 0.0, dark);
+                let lit = match shown {
+                    2 => true,
+                    1 => x < 4,
+                    _ => false,
+                };
+                p.rect_filled(r, 0.0, if lit { col } else { hollow });
+                if lit && y <= 2 && x <= 2 {
+                    p.rect_filled(r, 0.0, shine);
+                }
+            }
+        }
+    }
+    resp
 }

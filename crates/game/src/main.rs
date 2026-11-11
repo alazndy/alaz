@@ -1,3 +1,6 @@
+// On Windows the game is a window, not a console program (no empty terminal behind it).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use alaz_render::{Camera, Ghost, Renderer};
 use alaz_sim::time::TICKS_PER_SECOND;
 use alaz_sim::world::{dist2, BUILD_RADIUS_MM};
@@ -1549,6 +1552,10 @@ impl App {
         if let Some(a) = w.agents.iter().filter(|a| a.id != self.me && a.health > 0).find(|a| dist2(a.x, a.y, x, y) <= 700 * 700) {
             return Some(hud::kind_name(a.kind).to_string());
         }
+        let (tx, ty) = (x.div_euclid(1000) as i32, y.div_euclid(1000) as i32);
+        if w.map.terrain(tx, ty) == Some(alaz_sim::Terrain::Water) && alaz_sim::map::school_near(&w.map, tx, ty, 3).is_some() {
+            return Some("Balık sürüsü  ·  sağ tık: balık tut (olta ya da mızrak)".to_string());
+        }
         if let Some(d) = w.wild.iter().find(|d| dist2(d.x, d.y, x, y) <= 900 * 900) {
             let name = match d.species {
                 alaz_sim::WildSpecies::Dog => "Yabani köpek",
@@ -1765,6 +1772,16 @@ impl App {
         }
         if let Some(node) = picked {
             self.issue(CommandKind::Gather { node });
+            return;
+        }
+        // water with fish in it: cast there
+        let (tx, ty) = (p.x.floor() as i32, p.z.floor() as i32);
+        if self.world.map.terrain(tx, ty) == Some(alaz_sim::Terrain::Water) {
+            if alaz_sim::map::school_near(&self.world.map, tx, ty, 3).is_some() {
+                self.issue(CommandKind::Fish { tx, ty });
+            } else {
+                self.say("Burada balık yok. Sudaki koyu gölgeleri ara.");
+            }
         }
     }
 }

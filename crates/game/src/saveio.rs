@@ -1,5 +1,5 @@
 //! Disk side of saving. The byte format lives in `alaz_sim::save`.
-//! Location: `$ALAZ_SAVE_DIR`, else `$XDG_DATA_HOME/alaz`, else `~/.local/share/alaz`.
+//! Location: `$ALAZ_SAVE_DIR`, else on Windows `%APPDATA%\ALAZ`, else `$XDG_DATA_HOME/alaz`, else `~/.local/share/alaz`.
 
 use alaz_sim::World;
 use std::fs;
@@ -21,6 +21,12 @@ pub fn slot() -> u8 {
 fn base_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("ALAZ_SAVE_DIR") {
         return PathBuf::from(d);
+    }
+    // Windows: %APPDATA%\ALAZ
+    if cfg!(windows) {
+        if let Some(d) = std::env::var_os("APPDATA") {
+            return PathBuf::from(d).join("ALAZ");
+        }
     }
     if let Some(d) = std::env::var_os("XDG_DATA_HOME") {
         return PathBuf::from(d).join("alaz");

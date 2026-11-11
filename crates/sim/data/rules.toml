@@ -1620,3 +1620,35 @@ outputs = [{ item = "crucible", n = 1 }, { item = "mold_axe", n = 1 }]
 ticks = 21600
 discovery = "casting"
 heat = 900
+
+# --- Fishing: a rod (or a spear) by a school of fish; the catch cooked over the fire. ---
+[[recipe]]
+id = "fishing_rod"
+name = "Olta yap"
+inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 2 }, { item = "fiber", n = 3 }]
+outputs = [{ item = "fishing_rod", n = 1 }]
+ticks = 0
+discovery = "fishing"
+fine_bonus = 0
+steps = [
+  { label = "Lifi bük, ip yap", kind = "tension", strikes = 1, window = 14, period = 120, tools = [] },
+  { label = "İğneyi bağla", kind = "fit", strikes = 1, window = 20, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "cook_fish"
+name = "Balık pişir"
+station = "campfire"
+inputs = [{ item = "raw_fish", n = 1 }]
+outputs = [{ item = "cooked_fish", n = 1 }]
+ticks = 240
+discovery = "cooking"
+heat = 150
+
+[[perish]]
+item = "raw_fish"
+per_day = 650
+
+[[perish]]
+item = "cooked_fish"
+per_day = 280

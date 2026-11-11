@@ -355,6 +355,17 @@ impl Script {
             "sprint" => return vec![cmd(CommandKind::SetSprint { on: arg(1) != "off" })],
             "jump" => return vec![cmd(CommandKind::Jump)],
             "prospect" => return vec![cmd(CommandKind::Prospect)],
+            "fish" => {
+                // the nearest school within 60 m, fished from where it lies
+                let (tx, ty) = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
+                match crate::map::school_near(&w.map, tx, ty, 60) {
+                    Some((sx, sy)) => {
+                        self.wait = Wait::Until(w.tick + (num(1, 30) * 60) as u64);
+                        return vec![cmd(CommandKind::Fish { tx: sx, ty: sy })];
+                    }
+                    None => self.fail(w, "fish: no school within 60 m"),
+                }
+            }
             "drop" => match item_named(arg(1)) {
                 Some(item) => return vec![cmd(CommandKind::Drop { item, n: num(2, 1) as u16 })],
                 None => self.fail(w, format!("drop: unknown item {}", arg(1))),

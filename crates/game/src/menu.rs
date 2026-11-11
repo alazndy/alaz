@@ -44,8 +44,8 @@ fn segmented(ui: &mut Ui, id: &str, names: &[&str], idx: &mut usize) {
     let (sr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
     let seg_w = sr.width() / names.len() as f32;
     let slide = ui.ctx().animate_value_with_time(egui::Id::NULL.with((id, "slide")), *idx as f32, 0.18);
-    ui.painter().rect_filled(sr, 2.0, Color32::from_black_alpha(110));
-    ui.painter().rect_filled(Rect::from_min_size(pos2(sr.left() + slide * seg_w, sr.top()), vec2(seg_w, sr.height())).shrink(2.0), 2.0, Color32::from_rgb(150, 84, 34));
+    ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(110));
+    ui.painter().rect_filled(Rect::from_min_size(pos2(sr.left() + slide * seg_w, sr.top()), vec2(seg_w, sr.height())).shrink(2.0), 0.0, Color32::from_rgb(150, 84, 34));
     for (k, name) in names.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(sr.left() + k as f32 * seg_w, sr.top()), vec2(seg_w, sr.height()));
         let resp = ui.interact(cell, egui::Id::NULL.with((id, k)), Sense::click());
@@ -54,12 +54,21 @@ fn segmented(ui: &mut Ui, id: &str, names: &[&str], idx: &mut usize) {
             *idx = k;
         }
         let on = *idx == k;
-        ui.painter().text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(13.0), if on { Color32::WHITE } else if resp.hovered() { INK } else { Color32::from_rgb(170, 154, 126) });
+        ui.painter().text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(22.0), if on { Color32::WHITE } else if resp.hovered() { INK } else { Color32::from_rgb(170, 154, 126) });
     }
-    ui.painter().rect_stroke(sr, 2.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+    ui.painter().rect_stroke(sr, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
 }
 
-const SIZES: [(&str, i32); 6] = [("Küçük 128", 128), ("Orta 256", 256), ("Büyük 1024", 1024), ("Dev 4096", 4096), ("Devasa 32768", 32768), ("Sınırsız", alaz_sim::map::MAX_MAP_SIDE)];
+/// World sizes: the short name on the selector, the side in metres, and a line on what that world is like.
+const SIZES: [(&str, i32); 6] = [("128 m", 128), ("256 m", 256), ("1 km", 1024), ("4 km", 4096), ("32 km", 32768), ("262 km", alaz_sim::map::MAX_MAP_SIDE)];
+const SIZE_NOTES: [&str; 6] = [
+    "Küçük: hızlı bir deneme için.",
+    "Orta: bir vadi, bir kıyı.",
+    "Büyük: nehirler, göller, dağlar.",
+    "Dev: bir ülke kadar.",
+    "Devasa: kıtalar ve okyanuslar, yürüdükçe açılır.",
+    "Sınırsız: baştan başa yürümek iki gün sürer.",
+];
 
 impl Menu {
     pub fn new(paused: bool) -> Menu {
@@ -372,32 +381,32 @@ fn button(ui: &mut Ui, text: &str, size: egui::Vec2, look: Look) -> egui::Respon
             if band.width() > 0.0 {
                 p.rect_filled(band, 0.0, Color32::from_white_alpha(30));
             }
-            p.rect_stroke(r, 2.0, Stroke::new(1.5, GOLD), StrokeKind::Inside);
+            p.rect_stroke(r, 0.0, Stroke::new(1.5, GOLD), StrokeKind::Inside);
             let shift = hov * 6.0;
-            p.text(pos2(r.left() + 16.0 + shift, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(17.0), Color32::from_rgb(255, 244, 220));
+            p.text(pos2(r.left() + 16.0 + shift, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(22.0), Color32::from_rgb(255, 244, 220));
             if r.width() > 140.0 {
                 ui_art::glyph(p, pos2(r.right() - 20.0 - (1.0 - hov) * 4.0, r.center().y), 16.0, Glyph::Flame, Color32::from_rgb(255, 226, 150));
             }
         }
         Look::Plain | Look::Danger => {
             let acc = if look == Look::Danger { Color32::from_rgb(220, 90, 80) } else { EMBER };
-            p.rect_filled(r, 2.0, Color32::from_rgba_unmultiplied(0, 0, 0, 90));
+            p.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 90));
             // the fill grows out of the left edge
             let fw = r.width() * hov;
-            p.rect_filled(Rect::from_min_size(r.min, vec2(fw, r.height())), 2.0, Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 70));
+            p.rect_filled(Rect::from_min_size(r.min, vec2(fw, r.height())), 0.0, Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 70));
             p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, acc.gamma_multiply(0.5 + 0.5 * hov));
-            p.rect_stroke(r, 2.0, Stroke::new(1.0, lerp_c(LINE, acc, hov)), StrokeKind::Inside);
+            p.rect_stroke(r, 0.0, Stroke::new(1.0, lerp_c(LINE, acc, hov)), StrokeKind::Inside);
             let shift = hov * 5.0;
-            p.text(pos2(r.left() + 12.0 + shift, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(15.0), lerp_c(INK, Color32::WHITE, hov));
+            p.text(pos2(r.left() + 12.0 + shift, r.center().y), Align2::LEFT_CENTER, text, FontId::proportional(22.0), lerp_c(INK, Color32::WHITE, hov));
         }
         Look::Cap { waiting } => {
             let pulse = if waiting { 0.5 + 0.5 * (t * 6.0).sin() } else { 0.0 };
             let top = lerp_c(Color32::from_rgb(70, 58, 44), Color32::from_rgb(104, 84, 56), hov.max(pulse));
-            p.rect_filled(r.translate(vec2(0.0, 2.0)), 4.0, Color32::from_rgb(20, 16, 12));
-            p.rect_filled(r, 4.0, top);
-            p.rect_filled(Rect::from_min_size(r.min + vec2(3.0, 1.0), vec2(r.width() - 6.0, 2.0)), 1.0, Color32::from_white_alpha(40));
-            p.rect_stroke(r, 4.0, Stroke::new(1.2, if waiting { GOLD } else { LINE }), StrokeKind::Inside);
-            p.text(r.center(), Align2::CENTER_CENTER, text, FontId::proportional(14.0), if waiting { GOLD } else { INK });
+            p.rect_filled(r.translate(vec2(0.0, 2.0)), 0.0, Color32::from_rgb(20, 16, 12));
+            p.rect_filled(r, 0.0, top);
+            p.rect_filled(Rect::from_min_size(r.min + vec2(3.0, 1.0), vec2(r.width() - 6.0, 2.0)), 0.0, Color32::from_white_alpha(40));
+            p.rect_stroke(r, 0.0, Stroke::new(1.2, if waiting { GOLD } else { LINE }), StrokeKind::Inside);
+            p.text(r.center(), Align2::CENTER_CENTER, text, FontId::proportional(22.0), if waiting { GOLD } else { INK });
         }
     }
     resp
@@ -409,7 +418,7 @@ fn section(ui: &mut Ui, text: &str) {
     let p = ui.painter();
     let c = pos2(rect.left() + 6.0, rect.center().y);
     p.add(Shape::convex_polygon(vec![c + vec2(-5.0, 0.0), c + vec2(0.0, -5.0), c + vec2(5.0, 0.0), c + vec2(0.0, 5.0)], EMBER, Stroke::NONE));
-    let g = p.layout_no_wrap(text.to_uppercase(), FontId::proportional(13.0), GOLD);
+    let g = p.layout_no_wrap(text.to_uppercase(), FontId::proportional(22.0), GOLD);
     let w = g.size().x;
     p.galley(pos2(rect.left() + 18.0, rect.center().y - g.size().y / 2.0), g, GOLD);
     p.line_segment([pos2(rect.left() + 28.0 + w, rect.center().y), pos2(rect.right(), rect.center().y)], Stroke::new(1.0, LINE.gamma_multiply(0.7)));
@@ -421,7 +430,7 @@ fn card(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
         .fill(Color32::from_rgba_unmultiplied(18, 14, 12, 228))
         .stroke(Stroke::new(1.0, LINE.gamma_multiply(0.8)))
         .inner_margin(egui::Margin::symmetric(20, 18))
-        .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 24, spread: 0, color: Color32::from_black_alpha(160) });
+        .shadow(egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) });
     let r = frame
         .show(ui, |ui| {
             ui.set_width(width);
@@ -461,7 +470,7 @@ impl Menu {
         egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
             ui.set_opacity(e);
             card(ui, 470.0, |ui| {
-                ui.label(egui::RichText::new("Tuş atamaları").size(24.0).strong().color(GOLD));
+                ui.label(egui::RichText::new("Tuş atamaları").size(33.0).strong().color(GOLD));
                 ui.label(egui::RichText::new("Bir kutuya tıkla, sonra yeni tuşa bas. Delete: boşalt, Esc: vazgeç.").small().color(Color32::from_rgb(190, 176, 150)));
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height((screen.height() - 220.0).clamp(160.0, 380.0)).show(ui, |ui| {
@@ -526,7 +535,7 @@ impl Menu {
             let mut body = |ui: &mut Ui| {
                 card(ui, 430.0, |ui| {
                     if self.paused {
-                        ui.label(egui::RichText::new("A.L.A.Z").size(28.0).strong().color(GOLD));
+                        ui.label(egui::RichText::new("A.L.A.Z").size(33.0).strong().color(GOLD));
                         ui.label(egui::RichText::new("Duraklatıldı").color(Color32::from_rgb(190, 176, 150)));
                         ui.add_space(8.0);
                     }
@@ -547,8 +556,8 @@ impl Menu {
                         let picked = self.slot == n;
                         let hov = ui.ctx().animate_bool_with_time(resp.id, resp.hovered() || picked, 0.15);
                         let p = ui.painter();
-                        p.rect_filled(rect, 2.0, lerp_c(Color32::from_rgb(26, 21, 17), Color32::from_rgb(48, 36, 24), hov));
-                        p.rect_stroke(rect, 2.0, Stroke::new(if picked { 1.6 } else { 1.0 }, if picked { GOLD } else { lerp_c(LINE, EMBER, hov * 0.6) }), StrokeKind::Inside);
+                        p.rect_filled(rect, 0.0, lerp_c(Color32::from_rgb(26, 21, 17), Color32::from_rgb(48, 36, 24), hov));
+                        p.rect_stroke(rect, 0.0, Stroke::new(if picked { 1.6 } else { 1.0 }, if picked { GOLD } else { lerp_c(LINE, EMBER, hov * 0.6) }), StrokeKind::Inside);
                         if picked {
                             p.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 0.0, GOLD);
                         }
@@ -557,7 +566,7 @@ impl Menu {
                         let full = matches!(self.slots[i], Some(Ok(_)));
                         let hex: Vec<Pos2> = (0..6).map(|k| hc + vec2((k as f32 * 1.0472 + 0.5236).cos(), (k as f32 * 1.0472 + 0.5236).sin()) * 17.0).collect();
                         p.add(Shape::convex_polygon(hex, if full { Color32::from_rgb(120, 62, 28) } else { Color32::from_rgb(22, 18, 14) }, Stroke::new(1.5, if full { EMBER } else { LINE })));
-                        p.text(hc, Align2::CENTER_CENTER, n.to_string(), FontId::proportional(18.0), if full { Color32::from_rgb(255, 226, 170) } else { Color32::from_rgb(140, 124, 100) });
+                        p.text(hc, Align2::CENTER_CENTER, n.to_string(), FontId::proportional(22.0), if full { Color32::from_rgb(255, 226, 170) } else { Color32::from_rgb(140, 124, 100) });
                         let (head, sub, sub_col) = match &self.slots[i] {
                             None => (format!("Yuva {n}"), "Boş, yeni bir hikâye bekliyor".to_string(), Color32::from_rgb(140, 126, 104)),
                             Some(Err(e)) => (format!("Yuva {n}"), format!("Okunamadı: {e}"), Color32::from_rgb(240, 130, 90)),
@@ -567,8 +576,8 @@ impl Menu {
                                 (format!("Yuva {n}"), format!("Gün {day} · {}² · {} oyuncu{tag}", s.map_w, s.players), Color32::from_rgb(200, 186, 156))
                             }
                         };
-                        p.text(pos2(rect.left() + 60.0, rect.center().y - 9.0), Align2::LEFT_CENTER, head, FontId::proportional(16.0), INK);
-                        p.text(pos2(rect.left() + 60.0, rect.center().y + 10.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.5), sub_col);
+                        p.text(pos2(rect.left() + 60.0, rect.center().y - 9.0), Align2::LEFT_CENTER, head, FontId::proportional(22.0), INK);
+                        p.text(pos2(rect.left() + 60.0, rect.center().y + 10.0), Align2::LEFT_CENTER, sub, FontId::proportional(22.0), sub_col);
                         let mut bx = rect.right() - 8.0;
                         if self.slots[i].is_some() {
                             let (label, look, w) = if self.confirm_delete == Some(n) { ("Emin misin?", Look::Danger, 104.0) } else { ("Sil", Look::Danger, 46.0) };
@@ -595,9 +604,9 @@ impl Menu {
                     section(ui, &format!("Yeni dünya · yuva {}", self.slot));
                     // seed: a painted field with the text edit sitting in it
                     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, Color32::from_black_alpha(110));
-                    ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
-                    ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, "TOHUM", FontId::proportional(11.5), Color32::from_rgb(160, 140, 104));
+                    ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(110));
+                    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+                    ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, "TOHUM", FontId::proportional(11.0), Color32::from_rgb(160, 140, 104));
                     let er = Rect::from_min_max(pos2(rect.left() + 64.0, rect.top() + 4.0), pos2(rect.right() - 8.0, rect.bottom() - 4.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(er), |ui| {
                         ui.add_sized(er.size(), egui::TextEdit::singleline(&mut self.seed_text).frame(egui::Frame::NONE).hint_text("boş = rastgele").vertical_align(egui::Align::Center));
@@ -607,8 +616,8 @@ impl Menu {
                     let (sr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
                     let seg_w = sr.width() / SIZES.len() as f32;
                     let slide = ui.ctx().animate_value_with_time(egui::Id::NULL.with("size_slide"), self.size_idx as f32, 0.18);
-                    ui.painter().rect_filled(sr, 2.0, Color32::from_black_alpha(110));
-                    ui.painter().rect_filled(Rect::from_min_size(pos2(sr.left() + slide * seg_w, sr.top()), vec2(seg_w, sr.height())).shrink(2.0), 2.0, Color32::from_rgb(150, 84, 34));
+                    ui.painter().rect_filled(sr, 0.0, Color32::from_black_alpha(110));
+                    ui.painter().rect_filled(Rect::from_min_size(pos2(sr.left() + slide * seg_w, sr.top()), vec2(seg_w, sr.height())).shrink(2.0), 0.0, Color32::from_rgb(150, 84, 34));
                     for (k, (name, _)) in SIZES.iter().enumerate() {
                         let cell = Rect::from_min_size(pos2(sr.left() + k as f32 * seg_w, sr.top()), vec2(seg_w, sr.height()));
                         let resp = ui.interact(cell, egui::Id::NULL.with(("size", k)), Sense::click());
@@ -617,9 +626,10 @@ impl Menu {
                             self.size_idx = k;
                         }
                         let on = self.size_idx == k;
-                        ui.painter().text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(13.0), if on { Color32::WHITE } else if resp.hovered() { INK } else { Color32::from_rgb(170, 154, 126) });
+                        ui.painter().text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(22.0), if on { Color32::WHITE } else if resp.hovered() { INK } else { Color32::from_rgb(170, 154, 126) });
                     }
-                    ui.painter().rect_stroke(sr, 2.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+                    ui.painter().rect_stroke(sr, 0.0, Stroke::new(1.0, LINE), StrokeKind::Inside);
+                    ui.label(egui::RichText::new(SIZE_NOTES[self.size_idx]).color(Color32::from_rgb(170, 154, 126)));
                     ui.add_space(6.0);
                     // difficulty and season length are fixed for the life of the world
                     segmented(ui, "difficulty", &DIFFICULTIES, &mut self.difficulty_idx);
@@ -641,11 +651,11 @@ impl Menu {
                     let on = ui.ctx().animate_bool_with_time(hresp.id.with("sw"), self.hardcore, 0.16);
                     let tr = Rect::from_min_size(pos2(hr.left() + 2.0, hr.center().y - 10.0), vec2(42.0, 20.0));
                     let p = ui.painter();
-                    p.rect_filled(tr, 10.0, lerp_c(Color32::from_rgb(34, 28, 22), Color32::from_rgb(150, 44, 36), on));
-                    p.rect_stroke(tr, 10.0, Stroke::new(1.2, lerp_c(LINE, Color32::from_rgb(240, 90, 70), on)), StrokeKind::Inside);
+                    p.rect_filled(tr, 0.0, lerp_c(Color32::from_rgb(34, 28, 22), Color32::from_rgb(150, 44, 36), on));
+                    p.rect_stroke(tr, 0.0, Stroke::new(1.2, lerp_c(LINE, Color32::from_rgb(240, 90, 70), on)), StrokeKind::Inside);
                     p.circle_filled(pos2(tr.left() + 10.0 + on * 22.0, tr.center().y), 7.5, lerp_c(Color32::from_rgb(190, 176, 150), Color32::WHITE, on));
                     ui_art::glyph(p, pos2(tr.right() + 20.0, hr.center().y), 18.0, Glyph::Skull, lerp_c(Color32::from_rgb(120, 108, 90), Color32::from_rgb(244, 120, 100), on));
-                    p.text(pos2(tr.right() + 38.0, hr.center().y), Align2::LEFT_CENTER, "Hardcore: ölünce dünya silinir", FontId::proportional(14.0), lerp_c(Color32::from_rgb(190, 176, 150), INK, on));
+                    p.text(pos2(tr.right() + 38.0, hr.center().y), Align2::LEFT_CENTER, "Hardcore: ölünce dünya silinir", FontId::proportional(22.0), lerp_c(Color32::from_rgb(190, 176, 150), INK, on));
                     ui.add_space(8.0);
                     let occupied = self.slots[self.slot as usize - 1].is_some();
                     let label = if occupied { "Yeni dünya başlat (yuvanın üstüne yazar)" } else { "Yeni dünya başlat" };

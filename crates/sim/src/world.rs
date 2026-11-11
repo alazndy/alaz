@@ -142,6 +142,8 @@ const WOLF_BITE_RANGE_MM: i64 = 1_400;
 const WOLF_BITE_EVERY: u64 = 150;
 const WOLF_BITE_DAMAGE: i32 = 1_200;
 const WOLF_BITE_BLEED: i32 = 1_800;
+/// One cast of a line or a spear's wait at the water: three seconds.
+const FISH_CAST_TICKS: u32 = 180;
 /// How long a wolf draws off after a bite (6 s): time to run, to the fire or away.
 const WOLF_DRAW_OFF_TICKS: i32 = 360;
 const FIRE_SCARE_MM: i64 = 7_000;
@@ -236,6 +238,8 @@ pub enum Task {
     Split { body: u32, progress: u32 },
     /// Picking up a piece from the ground (a body id).
     Pick { body: u32, progress: u32 },
+    /// Fishing the water at (tx, ty): ticks spent on the current cast.
+    Fish { tx: i32, ty: i32, progress: u32 },
 }
 
 /// Felling a standing tree takes this many rounds of chopping; it gives no wood itself. The wood is in the trunk.
@@ -302,6 +306,8 @@ fn food_groups(k: ItemKind) -> [u16; 3] {
         ItemKind::Herb => [0, 0, 60],
         ItemKind::RawMeat => [0, 200, 0],
         ItemKind::CookedMeat => [0, 350, 0],
+        ItemKind::RawFish => [0, 150, 0],
+        ItemKind::CookedFish => [0, 300, 0],
         ItemKind::Bread => [350, 0, 0],
         ItemKind::Soup => [150, 200, 100],
         _ => [0, 0, 0],
@@ -413,6 +419,8 @@ pub enum Discovery {
     Computing,
     /// Bronze worked: the prospector's pick, hidden deposits, the mine shaft (and later rock oil).
     Geology,
+    /// A spear in hand by the water: fish can be had, with a spear or better with a rod.
+    Fishing,
 }
 
 impl Discovery {
@@ -457,6 +465,8 @@ pub enum Reject {
     Unbalanced,
     /// A mine shaft goes only on a deposit: there is none within 4 m here.
     NoDeposit,
+    /// No fish here: look for a school (dark shapes in the water) and fish next to it.
+    NoFish,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -469,6 +479,8 @@ pub enum Event {
     WorkerReady(AgentKind),
     /// A hard winter killed the crop standing in a field.
     CropFrozen { building: u32 },
+    /// A fish landed.
+    Caught { agent: AgentId },
     /// A prospector read the rock: deposits within about 50 m, and the nearest one's offset in tiles.
     Prospected { agent: AgentId, kinds: Vec<ItemKind>, nearest: Option<(ItemKind, i32, i32)> },
     /// Food in someone's pack went bad (it turned to manure).
@@ -1728,6 +1740,19 @@ impl World {
                     self.events.push(Event::CaveLeft { agent: id, dark: false });
                 }
             }
+            CommandKind::Fish { tx, ty } => {
+                if !human || self.map.terrain(*tx, *ty) != Some(Terrain::Water) {
+                    return;
+                }
+                let inv = &self.agents[idx].inventory;
+                if inv.get(ItemKind::FishingRod) == 0 && inv.get(ItemKind::Spear) == 0 {
+                    return self.reject(id, Reject::NoMaterials);
+                }
+                match crate::map::school_near(&self.map, *tx, *ty, 3) {
+                    Some(_) => self.agents[idx].task = Task::Fish { tx: *tx, ty: *ty, progress: 0 },
+                    None => self.reject(id, Reject::NoFish),
+                }
+            }
             CommandKind::Drink { tx, ty } => {
                 if human && self.map.terrain(*tx, *ty) == Some(Terrain::Water) {
                     self.agents[idx].task = Task::Drink { tx: *tx, ty: *ty };
@@ -1770,6 +1795,8 @@ impl World {
                     ItemKind::Berries => BERRY_FOOD,
                     ItemKind::RawMeat => RAW_MEAT_FOOD,
                     ItemKind::CookedMeat => COOKED_MEAT_FOOD,
+                    ItemKind::RawFish => RAW_MEAT_FOOD * 2 / 3,
+                    ItemKind::CookedFish => COOKED_MEAT_FOOD * 4 / 5,
                     ItemKind::Bread => BREAD_FOOD,
                     ItemKind::Soup => SOUP_FOOD,
                     _ => return,
@@ -1785,7 +1812,9 @@ impl World {
                     match item {
                         // raw meat makes you sick; a hot meal helps you get over it
                         ItemKind::RawMeat => a.sick = a.sick.max(RAW_MEAT_SICK_TICKS),
-                        ItemKind::CookedMeat => a.sick /= 2,
+                        ItemKind::CookedMeat | ItemKind::CookedFish => a.sick /= 2,
+                        // raw fish less so than raw meat
+                        ItemKind::RawFish => a.sick = a.sick.max(RAW_MEAT_SICK_TICKS / 2),
                         _ => {}
                     }
                 }
@@ -2391,6 +2420,28 @@ impl World {
                         }
                     }
                 },
+                Task::Fish { tx, ty, progress } => {
+                    let (wx, wy) = (tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2);
+                    if a.inventory.is_full(a.capacity()) {
+                        events.push(Event::Rejected(a.id, Reject::PackFull));
+                        a.task = Task::Idle;
+                    } else if dist2(a.x, a.y, wx, wy) > 3_500 * 3_500 {
+                        if matches!(advance(a, &mut nav, wx, wy), Step::Blocked) {
+                            a.task = Task::Idle;
+                        }
+                    } else if progress + 1 >= FISH_CAST_TICKS {
+                        // a cast: a rod lands a fish nearly half the time, a spear a quarter
+                        let chance = if a.inventory.get(ItemKind::FishingRod) > 0 { 45 } else { 25 };
+                        let roll = crate::rng::hash2(seed ^ 0xF15C, a.id.0 as i32, (tick / FISH_CAST_TICKS as u64) as i32) % 100;
+                        if roll < chance {
+                            a.inventory.counts[ItemKind::RawFish as usize] += 1;
+                            events.push(Event::Caught { agent: a.id });
+                        }
+                        a.task = Task::Fish { tx, ty, progress: 0 };
+                    } else {
+                        a.task = Task::Fish { tx, ty, progress: progress + 1 };
+                    }
+                }
                 Task::Drink { tx, ty } => {
                     let (wx, wy) = (tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2);
                     let empty_pots = a.inventory.counts[ItemKind::Pot as usize];
@@ -3426,6 +3477,9 @@ impl World {
         }
         if self.knows(Discovery::Bronzework) {
             self.discover(Discovery::Geology);
+        }
+        if self.knows(Discovery::Spear) || n(ItemKind::RawFish) >= 1 {
+            self.discover(Discovery::Fishing);
         }
         if n(ItemKind::CircuitBoard) >= 1 {
             self.discover(Discovery::Computing);

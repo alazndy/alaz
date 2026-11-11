@@ -205,6 +205,12 @@ pub enum ItemKind {
     Oil,
     /// A light pick that reads the rock: what lies beneath, and which way the nearest deposit is; kept.
     ProspectorPick,
+    /// A fish just out of the water: spoils fast, better cooked.
+    RawFish,
+    /// A fish roasted over the fire.
+    CookedFish,
+    /// A branch, a line of twisted fibre and a hook of sharp stone; kept.
+    FishingRod,
 }
 
 impl ItemKind {
@@ -240,6 +246,7 @@ impl ItemKind {
                 | ItemKind::CopperKnife
                 | ItemKind::Saw
                 | ItemKind::ProspectorPick
+                | ItemKind::FishingRod
         )
     }
 
@@ -254,7 +261,7 @@ impl ItemKind {
         }
     }
 
-    pub const COUNT: usize = 102;
+    pub const COUNT: usize = 105;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -358,6 +365,9 @@ impl ItemKind {
         ItemKind::CircuitBoard,
         ItemKind::Oil,
         ItemKind::ProspectorPick,
+        ItemKind::RawFish,
+        ItemKind::CookedFish,
+        ItemKind::FishingRod,
     ];
 }
 
@@ -896,4 +906,26 @@ pub fn sin_mrad(a: i64) -> i64 {
 /// cos of an angle in milliradians, permille.
 pub fn cos_mrad(a: i64) -> i64 {
     sin_mrad(a + 1571)
+}
+
+/// Fish: a school keeps to a spot of water on a five-tile grid, placed by the seed (the renderer draws the same
+/// schools). Shallow water or deep.
+pub fn fish_school(map: &Map, tx: i32, ty: i32) -> bool {
+    tx.rem_euclid(5) == 0 && ty.rem_euclid(5) == 0 && crate::rng::hash2(map.seed ^ 0xF15F, tx, ty) % 100 < 20 && water_depth(map, tx, ty) >= 1
+}
+
+/// The school nearest to (tx, ty) within `r` tiles, if any.
+pub fn school_near(map: &Map, tx: i32, ty: i32, r: i32) -> Option<(i32, i32)> {
+    let mut best: Option<(i32, (i32, i32))> = None;
+    for y in (ty - r).div_euclid(5) * 5..=ty + r {
+        for x in (tx - r).div_euclid(5) * 5..=tx + r {
+            if x.rem_euclid(5) == 0 && y.rem_euclid(5) == 0 && fish_school(map, x, y) {
+                let d = (x - tx).pow(2) + (y - ty).pow(2);
+                if d <= r * r && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, (x, y)));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }

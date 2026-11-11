@@ -3,7 +3,9 @@
 //! ambience (wind, leaves, rain, birds, crickets, owls, water, fire) that follows where the player stands, the
 //! hour and the weather. Everything is best effort: with no player available or `ALAZ_MUTE` set, nothing plays.
 
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -168,6 +170,117 @@ fn synth(s: Sfx) -> Vec<f32> {
     v
 }
 
+/// Where the mixed sound goes: called with each 10 ms of interleaved stereo; false when the output is gone.
+type Sink = Box<dyn FnMut(&[i16]) -> bool>;
+
+/// Linux and the like: a long-lived `pw-cat` or `aplay` reading raw PCM on its stdin.
+#[cfg(unix)]
+fn open_sink() -> Option<Sink> {
+    let mut child = spawn_player()?;
+    let mut stdin = child.stdin.take()?;
+    // a small pipe keeps the delay between a game event and its sound short
+    {
+        use std::os::fd::AsRawFd;
+        unsafe {
+            libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 4096);
+        }
+    }
+    Some(Box::new(move |buf: &[i16]| {
+        let bytes: Vec<u8> = buf.iter().flat_map(|s| s.to_le_bytes()).collect();
+        if stdin.write_all(&bytes).is_err() {
+            let _ = child.kill();
+            return false;
+        }
+        true
+    }))
+}
+
+/// Windows: the default output device through cpal; the mixer's 44.1 kHz stereo is fed through a short queue and
+/// stepped to the device's own rate and channel count.
+#[cfg(windows)]
+fn open_sink() -> Option<Sink> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    let dev = cpal::default_host().default_output_device()?;
+    let supported = dev.default_output_config().ok()?;
+    let format = supported.sample_format();
+    let config: cpal::StreamConfig = supported.into();
+    let channels = config.channels as usize;
+    let step = RATE as f32 / config.sample_rate.0 as f32;
+    let queue: Arc<Mutex<VecDeque<i16>>> = Arc::new(Mutex::new(VecDeque::new()));
+    // pull one output frame: the mixer frame under the playback cursor (nearest, which is plenty for game sound)
+    let make_pull = |queue: Arc<Mutex<VecDeque<i16>>>| {
+        let mut pos = 0.0f32;
+        let mut cur = (0.0f32, 0.0f32);
+        move |frames: usize, out: &mut dyn FnMut(usize, f32, f32)| {
+            let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+            for f in 0..frames {
+                pos += step;
+                while pos >= 1.0 {
+                    pos -= 1.0;
+                    cur = match (q.pop_front(), q.pop_front()) {
+                        (Some(l), Some(r)) => (l as f32 / 32768.0, r as f32 / 32768.0),
+                        _ => (0.0, 0.0),
+                    };
+                }
+                out(f, cur.0, cur.1);
+            }
+        }
+    };
+    let err = |_| {};
+    let stream = match format {
+        cpal::SampleFormat::I16 => {
+            let mut pull = make_pull(queue.clone());
+            dev.build_output_stream(
+                &config,
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    let frames = data.len() / channels;
+                    pull(frames, &mut |f, l, r| {
+                        for c in 0..channels {
+                            data[f * channels + c] = ((if c % 2 == 0 { l } else { r }) * 32767.0) as i16;
+                        }
+                    });
+                },
+                err,
+                None,
+            )
+            .ok()?
+        }
+        _ => {
+            let mut pull = make_pull(queue.clone());
+            dev.build_output_stream(
+                &config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let frames = data.len() / channels;
+                    pull(frames, &mut |f, l, r| {
+                        for c in 0..channels {
+                            data[f * channels + c] = if c % 2 == 0 { l } else { r };
+                        }
+                    });
+                },
+                err,
+                None,
+            )
+            .ok()?
+        }
+    };
+    stream.play().ok()?;
+    Some(Box::new(move |buf: &[i16]| {
+        let _keep_playing = &stream;
+        let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+        // never let it fall far behind: drop the oldest if more than a tenth of a second is waiting
+        let max = (RATE as usize / 10) * 2;
+        if q.len() > max {
+            let extra = q.len() - max;
+            q.drain(..extra);
+        }
+        q.extend(buf.iter().copied());
+        true
+    }))
+}
+
+#[cfg(unix)]
 fn spawn_player() -> Option<std::process::Child> {
     let attempts: [(&str, &[&str]); 2] = [
         ("pw-cat", &["--playback", "--raw", "--format", "s16", "--rate", "44100", "--channels", "2", "--latency", "30ms", "-"]),
@@ -181,15 +294,7 @@ fn spawn_player() -> Option<std::process::Child> {
     None
 }
 
-fn mixer(rx: Receiver<Msg>, mut child: std::process::Child) {
-    let Some(mut stdin) = child.stdin.take() else { return };
-    // a small pipe keeps the delay between a game event and its sound short
-    {
-        use std::os::fd::AsRawFd;
-        unsafe {
-            libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 4096);
-        }
-    }
+fn mixer(rx: Receiver<Msg>, mut sink: Sink) {
     let bank: Vec<(Sfx, Vec<f32>)> = ALL.iter().map(|&s| (s, synth(s))).collect();
     let mut voices: Vec<(usize, usize)> = Vec::new(); // (bank index, position)
     let mut muted = false;
@@ -221,10 +326,7 @@ fn mixer(rx: Receiver<Msg>, mut child: std::process::Child) {
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let _ = child.kill();
-                    return;
-                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
             }
         }
         // effects (mono, both ears) over the ambience, then a soft limiter
@@ -244,9 +346,8 @@ fn mixer(rx: Receiver<Msg>, mut child: std::process::Child) {
             buf[f * 2 + 1] = ((r * 0.8).tanh() * 15000.0) as i16;
         }
         voices.retain(|(bi, pos)| *pos < bank[*bi].1.len());
-        let bytes: Vec<u8> = buf.iter().flat_map(|s| s.to_le_bytes()).collect();
-        if stdin.write_all(&bytes).is_err() {
-            return; // the player went away: stay silent
+        if !sink(&buf) {
+            return; // the output went away: stay silent
         }
         next += Duration::from_millis(10);
         let now = Instant::now();
@@ -263,9 +364,22 @@ impl Audio {
         if std::env::var_os("ALAZ_MUTE").is_some() {
             return None;
         }
-        let child = spawn_player()?;
         let (tx, rx) = channel();
-        std::thread::Builder::new().name("audio".into()).spawn(move || mixer(rx, child)).ok()?;
+        // the output is opened on the audio thread itself (a Windows stream stays on the thread that made it)
+        let (ok_tx, ok_rx) = channel();
+        std::thread::Builder::new()
+            .name("audio".into())
+            .spawn(move || match open_sink() {
+                Some(sink) => {
+                    let _ = ok_tx.send(true);
+                    mixer(rx, sink)
+                }
+                None => {
+                    let _ = ok_tx.send(false);
+                }
+            })
+            .ok()?;
+        ok_rx.recv().ok().filter(|&ok| ok)?;
         Some(Audio { tx, muted: false })
     }
 

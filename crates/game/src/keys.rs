@@ -280,6 +280,12 @@ impl Keybinds {
         if let Some(d) = std::env::var_os("ALAZ_SAVE_DIR") {
             return PathBuf::from(d).join("keys.cfg");
         }
+        // Windows: next to the saves, in %APPDATA%\ALAZ
+        if cfg!(windows) {
+            if let Some(d) = std::env::var_os("APPDATA") {
+                return PathBuf::from(d).join("ALAZ").join("keys.cfg");
+            }
+        }
         let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
             std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join(".config")
         });

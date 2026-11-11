@@ -132,6 +132,9 @@ pub struct Renderer {
     stats: RenderStats,
     globals: wgpu::Buffer,
     height_tex: wgpu::Texture,
+    /// Per tile of the height window: its ground picture (atlas texel corner), ground kind and shade, so the shader
+    /// can draw a neighbour's ground across a ragged boundary instead of along tile edges.
+    tile_tex: wgpu::Texture,
     /// (seed, tile corner of the window's first texel) of what the height texture holds now
     height_at: Option<(u64, i32, i32)>,
     weather_kind: f32,
@@ -300,6 +303,17 @@ impl Renderer {
             view_formats: &[],
         });
         let height_view = height_tex.create_view(&Default::default());
+        let tile_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("tile window"),
+            size: wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let tile_view = tile_tex.create_view(&Default::default());
         // sun shadows: depth seen from the sun, over the part of the world around the camera
         let shadow_view = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -350,6 +364,12 @@ impl Renderer {
                     ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -360,6 +380,7 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas_view) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&height_view) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&shadow_view) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&tile_view) },
             ],
         });
         let vbuf = wgpu::VertexBufferLayout {
@@ -552,6 +573,7 @@ impl Renderer {
             stats: RenderStats::default(),
             globals,
             height_tex,
+            tile_tex,
             height_at: None,
             weather_kind: 1.0,
             weather_amount: 0.0,
@@ -770,6 +792,23 @@ impl Renderer {
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
                 wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
             );
+            // and what ground each tile of the window wears
+            let tiles: Vec<f32> = (0..HWIN as i32 * HWIN as i32)
+                .flat_map(|i| {
+                    let (tx, ty) = (hx + i % HWIN as i32, hy + i / HWIN as i32);
+                    let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
+                    let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
+                    let s = tile_spr(&self.art, t, h);
+                    let k = if t == Terrain::Water { 1.0 } else { tile_shade(world, tx, ty) };
+                    [s.x as f32, s.y as f32, t as u8 as f32, k]
+                })
+                .collect();
+            self.queue.write_texture(
+                self.tile_tex.as_image_copy(),
+                bytemuck::cast_slice(&tiles),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
+                wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
+            );
             self.height_at = Some((world.seed, hx, hy));
         }
         let mut g = [0f32; 164];
@@ -984,6 +1023,7 @@ impl Renderer {
         }
         let alpha = self.sim_alpha.unwrap_or_else(|| ((now - self.tick_at).as_secs_f32() / self.tick_gap.max(1e-3)).clamp(0.0, 1.0));
         push_bodies(&mut dynamic, world, alpha, &inside);
+        push_fish(&mut dynamic, world, view_m, (world.tick as f32 + alpha) / 60.0, alpha);
         for w in world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)) {
             let (wx, wz) = (w.x as f32 / 1000.0, w.y as f32 / 1000.0);
             // wild animals walk like everyone else: they face where they go and their legs follow the ground covered
@@ -1497,7 +1537,8 @@ fn build_terrain(out: &mut Vec<Vertex>, art: &Art, world: &World, (x0, y0, x1, y
             let c = |dx: f32, dz: f32| Vertex { pos: [fx + dx, 0.0, fz + dz], color: [k, k, k], glow: 0.0, uv: [s.x as f32, s.y as f32], off: [if t == Terrain::Water { 1.0 } else { 0.0 }, 0.0], kind: 1.0 };
             let (a, b, cc, d) = (c(0.0, 0.0), c(1.0, 0.0), c(1.0, 1.0), c(0.0, 1.0));
             out.extend_from_slice(&[a, b, cc, a, cc, d]);
-            edge_blend(out, art, world, tx, ty, t);
+            // (ground boundaries are drawn ragged by the shader now, from the tile window)
+            let _ = edge_blend;
         }
     }
 }
@@ -3540,4 +3581,61 @@ fn swell_height(world: &World, x: f32, z: f32, alpha: f32) -> f32 {
         h += HS[i] * amp * (0.12 + 0.88 * along * along) * 1.6 * ph.sin();
     }
     h as f32
+}
+
+/// Fish in deep water: small schools, placed by the seed, circling just under the surface and riding the swell;
+/// now and then one leaps out, silver in the light. Only drawn, not simulated.
+fn push_fish(out: &mut Vec<Vertex>, world: &World, view: (f32, f32, f32, f32), t: f32, alpha: f32) {
+    use shapes::limb;
+    let step = 5;
+    let (x0, z0) = ((view.0 as i32).div_euclid(step) * step, (view.1 as i32).div_euclid(step) * step);
+    let (x1, z1) = (view.2 as i32, view.3 as i32);
+    let mut ty = z0;
+    while ty <= z1 {
+        let mut tx = x0;
+        while tx <= x1 {
+            let h = alaz_sim::rng::hash2(world.seed ^ 0xF15F, tx, ty) as u32;
+            // the same schools the game knows of (a fish can be caught where one is drawn)
+            if alaz_sim::map::fish_school(&world.map, tx, ty) {
+                let (cx, cz) = (tx as f32 + 0.5 + (h >> 8 & 7) as f32 * 0.3, ty as f32 + 0.5 + (h >> 11 & 7) as f32 * 0.3);
+                let n = 2 + (h >> 14) % 3;
+                let dir = if h >> 17 & 1 == 0 { 1.0 } else { -1.0 };
+                let speed = 0.25 + (h >> 18 & 7) as f32 * 0.04;
+                let big = 1.6 + (h >> 21 & 3) as f32 * 0.25;
+                for k in 0..n {
+                    // each one on its own ring, a little behind the one in front
+                    let r = 1.0 + 0.35 * k as f32;
+                    let a = t * speed * dir + k as f32 * 0.55 + (h & 255) as f32;
+                    let (x, z) = (cx + a.cos() * r, cz + a.sin() * r);
+                    if alaz_sim::map::water_depth(&world.map, x.floor() as i32, z.floor() as i32) == 0 {
+                        continue;
+                    }
+                    // heading along the ring
+                    let (hx, hz) = (-a.sin() * dir, a.cos() * dir);
+                    let len = 0.22 * big;
+                    let surface = swell_height(world, x, z, alpha);
+                    // a leap: every so often, for a moment, out of the water and back in an arc
+                    let cycle = 9.0 + (h >> 23 & 7) as f32;
+                    let ph = ((t + k as f32 * 3.1 + (h >> 4 & 31) as f32) % cycle) / 0.7;
+                    let leaping = k == 0 && ph < 1.0;
+                    let (y, col) = if leaping {
+                        (surface + 0.55 * (ph * std::f32::consts::PI).sin(), [0.78, 0.82, 0.86])
+                    } else {
+                        (surface + 0.02, [0.10, 0.19, 0.25])
+                    };
+                    // a tail beat
+                    let beat = (t * 9.0 + k as f32).sin() * 0.04;
+                    let head = [x + hx * len * 0.5, y, z + hz * len * 0.5];
+                    let tail = [x - hx * len * 0.5 - hz * beat, y + if leaping { -0.06 } else { 0.0 }, z - hz * len * 0.5 + hx * beat];
+                    set_anchor(x, z);
+                    limb(out, head, tail, 0.05 * big, 0.025 * big, col, 5);
+                    let fin = [tail[0] - hx * 0.08 - hz * 0.05, tail[1], tail[2] - hz * 0.08 + hx * 0.05];
+                    limb(out, tail, fin, 0.03 * big, 0.005, col, 4);
+                }
+            }
+            tx += step;
+        }
+        ty += step;
+    }
+    set_anchor(0.0, 0.0);
 }

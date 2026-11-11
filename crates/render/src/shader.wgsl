@@ -21,6 +21,8 @@ struct Globals {
 @group(0) @binding(2) var hmap: texture_2d<f32>;
 // depth seen from the sun (only bound in the main pass)
 @group(0) @binding(3) var shadow_map: texture_depth_2d;
+// per tile of the height window: (atlas x, atlas y, ground kind, shade) (main pass only)
+@group(0) @binding(4) var tilemap: texture_2d<f32>;
 
 fn corner(i: vec2<i32>) -> vec4<f32> {
     return textureLoad(hmap, clamp(i, vec2<i32>(0), vec2<i32>(255)), 0);
@@ -337,7 +339,11 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
         let snow = globals.env.w;
         let w = v.wpos;
         let tl = min(floor(fract(w) * 21.0), vec2<f32>(20.0));
-        if (v.water > 0.5) {
+        // near the shore, water or land is decided by the smooth shore field, not by whole tiles: a coast that runs
+        // across the grid is a curve, not a staircase of tile corners
+        let sh_here = shore_at(floor(w * 21.0) / 21.0);
+        let wet_here = select(v.water > 0.5, sh_here > 0.0, abs(sh_here) < 1.2);
+        if (wet_here) {
             // water, drawn on the ground's own texel grid: deep blue out in the open, turquoise in the shallows,
             // wave bands drifting with the wind, foam lapping at the shore and the sun sparkling on the ripples
             let q = floor(w * 21.0) / 21.0;
@@ -403,6 +409,29 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
             }
         } else {
             col = textureLoad(atlas, vec2<i32>(floor(v.uv + tl)), 0).rgb * v.color;
+            // ground boundaries wander: each texel looks a little way off along a slow noise and, if that falls on a
+            // tile of another kind of land, wears that tile's ground; edges become ragged lines, not tile staircases
+            if (v.water < 0.5) {
+                let q = floor(w * 21.0) / 21.0;
+                let jit = vec2<f32>(vnoise(q * 1.7 + vec2<f32>(17.3, 4.1)), vnoise(q * 1.7 + vec2<f32>(3.7, 91.2))) - vec2<f32>(0.5);
+                let fine = vec2<f32>(vnoise(q * 6.0 + vec2<f32>(51.0, 7.0)), vnoise(q * 6.0 + vec2<f32>(9.0, 33.0))) - vec2<f32>(0.5);
+                let wl = q + jit * 0.9 + fine * 0.25;
+                let own = floor(w);
+                let other = floor(wl);
+                if (other.x != own.x || other.y != own.y) {
+                    let lim = vec2<i32>(255);
+                    let mine = textureLoad(tilemap, clamp(vec2<i32>(own - globals.hwin.xy), vec2<i32>(0), lim), 0);
+                    let them = textureLoad(tilemap, clamp(vec2<i32>(other - globals.hwin.xy), vec2<i32>(0), lim), 0);
+                    // land over land only (the water's edge has its own smooth line)
+                    if (them.z > 0.5 && them.z != mine.z) {
+                        col = textureLoad(atlas, vec2<i32>(floor(them.xy + tl)), 0).rgb * vec3<f32>(them.w);
+                    }
+                }
+            }
+            // the land edge of a water tile: its own picture is water, so it is drawn as wet sand
+            if (v.water > 0.5) {
+                col = vec3<f32>(0.80, 0.70, 0.48) * (0.93 + 0.07 * hash21(floor(w * 21.0)));
+            }
             // the ground right by the water is wet and dark, in a band that the waves keep washing
             let sh0 = shore_at(floor(w * 21.0) / 21.0);
             if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }

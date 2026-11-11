@@ -1,4 +1,4 @@
-// The small picture is enlarged with hard edges (a texel is a whole number of screen pixels) and given a light
+// The small picture is enlarged with hard edges (sharp bilinear: even blocks at any scale) and given a light
 // film grade. Nothing here touches individual texels, so the art stays exactly as painted.
 struct P {
     a: vec4<f32>,   // x: screen px per texel, y: unused, zw: shift of the window over the picture (screen px)
@@ -17,7 +17,23 @@ struct P {
 @fragment fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let lim = vec2<i32>(textureDimensions(scene)) - vec2<i32>(1);
     let q = vec2<i32>(floor((frag.xy + p.a.zw) / p.a.x));
-    var g = pow(textureLoad(scene, clamp(q, vec2<i32>(0), lim), 0).rgb, vec3<f32>(1.0 / 2.2));
+    // sharp bilinear: a texel is a hard block, blended with its neighbour only across the one screen pixel where
+    // their edge falls. A texel is not a whole number of screen pixels at every zoom (2.25 at the default), and
+    // picking the nearest texel then makes blocks 2 and 3 pixels wide in a pattern fixed to the screen, which the
+    // world crawls under as the camera moves; this way every block is the same width and the picture glides on
+    // smoothly, a fraction of a pixel at a time
+    let t = (frag.xy + p.a.zw) / p.a.x - vec2<f32>(0.5);
+    let i = floor(t);
+    let f = t - i;
+    let w = clamp((f - vec2<f32>(0.5)) * p.a.x + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    let i0 = clamp(vec2<i32>(i), vec2<i32>(0), lim);
+    let i1 = clamp(vec2<i32>(i) + vec2<i32>(1), vec2<i32>(0), lim);
+    let c00 = textureLoad(scene, i0, 0).rgb;
+    let c10 = textureLoad(scene, vec2<i32>(i1.x, i0.y), 0).rgb;
+    let c01 = textureLoad(scene, vec2<i32>(i0.x, i1.y), 0).rgb;
+    let c11 = textureLoad(scene, i1, 0).rgb;
+    let lin = mix(mix(c00, c10, w.x), mix(c01, c11, w.x), w.y);
+    var g = pow(lin, vec3<f32>(1.0 / 2.2));
     let cine = p.b.w;
     // cinematic grade: richer colour, warm lights over cool shadows, a filmic S-curve, a lifted teal black
     let l = dot(g, vec3<f32>(0.30, 0.59, 0.11));

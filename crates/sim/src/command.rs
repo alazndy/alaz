@@ -88,6 +88,8 @@ pub enum CommandKind {
     /// Put some of an item down on the ground in front of you (at most 10 at a time); it lies there as pieces
     /// anyone can pick up.
     Drop { item: ItemKind, n: u16 },
+    /// Fish the water at (tx, ty), from the bank or wading: a rod or a spear, and a school close by.
+    Fish { tx: i32, ty: i32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -132,7 +132,7 @@ impl Story {
                 .fill(Color32::from_rgba_unmultiplied(30, 24, 18, 225))
                 .stroke(Stroke::new(1.2, Color32::from_rgb(150, 120, 70)))
                 .inner_margin(10)
-                .corner_radius(8)
+                .corner_radius(0)
                 .show(ui, |ui| {
                     ui.set_width(250.0);
                     ui.horizontal(|ui| {
@@ -168,20 +168,20 @@ fn card(ctx: &egui::Context, id: &str, title: &str, body: &str, go: &str, skip: 
             .fill(Color32::from_rgba_unmultiplied(28, 21, 15, 245))
             .stroke(Stroke::new(2.0, Color32::from_rgb(190, 150, 70)))
             .inner_margin(22)
-            .corner_radius(10)
-            .shadow(egui::epaint::Shadow { offset: [0, 4], blur: 18, spread: 0, color: Color32::from_black_alpha(140) })
+            .corner_radius(0)
+            .shadow(egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) })
             .show(ui, |ui| {
                 ui.set_width(440.0_f32.min(ctx.content_rect().width() - 60.0));
-                ui.label(RichText::new(title).size(24.0).strong().color(Color32::from_rgb(244, 210, 120)));
+                ui.label(RichText::new(title).size(33.0).strong().color(Color32::from_rgb(244, 210, 120)));
                 ui.add_space(8.0);
-                ui.label(RichText::new(body).size(16.0).color(Color32::from_rgb(236, 226, 206)));
+                ui.label(RichText::new(body).size(22.0).color(Color32::from_rgb(236, 226, 206)));
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new(go).size(16.0)).clicked() {
+                    if ui.button(RichText::new(go).size(22.0)).clicked() {
                         out = Some(true);
                     }
                     if let Some(s) = skip {
-                        if ui.button(RichText::new(s).size(14.0)).clicked() {
+                        if ui.button(RichText::new(s).size(22.0)).clicked() {
                             out = Some(false);
                         }
                     }

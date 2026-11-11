@@ -4796,3 +4796,53 @@ fn small_new_worlds_have_ores() {
         }
     }
 }
+
+/// Fishing: a rod or a spear by a school; refused without one, or where there are no fish; the catch cooks over a
+/// fire and feeds the protein group.
+#[test]
+fn fishing_with_a_rod_and_cooking_the_catch() {
+    let seed = crate::map::tag_seed_v2(11);
+    let mut w = World::with_size(seed, 512, 512);
+    let (sx, sy) = w.spawn_mm;
+    w.spawn_agent(sx, sy);
+    w.learn_everything();
+    w.wild.retain(|x| x.species != WildSpecies::Wolf);
+    let a = w.agents[0].id;
+    let (tx, ty) = ((sx / 1000) as i32, (sy / 1000) as i32);
+    let (fx, fy) = crate::map::school_near(&w.map, tx, ty, 200).expect("a school of fish somewhere near");
+    // stand on the bank next to it
+    let bank = (-4..=4i32).flat_map(|dy| (-4..=4i32).map(move |dx| (fx + dx, fy + dy))).find(|&(x, y)| w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water)).expect("a bank");
+    w.agents[0].x = bank.0 as i64 * 1000 + 500;
+    w.agents[0].y = bank.1 as i64 * 1000 + 500;
+    w.step(&[cmd(a, CommandKind::Fish { tx: fx, ty: fy })]);
+    assert!(w.take_events().contains(&Event::Rejected(a, Reject::NoMaterials)), "no rod, no spear");
+    give(&mut w, ItemKind::FishingRod, 1);
+    // water with no school near
+    let empty = (0..512).flat_map(|y| (0..512).map(move |x| (x, y))).find(|&(x, y)| w.map.terrain(x, y) == Some(Terrain::Water) && crate::map::school_near(&w.map, x, y, 3).is_none()).unwrap();
+    w.step(&[cmd(a, CommandKind::Fish { tx: empty.0, ty: empty.1 })]);
+    assert!(w.take_events().contains(&Event::Rejected(a, Reject::NoFish)));
+    w.step(&[cmd(a, CommandKind::Fish { tx: fx, ty: fy })]);
+    for _ in 0..60 * 60 {
+        w.step(&[]);
+        if count(&w, 0, ItemKind::RawFish) >= 3 {
+            break;
+        }
+    }
+    assert!(count(&w, 0, ItemKind::RawFish) >= 3, "fish caught: {}", count(&w, 0, ItemKind::RawFish));
+    // cooked and eaten
+    let (mx, my) = (w.agents[0].x, w.agents[0].y);
+    let fire = push_building(&mut w, BuildingKind::Campfire, mx + 1_500, my) as usize;
+    w.buildings[fire].fuel = 20_000;
+    w.buildings[fire].temp = 400;
+    w.buildings[fire].input[ItemKind::RawFish as usize] = 1;
+    w.buildings[fire].job = Some(crate::buildings::Job { recipe: recipe("cook_fish").0, remaining: 1 });
+    for _ in 0..30 {
+        w.step(&[]);
+    }
+    assert!(w.buildings[fire].output[ItemKind::CookedFish as usize] >= 1, "cooked");
+    give(&mut w, ItemKind::CookedFish, 1);
+    w.agents[0].hunger = 2_000;
+    let protein = w.agents[0].nutrition[1];
+    w.step(&[cmd(a, CommandKind::Eat { item: ItemKind::CookedFish })]);
+    assert!(w.agents[0].hunger > 2_000 && w.agents[0].nutrition[1] > protein, "fed");
+}

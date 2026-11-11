@@ -1,0 +1,65 @@
+# Builds the Windows package: an installer (Inno Setup) and a portable zip.
+# Runs by hand (Actions → "Windows paketi" → Run workflow) or on a version tag (v0.2.0 …), which also makes a release.
+name: Windows paketi
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Önbellek
+        uses: Swatinem/rust-cache@v2
+
+      - name: Sürüm
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.1.0-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Derle
+        run: cargo build --release -p alaz
+
+      - name: Hızlı testler (arayüz, ağ, çizim)
+        run: cargo test --release -p alaz -p alaz-net -p alaz-render
+
+      - name: Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Kurulum dosyası
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" "/DSourceExe=..\..\target\release\alaz.exe" packaging\windows\alaz.iss
+
+      - name: Taşınabilir zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item target\release\alaz.exe portable\
+          Copy-Item README.md portable\
+          Compress-Archive -Path portable\* -DestinationPath "dist\ALAZ-${{ steps.ver.outputs.version }}-portable.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ALAZ-${{ steps.ver.outputs.version }}-windows
+          path: dist/*
+
+      - name: Sürüm sayfası (etiketle)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "A.L.A.Z ${{ steps.ver.outputs.version }}" --notes "Windows kurulum dosyası ve taşınabilir zip."
