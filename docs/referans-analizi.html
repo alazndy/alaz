@@ -1,0 +1,787 @@
+<title>ALAZ Referans Modları</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column with a sticky mod index; each mod is a "spec sheet" — mentality first, then systems, then the translation table into ALAZ. */
+:root {
+  --bg: #f1f0ec;
+  --surface: #fbfaf7;
+  --ink: #1d1f22;
+  --muted: #5d6066;
+  --rule: #d6d3cb;
+  --brass: #9a6a17;
+  --seared: #8a4636;
+  --steel: #3f5a72;
+  --ok: #2f6b3c;
+  --chip: #e6e2d8;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --surface: #1d2024; --ink: #e8e6e1; --muted: #a2a5ab; --rule: #33373d;
+    --brass: #d9a443; --seared: #d38a74; --steel: #8fb0cc; --ok: #7cc28a; --chip: #2a2e33;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --surface: #1d2024; --ink: #e8e6e1; --muted: #a2a5ab; --rule: #33373d;
+  --brass: #d9a443; --seared: #d38a74; --steel: #8fb0cc; --ok: #7cc28a; --chip: #2a2e33;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 17px/1.62 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 40px; }
+header.top { padding-block: 48px 8px; display: grid; gap: 14px; border-bottom: 2px solid var(--ink); }
+.eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--brass); }
+h1 { font: 800 clamp(34px, 6vw, 58px)/1.02 var(--display); font-stretch: 78%; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+.lede { max-width: 66ch; color: var(--muted); margin: 0; font-size: 18px; }
+nav.index {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); padding-block: 10px; border-bottom: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+nav.index a {
+  font: 600 13px/1 var(--mono); color: var(--ink); text-decoration: none;
+  padding: 7px 10px; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface);
+}
+nav.index a:hover, nav.index a:focus-visible { border-color: var(--brass); color: var(--brass); outline: none; }
+section { display: grid; gap: 18px; scroll-margin-top: 64px; }
+h2 { font: 800 clamp(26px, 4vw, 36px)/1.1 var(--display); font-stretch: 82%; margin: 0; text-wrap: balance; }
+h2 small { display: block; font: 600 12px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+h3 { font: 700 19px/1.25 var(--display); margin: 8px 0 0; letter-spacing: .01em; }
+p { margin: 0; max-width: 68ch; }
+ul { margin: 0; padding-left: 1.2em; max-width: 68ch; display: grid; gap: 6px; }
+li::marker { color: var(--brass); }
+.thesis {
+  border-left: 4px solid var(--seared); padding: 4px 0 4px 16px;
+  font: 600 20px/1.45 var(--body); max-width: 62ch;
+}
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px 28px; }
+.grid2 > div { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.tag { font: 600 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .92em; }
+.tablebox { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+th { font: 700 12px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--chip); }
+tr:last-child td { border-bottom: 0; }
+td.st { white-space: nowrap; font: 600 12px/1.3 var(--mono); }
+.have { color: var(--ok); } .part { color: var(--brass); } .none { color: var(--seared); }
+.note { font-size: 15px; color: var(--muted); max-width: 70ch; }
+.flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 600 13px/1.3 var(--mono); }
+.flow span { background: var(--chip); padding: 6px 9px; border-radius: 4px; }
+.flow i { font-style: normal; color: var(--brass); }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+.principles { display: grid; gap: 14px; counter-reset: p; }
+.principles > div { display: grid; grid-template-columns: 44px 1fr; gap: 4px 12px; }
+.principles > div::before { counter-increment: p; content: counter(p); grid-row: span 2; font: 800 34px/1 var(--display); color: var(--brass); }
+.principles b { font: 700 18px/1.3 var(--display); }
+.sources { font-size: 14px; display: grid; gap: 4px; }
+.sources a { color: var(--steel); word-break: break-word; }
+a { color: var(--steel); }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">ALAZ · tasarım referansı · Kasım 2026</div>
+    <h1>Beş referans, tek bir yön</h1>
+    <p class="lede">Minecraft, en yakın akrabalarımız TerraFirmaCraft ve Vintage Story, Create ve güç eklentileri (Steam Powered, Diesel Generators, Crafts &amp; Additions, New Age, Power, Power Grid), Create Aeronautics, Tinkers' Construct ve Modular Machinery'nin neyi neden yaptığı; her birinin ALAZ'da neye karşılık geldiği, bizde ne olduğu ve ne eksik olduğu.</p>
+  </header>
+
+  <nav class="index" aria-label="Bölümler">
+    <a href="#minecraft">Minecraft</a>
+    <a href="#tfc">TerraFirmaCraft</a>
+    <a href="#vs">Vintage Story</a>
+    <a href="#create">Create</a>
+    <a href="#guc">Güç eklentileri</a>
+    <a href="#aero">Aeronautics</a>
+    <a href="#tinkers">Tinkers</a>
+    <a href="#mm">Modular Machinery</a>
+    <a href="#sentez">Sentez</a>
+    <a href="#yol">Yol haritası</a>
+    <a href="#kaynak">Kaynaklar</a>
+  </nav>
+
+  <!-- MINECRAFT -->
+  <section id="minecraft">
+    <h2><small>Temel oyun</small>Minecraft</h2>
+    <p class="thesis">Malzeme kademesi bir anahtardır: her yeni malzeme bir sonraki malzemeye ya da yere kapı açar. Oyun sana hedef vermez, hedefi sen koyarsın.</p>
+    <div class="flow" aria-label="Minecraft ilerleme zinciri">
+      <span>ahşap</span><i>→</i><span>taş kazma</span><i>→</i><span>demir</span><i>→</i><span>elmas</span><i>→</i><span>obsidyen / Nether</span><i>→</i><span>blaze çubuğu</span><i>→</i><span>End</span><i>→</i><span>netherit</span>
+    </div>
+    <div class="grid2">
+      <div>
+        <span class="tag">Çekirdek döngü</span>
+        <p>Topla, üret, inşa et, keşfet. İlk gece canavarlar çıkar, bu yüzden ilk 10 dakikanın işi bir barınak ve ilk aletlerdir. Sonrası tamamen oyuncunun kendi projesidir.</p>
+      </div>
+      <div>
+        <span class="tag">Kademe mekanizması</span>
+        <p>Aletin kademesi neyi kazabildiğini belirler. Demir cevheri en az taş kazma, elmas en az demir kazma, obsidyen elmas kazma ister. Kademe sadece hız değil, erişimdir. Bir sonraki büyük kapı yeni bir yerdedir (Nether, End).</p>
+      </div>
+      <div>
+        <span class="tag">Aşınma ve talep</span>
+        <p>Her aletin dayanıklılığı vardır ve kırılır. Bu, kaynak ekonomisini sürekli canlı tutar: madene inmeye hep bir sebep vardır. Örs ve büyüleme, aleti onarıp güçlendirmenin yoludur.</p>
+      </div>
+      <div>
+        <span class="tag">Rehberlik</span>
+        <p>Klasik oyunda öğretici yok. Sonradan eklenen tarif kitabı (eldeki malzemeye göre tarif açar) ve başarım ağacı yumuşak bir yol gösterir ama zorlamaz.</p>
+      </div>
+    </div>
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Her kademe somut bir yeni fiil getiriyor: "artık elmas kazabilirim", "artık Nether'e gidebilirim".</li>
+      <li>Aşınma, ilerlemiş oyuncuyu bile temel döngüye geri çağırıyor.</li>
+      <li>Hedefin oyuncuda olması, sistemlerin sade kalmasına izin veriyor; derinlik birleşimden geliyor.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Rehbersizlik yeni oyuncuyu kaybettiriyor; Minecraft bunu toplulukla (wiki, video) kapatıyor, biz kapatamayız.</li>
+      <li>Ana oyunun orta oyunu sığ; modların varlık sebebi bu boşluk.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Minecraft</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Kademe = erişim (kazma seviyesi)</td><td>Aletler sadece hız veriyor (bronz balta %40 süre)</td><td class="st none">yok</td><td>Demir cevheri bronz kazma, mağaranın 3. odası demir kazma ister; kademe bir kapı olur</td></tr>
+        <tr><td>Alet dayanıklılığı</td><td>Aletler hiç aşınmıyor</td><td class="st none">yok</td><td>Aşınma + onarım; Tinkers kuralıyla: kırılan alet kaybolmaz, onarılana kadar körleşir</td></tr>
+        <tr><td>İlk gece baskısı</td><td>İlk gün kurtlar 3,5 m'den saldırıyor, ateş koruyor</td><td class="st have">var</td><td>—</td></tr>
+        <tr><td>Tarif kitabı (eldekine göre açılır)</td><td>Defter ipuçları: görülen malzemeye göre adsız dürtme</td><td class="st have">var</td><td>Çağa göre süzme eklendi (tarım ipuçları tohum görülünce)</td></tr>
+        <tr><td>Başarım ağacı</td><td>Hedefler + rehber bandı</td><td class="st have">var</td><td>Hedefler doğrusal; isteğe bağlı yan dallar eklenebilir</td></tr>
+        <tr><td>Yeni boyut = yeni malzeme</td><td>Mağara derinliği, biyomlar (bozkır, tundra, bataklık)</td><td class="st part">kısmen</td><td>Bazı malzemeleri biyoma bağla (kalay yalnız soğuk dağlarda gibi): keşif sebebi</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- TERRAFIRMACRAFT -->
+  <section id="tfc">
+    <h2><small>En büyük referans · gerçekçi hayatta kalma</small>TerraFirmaCraft</h2>
+    <p class="thesis">Gerçekçilik hem zorluk hem öğretmendir. Gerçek sayılar (sıcaklık, alaşım oranı, yağış) doğrudan oyun kuralıdır. Hiçbir şey bedava değil, her adım fiziksel, ve ilerleme metalin kendisidir.</p>
+    <p>ALAZ'ın tasarımına en çok benzeyen referans bu: taş yontma, kil kabın ateşte pişirilmesi, bronzdan demire giden sıra, iklim ve mevsimler, yaşanabilir bir ilk gün. Farkı şu: TFC bunların hepsini derin ve sert yapıyor, biz şu an yüzeyindeyiz.</p>
+    <div class="flow" aria-label="TerraFirmaCraft metal ilerlemesi">
+      <span>yerdeki taş ve dal</span><i>→</i><span>yontma: taş aletler</span><i>→</i><span>kil kalıp + çukur fırın</span><i>→</i><span>bakır</span><i>→</i><span>bronzlar</span><i>→</i><span>dövme demir (bloomery)</span><i>→</i><span>çelik (yüksek fırın)</span><i>→</i><span>siyah, kırmızı, mavi çelik</span>
+    </div>
+
+    <h3>İlk adımlar: taş devri</h3>
+    <div class="grid2">
+      <div>
+        <span class="tag">Toplama ve yontma</span>
+        <p>İlk eşyalar yerde: dal, çubuk ve gevşek taşlar neredeyse her iklimde var. Elde en az iki taş varken yontma ekranı açılır; bir ızgaradan kareler koparılır, desen bir tarife uyunca alet kafası çıkar (desenin konumu önemsiz). Taşta hata kalıcıdır. Her taş kafa bir dalla birleşip alet olur: bıçak (saman), balta (bütün ağacı keser), kürek, çapa, çekiç (ilkel örste dövme), cirit.</p>
+      </div>
+      <div>
+        <span class="tag">Çömlek ve çukur fırın</span>
+        <p>Kil, yıllık yağışı en az 175 mm olan yerlerde belirli bitkilerin yanında ve su kenarlarında bulunur. Kil yontması 5 kil ister ve hata geri alınabilir. Yapılanlar: küçük ve büyük kap (9 yuva), testi (100 mB su taşır), külçe kalıbı ve alet kalıpları (kazma, testere, tırpan, keski, balta, çekiç, bıçak, çapa, kürek, arama kazması). Çukur fırın: bir çukura en çok 4 eşya, üstüne 8 saman, üstüne 8 kütük; yakılınca yaklaşık 6 saatte 1400 °C'ye çıkar ve kili seramik yapar.</p>
+      </div>
+      <div>
+        <span class="tag">İlk metal</span>
+        <p>Yerde küçük cevher parçaları durur; her biri 10 mB metal verir ve yakında, yerin altında bir damar olduğunu ima eder. Parçalar küçük kaba konur, kabın çevresine çukur fırın kurulur, cevher erir. Kap açılıp metal pişmiş kalıba dökülür (en az 100 mB); kap soğursa yeniden ısıtılır. İlk kazma bakırdır: kalıp, cevher, fırın, döküm, sap.</p>
+      </div>
+      <div>
+        <span class="tag">Alaşımlar yüzdeyle</span>
+        <p>Alaşım bir tarif değil, bir oran aralığıdır. <span class="num">Bronz: %88–92 bakır, %8–12 kalay</span> (1000 mB için 880–920 mB bakır). Bizmut bronz: %50–65 bakır, %20–30 çinko, %10–20 bizmut. Siyah bronz: %50–70 bakır, %10–25 gümüş, %10–25 altın. Alet için olmayan alaşımlar: pirinç, pembe altın, sterlin gümüş (son ikisi kırmızı ve mavi çeliğe gider). Üç bronzun dayanıklılığı, verimi ve hasarı farklı.</p>
+      </div>
+    </div>
+
+    <h3>Metal işi</h3>
+    <div class="grid2">
+      <div>
+        <span class="tag">Isı ölçeği (renkle)</span>
+        <p>Eşyanın sıcaklığı bir renkle gösterilir: <span class="num">ılık 1–80 · sıcak 80–210 · çok sıcak 210–480 · soluk kırmızı 480–580 · koyu kırmızı 580–730 · parlak kırmızı 730–930 · turuncu 930–1100 · sarı 1100–1300 · sarı beyaz 1300–1400 · beyaz 1400–1500 · parlak beyaz 1500+ °C</span>. Isı kaynakları: ateş çukuru, çukur fırın, kömür ocağı, körük. Metal yalnız yeterince sıcakken işlenir ve kaynağ yapılır.</p>
+      </div>
+      <div>
+        <span class="tag">Örs kademeleri</span>
+        <p>Örs kendi kademesindeki metali işler, bir üst kademeyi kaynak yapar: <span class="num">0 taş · I bakır · II bronzlar · III dövme demir · IV çelik · V siyah çelik · VI kırmızı/mavi çelik</span>. Metal örs çift külçeden yapılır; ilk metal örs taş örste kaynakla yapılır. Kademe = erişim, metal işinin kendisinde.</p>
+      </div>
+      <div>
+        <span class="tag">Dövme oyunu</span>
+        <p>Bir çubukta yeşil işaretçi (ilerleme) kırmızı hedefe getirilir. Her hamle işaretçiyi belli bir miktar kaydırır; çubuğun dışına taşırsan külçe yanar. Üstte 2–3 kural vardır (örn. "sondan ikinci hamle Bük olmalı"); son üç hamle kurallara uyunca iş biter. Az hamleyle bitirilen kafa bonus alır: kötü, iyi, usta, kusursuz dövme; bonus aletin daha az kırılması, daha hızlı kazması ya da daha çok vurması demek.</p>
+        <p class="note">Hamle değerleri rehberde yok; oyundan bilinen değerler (doğrulanmadı): hafif vuruş −3, orta −6, ağır −9, çek −15, zımba +2, bük +7, şişir +13, daralt +16.</p>
+      </div>
+      <div>
+        <span class="tag">Demir ve çelik</span>
+        <p><b>Bloomery</b> her demirli eşyayı kabul eder; 2 kömür ve 100 mB dökme demirden bir sünger demir (bloom) çıkar, bu da örste dövülerek dövme demir külçesine döner. <b>Yüksek fırın</b>: pota, dövme demir levhalar, ateş tuğlasıyla güçlendirilmiş baca (katman başına 8 tuğla, en çok 5 katman, her katman 4 cevher daha), körük ve hava borusu (tuyere). Cevher, eşit miktarda eritken (flux) ve kömürle pik demir çıkar; pik demir örste yüksek karbonlu çeliğe, sonra çeliğe dövülür. Zayıf çelik + pik demir kaynağı siyah çeliğe gider.</p>
+      </div>
+    </div>
+
+    <h3>Dünya ve beden</h3>
+    <div class="grid2">
+      <div>
+        <span class="tag">Jeoloji ve arama</span>
+        <p>Kaya bölgeleri bir kilometreden geniş olabilir; ayağının altında genelde iki üç kaya katmanı vardır. Kayalar dört sınıfa ayrılır ve hangi derinlikte bulunacaklarını bu belirler (bazalt gibi dış püskürük kayalar orta-yüksek, granit gibi derinlik kayaları orta-alçak, tortul kayalar kıtada üstte). Cevherler çoğu zaman yalnız belli kaya türlerinde çıkar. Arama kazması vurulan noktanın çevresini tarar.</p>
+      </div>
+      <div>
+        <span class="tag">Çökme ve destek</span>
+        <p>Desteksiz ham kaya yakınında kazı yapınca çökme başlayabilir; başlayınca destekli kaya bile düşer. Çöken cevher kalite kaybeder (zengin → normal → fakir → moloz). Destek kirişi testere ve kütükle yapılır: dikey kiriş 3 blok, iki dikey arası en çok 5 blok yatay kiriş; yatay kirişin çevresinde <span class="num">9 × 5 × 9</span> alan destekli sayılır. Toprak, kum, çakıl, kil, moloz yamaçtan kayar.</p>
+      </div>
+      <div>
+        <span class="tag">Beslenme, su, bozulma</span>
+        <p>Beş besin grubu: meyve, sebze, protein, tahıl, süt ürünü. Hepsi yüksekse en yüksek can artar, düşükse azalır; eski öğünler sayılmaz, çeşitli beslenmek sürekli bir iştir. Çorba gibi yemekler birkaç grubu birden verir. Susuzluk açlık kadar hızlı, sıcakta daha hızlı; tuzlu su susattırır. Her yiyeceğin son kullanma tarihi var; çürük yiyecek doyurmaz, zehirleyebilir. Turşu, fıçı gibi koruma yöntemleri ömrü uzatır; sandıktaki yiyecek fare çeker.</p>
+      </div>
+      <div>
+        <span class="tag">İklim, tarım, hayvan</span>
+        <p>Sıcaklığı en çok enlem, yağışı en çok boylam belirler; yükseklik soğutur; yıllık yağış 0–500 mm; iklim Köppen'e göre sınıflanır. Mevsimler kış için yiyecek biriktirmeyi zorunlu kılar. Her ekinin sıcaklık ve nem aralığı vardır; toprakta azot, fosfor, potasyum (NPK) var, her ekin birini sever, besin ekini hızlandırır ve verimi artırır. Hayvan, sevdiği yemle besleyince alışkanlık kazanır, beslenmezse azalır; %30'un üstünde alışkın, o gün beslenmiş yetişkin, yakında karşı cinsten bir eşi varsa çiftleşir. Çok çalışan ya da doğuran hayvan yaşlanır, sonunda yalnız eti işe yarar.</p>
+      </div>
+      <div>
+        <span class="tag">Boyut ve ağırlık</span>
+        <p>Boyut, eşyanın hangi kaba sığdığını belirler (küçük kap, büyük kap, sandık, çukur fırın). Ağırlık yığın boyunu belirler: <span class="num">çok hafif 64 · hafif 32 · orta 16 · ağır 4 · çok ağır 1</span>. Dev ve çok ağır bir eşya (örs, mühürlü fıçı, pota) taşımak yorar; iki tanesi ciddi yavaşlatır. Atlar da aşırı yüklenebilir.</p>
+      </div>
+      <div>
+        <span class="tag">Ekosistem ve öğretme</span>
+        <p>Oyun içinde bir Saha Rehberi (Field Guide) kitabı var; rehberin kendisi eklentilere de bölüm açıyor: Firmalife, ArborFirmaCraft, Beneath, Roads and Roofs, Precision Prospecting. TerraFirmaGreg, TFC'yi GregTech ile birleştiren bir modpack. TFC geliştiricilerinden birinin bağımsız oyunu Vintage Story, aynı fikirleri kendi motorunda yapıyor: kendi motoru olan ALAZ için ayrıca incelenmeye değer.</p>
+      </div>
+    </div>
+
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Her çağ bir zanaatın ustalığı gibi hissettiriyor: ilk bakır kazma bir haftalık gerçek bir başarı.</li>
+      <li>Gerçek sayılar ezberlenmeye değer çünkü dünyada da doğru: %88 bakır, kızılı görünce sıcaklığı bilmek. Oyun bir şey öğretiyor.</li>
+      <li>Jeoloji ve iklim, haritanın her yerini farklı kılıyor; keşif bir maden araştırmasına dönüşüyor.</li>
+      <li>Bozulma, beslenme ve mevsim, çiftçiliği, hayvancılığı ve çömlekçiliği zorunlu bir ağ haline getiriyor: her sistem diğerine sebep veriyor.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Sertlik ve tekrar: aynı iş (çukur fırın kurmak, dövme) yüzlerce kez yapılıyor; otomasyon geç geliyor. TFC'nin Create ile birleştirilen paketlerde sevilmesinin bir sebebi bu.</li>
+      <li>Bilgi oyunun dışında: rehber olmadan dövme kuralları ya da alaşım oranları bulunamıyor; dövme oyununu çözen eklentilerin olması bunun işareti.</li>
+      <li>Envanter mikro yönetimi (kaplar, ağırlık, bozulma) yeni oyuncuyu yoruyor.</li>
+    </ul>
+
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>TerraFirmaCraft</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Yerde dal ve taş, yontma, kafa + sap</td><td>Dal ve lif düğümleri, yontma oyunu (nişan + güç), taş balta adım adım</td><td class="st have">var</td><td>Taş kafaları çoğalt: bıçak, kürek, çekiç; her biri bir dalla</td></tr>
+        <tr><td>Kil yontması, kap, testi, kalıp</td><td>Halka halka çömlek, dolu çömlekle su taşıma</td><td class="st part">kısmen</td><td>Kil kalıplar (külçe, kazma, balta kafası) ve büyük depo kabı</td></tr>
+        <tr><td>Çukur fırın (saman + kütük, 1400 °C)</td><td>Çömlek kamp ateşinde pişiyor</td><td class="st part">kısmen</td><td>Çukur fırın: lif (saman) + odun; hem çömleği pişirir hem kaptaki cevheri eritir</td></tr>
+        <tr><td>Yüzeyde cevher parçası (10 mB), damar ipucu, arama kazması</td><td>Cevher yüzeyde kayalık düğümü ve mağarada</td><td class="st none">yok</td><td>Damarlar gizli, yüzeyde küçük parçalar; arama aleti; cevher kaya türüne bağlı (harita seed'den, deterministik)</td></tr>
+        <tr><td>Metal mB ile, alaşım yüzde aralığıyla</td><td>Bronz sabit tarif: 3 bakır + 1 kalay + 2 kömür</td><td class="st none">yok</td><td>Kapta eriyen metaller miktarla tutulur; oran aralığına girerse alaşım olur. Oranlar <code>rules.toml</code>'da</td></tr>
+        <tr><td>Renkli ısı ölçeği</td><td>Isı yok; algı seviyeleri var</td><td class="st none">yok</td><td>Eşya sıcaklığı tam sayı; algı düşükken yalnız renk, yükselince derece görünür (algı sistemiyle birleşir)</td></tr>
+        <tr><td>Örs kademeleri ve dövme oyunu (kurallar + bonus)</td><td>Mini oyunlar: zamanlama, yontma, yerleştirme, sıkıştırma, yığma; kalite üç basamak</td><td class="st part">kısmen</td><td>Yeni mini oyun: dövme (hedef + son üç hamle kuralı); bonus kademeleri aletin aşınmasına bağlanır. Sonra şahmerdan (Create) bunu devralır</td></tr>
+        <tr><td>Bloomery, sünger demir, yüksek fırın, çelik</td><td>Taş ocak doğrudan demir kütle veriyor</td><td class="st part">kısmen</td><td>Demir kütle örste dövülmeden işe yaramasın; çelik için körüklü, katmanlı yüksek fırın (çok bloklu yapı)</td></tr>
+        <tr><td>Çökme ve destek kirişi</td><td>Mağarada derinliğe göre tavan çökmesi; fizik oturumunda kaya düşmesi</td><td class="st part">kısmen</td><td>Destek kirişi çökme ihtimalini düşürsün; çöken cevher kalite kaybetsin</td></tr>
+        <tr><td>Beş besin grubu, en yüksek can</td><td>Tek tokluk çubuğu; ekmek, et, yemiş</td><td class="st none">yok</td><td>Birkaç besin grubu (tahıl, meyve, protein); çeşitlilik en yüksek canı belirler: tarımın ve avcılığın sürekli sebebi</td></tr>
+        <tr><td>Bozulma ve koruma</td><td>Yiyecek bozulmuyor</td><td class="st none">yok</td><td>Son kullanma tick'i; çömlek, tuzlama, tütsüleme ömrü uzatır: çömlekçiliğe gerçek bir iş</td></tr>
+        <tr><td>Ekin sıcaklık/nem aralığı, NPK</td><td>Tarla her yerde, her mevsim aynı</td><td class="st none">yok</td><td>Mevsim ve nem (suya yakınlık, sulama); toprağın yorulması ve nöbet ekimi</td></tr>
+        <tr><td>Hayvan alışkanlığı, cinsiyet, yaşlanma</td><td>Yabanıl güven zamanla azalıyor; ağılda aynı türden iki hayvan</td><td class="st part">kısmen</td><td>Evcil hayvanda da alışkanlık; yaşlanma; eş şartı cinsiyetli olabilir</td></tr>
+        <tr><td>Boyut ve ağırlık, aşırı yük</td><td>Kapasite yalnız adet (40, torbayla 55)</td><td class="st part">kısmen</td><td>Ağır eşyalar (örs, kütük) yavaşlatsın; fizik oturumunun parçalarıyla uyumlu</td></tr>
+        <tr><td>Enlem/boylam iklimi, mevsimler</td><td><code>climate(seed, tx, ty)</code>: sıcaklık ve nem, mevsim, hava</td><td class="st have">var</td><td>İklimi ekinlere ve cevherlere bağla</td></tr>
+        <tr><td>Oyun içi Saha Rehberi</td><td>Rehber bandı, defter, algı</td><td class="st have">var</td><td>TFC'nin hatasını tekrarlama: dövme kuralı, alaşım oranı oyunun içinde görünsün</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- VINTAGE STORY -->
+  <section id="vs">
+    <h2><small>Bağımsız oyun · kendi motoru</small>Vintage Story</h2>
+    <p class="thesis">TerraFirmaCraft'ın fikirleri, Minecraft'ın sınırları olmadan, kendi motorunda. Zanaat bir menü değil, dünyada voksel voksel yapılan bir iş. Gerçekçiliğin üstüne bir gizem ve tehlike katmanı biner. Oyunun neredeyse tamamı veri dosyalarından kurulur.</p>
+    <p>Bizim için iki yönden özel: ALAZ gibi kendi motoruyla yazılmış bir oyun (C# / .NET) ve TFC'nin geliştiricilerinden birinin oyunu. TFC'nin derslerinin çoğu burada uygulanmış: sayılar oyunun içinde görünür, zanaat sahnenin içindedir.</p>
+    <div class="flow" aria-label="Vintage Story ilerlemesi">
+      <span>yontma</span><i>→</i><span>kil şekillendirme</span><i>→</i><span>çukur fırın</span><i>→</i><span>bakır döküm</span><i>→</i><span>bronzlar</span><i>→</i><span>bloomery: demir</span><i>→</i><span>sementasyon: çelik</span>
+    </div>
+
+    <h3>Zanaat: voksel voksel</h3>
+    <div class="grid2">
+      <div>
+        <span class="tag">Yontma ve kil şekillendirme</span>
+        <p>Taş yontmada turuncu kareler sol tıkla koparılır. Kil şekillendirmede küçük kil küpleri (voksel) katman katman dizilerek kap kurulur; bir "katmanı çoğalt" aracı işi hızlandırır. Mavi kil ya da ateş kili gerekir.</p>
+      </div>
+      <div>
+        <span class="tag">Çukur fırın</span>
+        <p>Bir blok derinliğinde çukura 1–4 ham çömlek, üstüne kuru ot, dal ve yakıt (odun ya da turba). Pişirme yaklaşık 20 oyun saati sürer, yakıt türü süreyi değiştirir. Yağmur söndürür (yanmaz bir çatı önerilir), ateş 2 bloğa kadar yayılır. Pota ve alet kalıpları fırın ister.</p>
+      </div>
+      <div>
+        <span class="tag">Dövme: voksel örs</span>
+        <p>Bir külçe <span class="num">42</span>, bir levha <span class="num">81</span> vokseldir. Sıcak külçe örse konup ürün seçilince iki çizgi çıkar: yeşil eklenecek, mor kaldırılacak yer. Çekiç hamleleri: <b>ağır vuruş</b> (kenarda bir katman bastırır, ortada yayar), <b>şişirme</b> (yönlü; vokseli yukarı ya da yana iter), <b>kesme</b> (bir vokseli kalıcı alır; sünger demirde 3×3 cüruf temizler). Malzeme eksikse üstüne bir sıcak külçe daha (+42 voksel). Baştan almak için keski iş parçasını <span class="num">20</span> parçaya böler, parçalar yeniden eritilir: hata cezalandırılmaz.</p>
+      </div>
+      <div>
+        <span class="tag">Isı, yakıt, su verme</span>
+        <p>Metallerin çoğu eritme noktasının <span class="num">%50</span>'sinin üstünde işlenir; sünger demir <span class="num">700 °C</span> üstünde. Yakıt sıcaklığı belirler: odun kömürü <span class="num">750 °C</span>, kok <span class="num">800 °C</span>. Ocak en çok 5 yakıt ve 4 külçe alır. Soğuyan iş parçası ilerlemesini kaybetmeden yeniden ısıtılır. Demir ve çelik aletlere su verilebilir: dayanıklılık, hız ya da hasar artar ama alet kırılabilir.</p>
+      </div>
+      <div>
+        <span class="tag">Çelik: sementasyon</span>
+        <p>Tek seferde <span class="num">16 demir külçe + 40 karbon (odun kömürü ya da kok) + 160 yakıt</span>; karbon en az 1300 °C'de yanmalı. Karbürleme <span class="num">160 saat</span> (≈ 6,7 oyun günü) sürer, 16 kabarcıklı çelik çıkar; bu da ocakta ısıtılıp örste cüruftan arındırılır (801 °C üstü). Refrakter tuğla kademeleri (kuvars, olivin, ilmenit) daha üst öğütücü kademesi ister ve her pişirmede daha az hasar alır (%10, %5, %0,1).</p>
+      </div>
+      <div>
+        <span class="tag">Alet kademeleri (örnek: arama kazması)</span>
+        <p><span class="num">altın 60 · gümüş 80 · bakır 150 (kademe 2) · kalay bronz 250 · bizmut bronz 300 · siyah bronz 350 (kademe 3) · demir 650 · meteor demiri 900 (kademe 4) · çelik 1625 (kademe 5)</span> dayanıklılık; taş kazma hızı 2,5×'ten 5,5×'e. Bakır ve bronz kafalar dökülür (100 birim), diğerleri dövülür; kafa bir dalla birleşir.</p>
+      </div>
+    </div>
+
+    <h3>Makineler, arama, beden</h3>
+    <div class="grid2">
+      <div>
+        <span class="tag">Mekanik güç: direnç toplamı</span>
+        <p>Yel değirmeni ve su çarkı tork üretir; her makinenin bir direnci var: <span class="num">öğütücü 0,085 · el değirmeni 0,1 · şahmerdan 0,1585+ · aks 0,0005</span>. Tek yelken seti rüzgârlı havada bir el değirmenini yavaşça döndürür; şahmerdan iki üç set ister; büyük değirmen 10 set alır. El değirmeni elle de çevrilir: güç önce elle, sonra rüzgârla. Şahmerdan dövmeyi otomatikleştirir ama elle dövmenin kurallarına uyar; fazla kesilen vokseli geri kazandırır.</p>
+      </div>
+      <div>
+        <span class="tag">Arama kazması: iki mod</span>
+        <p><b>Yoğunluk modu:</b> 16 blok içinde üç kaya bloğu örnekler, bölgede hangi cevherin binde kaç olasılıkla bulunduğunu söyler; yerini söylemez (1 dayanıklılık). <b>Düğüm modu:</b> kırılan bloğun 6 blok çevresini tarar, yakındaki yatağın yönünü ve büyüklüğünü söyler (2 dayanıklılık). Önce yoğunlukla bölge seçilir, sonra düğümle yer. Okumalar konuma bağlıdır.</p>
+      </div>
+      <div>
+        <span class="tag">Tokluk ve besin</span>
+        <p>Tokluk en çok <span class="num">1500</span>; saniyede <span class="num">0,24</span> (dururken), <span class="num">0,96</span> (normal), <span class="num">2,46</span> (koşarken) azalır; soğuk, zırh, sol elde eşya hızlandırır. Beş besin: protein, sebze, tahıl, meyve, süt ürünü; her 100 tokluk o gruba 40 besin ekler, besin zamanla azalır. Temel can <span class="num">15</span>; her dolu grup <span class="num">+2,5</span> (en çok +12,5). Çömlekte yemek ve turtalar, içindeki malzemeye göre tokluk azalmasını bir süre durdurur.</p>
+      </div>
+      <div>
+        <span class="tag">Bozulma ve koruma</span>
+        <p>Her yiyeceğin tazelik ve bozulma süresi var; sıcak iklim bozulmayı <span class="num">2,5×</span>'e kadar hızlandırır, çok soğuk <span class="num">0,1×</span>'e kadar yavaşlatır. Kiler (en çok 7×7×7, karanlık, ≤ 5 °C) iklim etkisini kaldırır. Yağ ya da balmumuyla mühürlü küp bozulmayı 10 kat yavaşlatır; depolama kabı sebzede %75, tahılda %50 korur. Tuzlama 480 saat, turşu 336 saat; bal ve meyveyle reçel.</p>
+      </div>
+      <div>
+        <span class="tag">Hayvancılık: nesiller</span>
+        <p>Yabani hayvan 0. nesildir; yavru anneden bir nesil yukarıdır. <b>Nesil 1</b> sevilir, <b>2</b> iple çekilir, <b>3</b> süt verirken direnmez, <b>5</b> yavrusu sepette taşınır, <b>10</b> tamamen uysal. Dişi yemlikten yeterince yemeli (domuz, koyun, keçi 10 porsiyon; tavuk 4; tavşan 2), erkek 10 blok içinde olmalı. Gebelik tavşan ve tavukta 5, diğerlerinde 20–25 gün. Hayvanın kilosu (%50–100) verimi belirler, soğuk düşürür. Koyun ve keçi doğumdan sonra 21 gün süt verir.</p>
+      </div>
+      <div>
+        <span class="tag">Zamansal kararlılık</span>
+        <p>Kişisel kararlılık (mavi dişli) ve yerel kararlılık (dünya üretiminde %0–150; yeraltı genelde kararsız). Eşikler: <span class="num">%60</span> altı ses, <span class="num">%25</span> altı yaratıklar, <span class="num">%12</span> altı hasar ve görüntü bozulması, <span class="num">%7</span> altı gökte dev dişliler. Zamansal fırtınalar 10–15 günde bir, 2,4–4,8 saat sürer, önceden haber verilir; ilk fırtına asla ağır değildir. Kararlı bir yerde durmak geri kazandırır. Dünya ayarlarından kapatılabilir.</p>
+      </div>
+      <div>
+        <span class="tag">Veri ve modlama</span>
+        <p>Oyunun neredeyse her özelliği JSON dosyalarına dayanır. Üç mod türü: tema paketi (yalnız görünüm), içerik modu (JSON ekler ya da değiştirir), kod modu (C#). Aynı yoldaki dosya orijinalin yerine geçer; bir yama katmanı dosyayı okunmadan önce değiştirir. Rehber, evrensel modların yamaları sunucu tarafında yapmasını öneriyor.</p>
+      </div>
+    </div>
+
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Zanaat sahnenin içinde: dövme ve kil işi dünyada, gerçek bir nesnenin üzerinde yapılıyor; hata geri dönüştürülebiliyor.</li>
+      <li>TFC'nin dersçiliği yumuşatılmış: yeşil ve mor çizgiler işi açıkça gösteriyor, sayılar oyun içinde okunuyor.</li>
+      <li>Mekanik güç sade (tork ve direnç toplamı) ve tarihsel: el değirmeni → yel değirmeni → şahmerdan.</li>
+      <li>Nesil sistemi evcilleştirmeyi gerçekteki gibi kuşaklar süren bir sürece çeviriyor.</li>
+      <li>Zamansal fırtınalar haber verilen, düzenli bir tehdit ritmi; yeraltının zenginliğini riskle dengeliyor ve dünyaya bir gizem veriyor.</li>
+      <li>Veriye dayalı yapı, içerik modlarını kod bilmeden mümkün kılıyor.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Yavaşlık: çelik bir hafta, gebelik 20–25 gün; sabırsız oyuncu kopuyor.</li>
+      <li>Şahmerdan bile elle dövme kurallarına bağlı; tam otomasyon yok, tekrar yorucu.</li>
+      <li>Zamansal korku herkese uymuyor; bu yüzden kapatılabilir yapılmış.</li>
+    </ul>
+
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Vintage Story</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Kendi motoru, JSON ağırlıklı içerik</td><td>Kendi Rust motoru, <code>rules.toml</code></td><td class="st have">var</td><td>İleride içerik modları: aynı yoldaki dosya ezer, yama katmanı; coop'ta kural sağlama toplamı zaten eşitliği koruyor</td></tr>
+        <tr><td>Voksel dövme (yeşil ekle, mor çıkar)</td><td>Yontma: kenara nişan + güç, sektörlerde kalan kalınlık</td><td class="st part">akraba</td><td>Dövme için iki seçenek: TFC tarzı (çubuk + son üç hamle kuralı, ucuz) ya da VS tarzı (2D ızgara külçe, hedef şekil; yontmaya en yakın). Öneri: VS tarzı 2D ızgara</td></tr>
+        <tr><td>Hatalı iş keskiyle parçaya, yeniden erir</td><td>Başarısız el işinde malzeme gidiyor</td><td class="st part">farklı</td><td>Metal işinde hata geri dönüşsün: cezalandırma ilkesi</td></tr>
+        <tr><td>Katman katman kil</td><td>Halka halka çömlek (yığma oyunu)</td><td class="st have">var</td><td>Aynı ruh; kalıplar da böyle şekillendirilebilir</td></tr>
+        <tr><td>İşlenebilirlik = eritme noktasının %50'si; yakıt sıcaklığı</td><td>Isı yok</td><td class="st none">yok</td><td>Isı sistemine iki veri kuralı: metal çalışma eşiği, yakıtın en yüksek sıcaklığı (odun &lt; odun kömürü &lt; kok): kademe = erişim</td></tr>
+        <tr><td>Su verme (riskli bonus)</td><td>Kalite: başarısız, iyi, ince iş</td><td class="st part">kısmen</td><td>Demir çağında su verme: kısa bir zamanlama oyunu, bonus ya da çatlak</td></tr>
+        <tr><td>Tork ve direnç toplamı</td><td>Su çarkı alan etkisi</td><td class="st part">kısmen</td><td>Güç ağının ilk sürümü için Create'ten daha sade model: kaynak torku ≥ dirençlerin toplamı (tam sayı, binde bir). El değirmeni elle de dönsün</td></tr>
+        <tr><td>Arama kazması: yoğunluk + düğüm</td><td>Gizli damar yok</td><td class="st none">yok</td><td>Jeoloji adımı için hazır model: bölgede ne var (binde) ve yakın yatağın yönü; seed'den deterministik</td></tr>
+        <tr><td>Beş besin, +2,5 can</td><td>Tek tokluk</td><td class="st none">yok</td><td>Besin grupları için somut ölçü: dolu grup başına küçük bir en yüksek can artışı</td></tr>
+        <tr><td>Kiler, mühürlü küp, tuzlama</td><td>Bozulma yok</td><td class="st none">yok</td><td>Bozulma eklenince çömlek (küp) ve kiler gerçek bir iş olur</td></tr>
+        <tr><td>Nesiller (anneden +1)</td><td>Evcilleştirme: 3 yemiş, işçi olur; ağılda yavru</td><td class="st part">kısmen</td><td>Yavru neslini taşısın: üst nesil daha uysal ve daha verimli (öküzün kapasitesi, atın hızı)</td></tr>
+        <tr><td>Zamansal kararlılık ve fırtınalar</td><td>Algı sistemi dünyanın görünüşünü değiştiriyor; mağarada derinlik riski</td><td class="st part">fikir</td><td>Tasarım kararı: ALAZ'ın bir gizem katmanı olacak mı? Final ("oyunun içinde oyun") ile tematik bağ kurulabilir. Açık soru</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- CREATE -->
+  <section id="create">
+    <h2><small>Mekanik mühendislik</small>Create</h2>
+    <p class="thesis">Güç bir sayı değil, dönen bir mildir. Her makine dünyada iş görür, her eşya akarken görünür. Oyuncu tarif seçmez, bir düzenek tasarlar.</p>
+    <div class="grid2">
+      <div>
+        <span class="tag">Güç modeli</span>
+        <p>Enerji dönme hareketidir ve iki bileşeni vardır. <b>Hız (RPM)</b> makinenin ne kadar hızlı çalıştığını belirler. <b>Stres (SU)</b> ağın taşıyabileceği toplam yüktür: her kaynak kapasite verir, her makine kapasite tüketir. Kapasite aşılırsa tüm ağ durur. Büyük dişli küçüğü çevirince hız iki katına çıkar; hız ve kapasite ayrı ayarlanır.</p>
+      </div>
+      <div>
+        <span class="tag">Kaynaklar (varsayılan)</span>
+        <p><span class="num">El krankı 32 RPM / 256 SU</span> · <span class="num">Su çarkı 8 RPM / 256 SU</span> · <span class="num">Büyük su çarkı 4 RPM / 512 SU</span> · <span class="num">Yel değirmeni 1–16 RPM, en çok 8 192 SU</span> · <span class="num">Buhar motoru 16–64 RPM, 2 048–16 384 SU</span>. Su çarkının gücü, akan suya ne kadar değdiğine bağlı.</p>
+      </div>
+      <div>
+        <span class="tag">Makineler</span>
+        <p>Değirmen taşı (öğütme), pres (levha), fan (suyun ya da ateşin önünden geçen eşyayı toplu yıkar ya da pişirir), karıştırıcı + ısıtıcı (alaşım), kırma çarkları, testere, yerleştirici (deployer), matkap ve hasatçı. Hiçbirinin menüsü yok; eşya bandın üstünden geçerken işlenir.</p>
+      </div>
+      <div>
+        <span class="tag">Düzenekler ve trenler</span>
+        <p>Piston, yatak, portal mili ya da halatla bağlanan blok grupları birlikte hareket eder ve üstündeki makineler çalışmaya devam eder: dönen tarla hasatçısı, ilerleyen tünel matkabı. Pirinç çağından sonra ray, istasyon, sinyal ve sefer planıyla trenler gelir.</p>
+      </div>
+    </div>
+    <div class="flow" aria-label="Create ilerleme zinciri">
+      <span>andezit alaşımı</span><i>→</i><span>su çarkı / yel</span><i>→</i><span>pres, değirmen, fan</span><i>→</i><span>pirinç çağı</span><i>→</i><span>akıllı lojistik</span><i>→</i><span>hassas mekanizma</span><i>→</i><span>trenler</span>
+    </div>
+    <div class="grid2">
+      <div>
+        <span class="tag">Sıralı montaj</span>
+        <p>Hassas mekanizma, bir altın levhanın sırayla birkaç yerleştiriciden ve presten geçmesiyle yapılır; döngü birkaç kez tekrarlanır. Ara adımlarda bir kısmı hurda çıkar, bu yüzden oyuncu bir bant döngüsüyle otomatikleştirir. Zanaat, makine hattına dönüşür.</p>
+      </div>
+      <div>
+        <span class="tag">Öğretme: Ponder</span>
+        <p>Bir bloğun üstünde bir tuşu basılı tutunca oyunun içinde küçük bir sahne açılır ve makinenin nasıl kurulduğu canlandırılır. Metin yerine gösterme.</p>
+      </div>
+    </div>
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Kısıt bir bulmaca: stres kapasitesi "her şeyi tek ağa bağla" yerine "hangi makine nereden güç alsın" sorusunu sordurur.</li>
+      <li>Görünürlük öğretir: bant tıkandığında ya da ağ durduğunda sebep gözle görülür. Menülü makinelerde bu bilgi gizlidir.</li>
+      <li>Kademeler az ve malzemeyle tanımlı (andezit, pirinç). Resmi tanıtımına göre amaç, tasarım kararlarını mümkün olduğunca oyuncuya bırakmak.</li>
+      <li>Fabrika aynı zamanda bir yapı: estetik inşa ile mühendislik tek eylem.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Çok sayıda hareketli parça performansı düşürüyor.</li>
+      <li>Öğrenme eğrisi dik; Ponder olmadan oyuncu kayboluyor.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Create</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Mil, dişli, RPM ve stres ağı</td><td>Su çarkı: 6 m içindeki istasyonlar iki kat hızlı (görünmez alan etkisi)</td><td class="st part">kısmen</td><td>Su çarkı → mil → dişli → makine; kapasite ve hız tam sayı, deterministik (lockstep için şart)</td></tr>
+        <tr><td>Değirmen taşı</td><td>Un elde öğütme taşıyla, mini oyunla yapılıyor</td><td class="st part">kısmen</td><td>Su değirmeni unu kendisi öğütür: elde öğütme ilk adım, değirmen otomasyonu olur</td></tr>
+        <tr><td>Bantta görünen eşya</td><td>Fizik oturumu: toplanan eşya yere parça olarak düşüyor</td><td class="st part">kısmen</td><td>Parçaları taşıyan bir bant ya da oluk: lojistik dünyada görünür</td></tr>
+        <tr><td>Sıralı montaj (hurda çıkabilir)</td><td>Çok adımlı el işi; başarısız olunca malzeme gider</td><td class="st have">var (elde)</td><td>Sonraki çağlarda aynı adımlar makinelere devredilir</td></tr>
+        <tr><td>Ponder</td><td>Rehber bandı + algıya göre görünen dünya</td><td class="st part">kısmen</td><td>Bir binanın üstünde tuşla küçük canlandırma: "böyle kurulur"</td></tr>
+        <tr><td>Düzenekler</td><td>Yok</td><td class="st none">yok</td><td>Aeronautics bölümüne bak: fizik oturumunun alanı</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- POWER ADDONS -->
+  <section id="guc">
+    <h2><small>Create eklentileri · enerji</small>Güç eklentileri: buhardan nükleere</h2>
+    <p class="thesis">Create'in tek para birimi dönme hareketidir. İyi eklentiler yeni bir enerji türü eklerken ya dönmeye geri bağlanır ya da arada kayıplı bir köprü kurar. Enerji türü değiştikçe yeni bir çağ başlar.</p>
+    <div class="flow" aria-label="Güç eklentilerinin ilerleme zinciri">
+      <span>su / yel</span><i>→</i><span>buhar: bronz, dökme demir, çelik</span><i>→</i><span>dizel: petrol, pompa</span><i>→</i><span>elektrik: bobin + mıknatıs</span><i>→</i><span>devreler: Ohm yasası</span><i>→</i><span>güneş ısısı, nükleer</span>
+    </div>
+    <div class="grid2">
+      <div>
+        <span class="tag">Create: Steam Powered</span>
+        <p>Buhar makinesi, volan, dişli, yanma odası ve kazan üç malzeme kademesinde gelir: <b>bronz, dökme demir, çelik</b>. Makine gücü, buhar tüketimi ve dişlilerin stres yükü ayarlanabilir. Amacı daha "gerçekçi" güç üretimi; ilhamı Create'in eski fırın motoru. İsteğe bağlı dinamo dönmeyi elektriğe çevirir. Plan: dev dişliler, çok bloklu kazanlar, buharlı hava gemisi.</p>
+      </div>
+      <div>
+        <span class="tag">Create: Diesel Generators</span>
+        <p>Bazı bölgelerin altında ham petrol yatağı var; petrol tarayıcıyla bulunur, üstüne pompa kurulur ve petrol ana kayaya inen bir boruyla çekilir. Motorlar yakıt yakıp dönme üretir. Yakıt türleri (benzin, dizel, biyodizel, bitkisel yağ) motor hızını, stres kapasitesini ve tüketimi değiştirir. Büyük ağlardaki motorların takılma yaptığı bir hata düzeltilmiş: güç ağları performans riski taşıyor.</p>
+      </div>
+      <div>
+        <span class="tag">Create Crafts &amp; Additions</span>
+        <p>Elektrik ile dönme arasında köprü. <b>Elektrik motoru</b> elektriği dönmeye, <b>alternatör</b> dönmeyi elektriğe <span class="num">%75</span> verimle çevirir. Haddehane (rolling mill) bir dönme makinesidir; tel ve çubuk üretir. Çok bloklu akümülatör enerjiyi depolar.</p>
+      </div>
+      <div>
+        <span class="tag">Create: New Age</span>
+        <p>Elektrik, dönen bakır bobinlerin çevresindeki mıknatıslardan gelir: bobin ne kadar hızlı dönerse ve mıknatıs ne kadar iyiyse çıktı o kadar yüksek. Mıknatıslar beş kademe (manyetit, kızıltaş, katmanlı, akılı, netherit); iyi mıknatıs daha az dönme harcar. Rehber, katman eklemeden önce tek katmanı hızlandırmayı öneriyor, çünkü verim hızla doğrusal artıyor. Çıkış, bobinin önündeki karbon fırçadan alınır.</p>
+      </div>
+      <div>
+        <span class="tag">New Age: teller, enerjilendirici, ısı</span>
+        <p>Tellerin bağlantı noktalarının menzili sınırlı; uzak mesafe için ara bağlantı gerekir. Bakır tel, bakır levhanın mekanik testereden geçirilmesiyle yapılır. <b>Enerjilendirici</b> aynı anda hem dönme hem elektrik isteyen bir üretim istasyonu. Ayrı bir <b>ısı ağı</b> güneş panelleri ve reaktörlerin ısısını taşır. Çok bloklu toryum reaktörü ısı üretir; bu ısı Create kazanlarında suyu kaynatır, buhar makinesi döner. Yeni enerji yine dönmeye bağlanıyor.</p>
+      </div>
+      <div>
+        <span class="tag">Create: Power · Create: Power Grid</span>
+        <p><b>Power:</b> güneş paneli, yanmalı ve jeotermal üretim; dinamo dönmeyi elektriğe, motor elektriği dönmeye çevirir. <b>Power Grid:</b> elektriği gerçek fizik yasalarıyla, ağ analiziyle simüle eder: Ohm yasası, Kirchhoff'un düğüm kuralı, akımın akması için devrenin kapanması. Yüksek gerilim daha az kayıpla taşınır, transformatörler var. Oyuncu tek blokluk devre kartları tasarlayabilir.</p>
+      </div>
+    </div>
+    <h3>Ortak zihniyet</h3>
+    <ul>
+      <li><b>Tek ana para birimi, kayıplı dönüşümler.</b> Dönme merkezde kalıyor; elektrik, ısı ve buhar ona bağlanıyor ve her dönüşüm bir şey kaybettiriyor (alternatör %75, bobin dönme harcar). Bu, "hangi enerjiyi nerede kullanayım" kararını anlamlı kılıyor.</li>
+      <li><b>Malzeme kademesi motorun kendisinde.</b> Steam Powered'da bronz, dökme demir ve çelik makineler aynı işin daha güçlü sürümleri: çağ, makinenin malzemesinde görünüyor.</li>
+      <li><b>Yakıt bir lojistik ve keşif sorunu.</b> Petrol yatağını bulmak, pompalamak, taşımak, rafine etmek; enerji coğrafyaya bağlanıyor.</li>
+      <li><b>Gerçekçilik ölçeklenebilir.</b> New Age gerçekçi olmayan tarifleri bir veri paketiyle kapatmaya izin veriyor; Power Grid ise gerçek devre yasalarına kadar gidiyor. Gerçekçilik düzeyi bir ayar.</li>
+      <li><b>Isı da bir ağ.</b> Isı üretilip taşınabilen bir kaynak; reaktör ile kazan arasında köprü.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Her yeni enerji türü yeni bir arayüz ve yeni hata türleri demek; eklentiler arası uyumsuzluk sık (bir topluluk listesi, Create'in Ekim 2025 güncellemesinin eklentileri bozabileceğini uyarıyor).</li>
+      <li>Ağ hesapları pahalı: büyük ağlarda motorların ve tellerin takılma yaptığı bildiriliyor.</li>
+      <li>Gerçek devre çözümü (Power Grid) oyuncu için ağır olabilir; oyunu bir elektrik dersine çevirmemek gerekir.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Eklenti fikri</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Dönme ana para birimi</td><td>Su çarkı tek güç kaynağı, alan etkisi olarak</td><td class="st part">kısmen</td><td>Mekanik güç ağı (yol haritası 4) bütün sonraki enerjilerin merkezi olur</td></tr>
+        <tr><td>Bronz, dökme demir, çelik buhar makinesi</td><td>Çağlarımız aynı sırada: bronz → demir → (çelik)</td><td class="st none">yok</td><td>Buhar çağı: kazan + silindir; makinenin malzemesi basıncı ve gücü belirler (kademe = erişim)</td></tr>
+        <tr><td>Isı ağı ve kazan</td><td>Ocak sıcaklığı fikri (Tinkers bölümü), kamp ateşi ısıtıyor</td><td class="st part">fikir</td><td>Isı tam sayı bir kaynak olsun: ocak, kazan ve sonra reaktör aynı modeli kullansın</td></tr>
+        <tr><td>Kayıplı dönüşüm (alternatör %75)</td><td>Yok</td><td class="st none">yok</td><td>Her dönüşümün verimi <code>rules.toml</code>'da; kayıp gerçek değerlere yakın</td></tr>
+        <tr><td>Bobin + mıknatıs, tel menzili, motor</td><td>Tasarımda "elektronik çağı" var, içerik yok</td><td class="st none">yok</td><td>Elektrik çağının ilk adımı: dinamo (dönme → elektrik), tel, motor; mıknatıs malzemesi verimi belirler</td></tr>
+        <tr><td>Gerçek devre yasaları (Power Grid)</td><td>Final: oyuncu oyunun kendisini yapar (bilgisayar)</td><td class="st part">fikir</td><td>Elektronik çağında devreler gerçek yasalarla; deterministik olması için sabit noktalı ve küçük ağlarla çözülmeli. Bilgisayara giden yol bu</td></tr>
+        <tr><td>Petrol yatağı ve yakıt türleri</td><td>Cevherler yüzeyde ve mağarada</td><td class="st none">yok</td><td>Derin kaynaklar haritada gizli, bir aletle bulunur; yakıt türü motoru değiştirir</td></tr>
+        <tr><td>Güneş ısısı, nükleer</td><td>Uzak çağlar</td><td class="st none">yok</td><td>Geç çağ; ısı ağı varsa kazanlara bağlanır</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- AERONAUTICS -->
+  <section id="aero">
+    <h2><small>Create eklentisi · fizik</small>Create Aeronautics</h2>
+    <p class="thesis">Araç bir eşya değil, oyuncunun bloklardan kurduğu bir yapıdır. Fizik dürüsttür: kaldırma kuvveti ağırlıktan azsa uçmaz.</p>
+    <div class="grid2">
+      <div>
+        <span class="tag">Yapı</span>
+        <p>"Simulated" adlı bir mod takımının parçası. <b>Simulated</b> çekirdektir (montaj, kontrol bileşenleri, araçlarla etkileşim). <b>Aeronautics</b> uçan düzenekleri (sıcak hava, pervane, havada duran "levitite" taşı), <b>Offroad</b> tekerlekli kara araçlarını ekler. Uçaklar, arabalar, hava gemileri, biçerdöverler yapılabiliyor.</p>
+      </div>
+      <div>
+        <span class="tag">Fizik altyapısı: Sable</span>
+        <p>Sable, dünyaya "alt seviyeler" ekler: her biri sıradan bloklar ve varlıklar taşıyan, ama kendi konumu ve yönü olan hareketli bir dünya parçası. Varsayılan fizik hattı, Rust ile yazılmış <b>Rapier</b> motorunu kullanıyor.</p>
+      </div>
+      <div>
+        <span class="tag">Kaldırma kuralları</span>
+        <p>Toplam kaldırma ≥ toplam kütle olmalı; yoksa "aşırı yük". Sıcak hava soğudukça kaldırma azalır, bu yüzden balon bir ısı kaynağının yanında kalmalı. İrtifa arttıkça hava basıncıyla kaldırma düşer. Nether'de balonlar daha az kaldırır. Isı pompası dönme gücü ister ve RPM ile ne kadar sıcak hava basılacağı, yani irtifa ayarlanır.</p>
+      </div>
+      <div>
+        <span class="tag">İtiş ve kontrol</span>
+        <p>Pervaneler Create'in mil ağından güç alır; zarf bloğunun içinden geçen mil, balonda delik açmadan pervaneye ulaşır. Kontrol masası yön tuşlarıyla, kızıltaş sinyalleriyle ya da otomatik pilotla yönetilir (bir eklenti, ara noktalı A* rota planlaması ekliyor).</p>
+      </div>
+    </div>
+    <p class="note">Not: Aeronautics'in fizik ayrıntıları için resmi belge az. Kaldırma, ısı ve irtifa kuralları, Create Balloon ve Create: Propulsion gibi eklenti sayfalarından ve yapı paylaşımlarından derlendi; Create Balloon sayfası tamamen yapay zekâyla yazıldığını belirtiyor. Ayrıntılar sürüme göre değişebilir.</p>
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Araç tasarımı bir mühendislik bulmacası: ağırlığı, kaldırmayı ve itişi dengelemek oyuncunun kendi zaferi.</li>
+      <li>Yeni bir güç sistemi icat etmiyor; Create'in mevcut ağına bağlanıyor. Önceki çağda öğrenilen her şey işe yarıyor.</li>
+      <li>Keşfi değiştiriyor: uzak bir yer artık bir yolculuk değil, bir proje.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Kayan noktalı fizik motorları çok oyunculuda eşitlemeyi zorlaştırıyor; Minecraft sunucu yetkili olduğu için bunu taşıyabiliyor.</li>
+      <li>Büyük hareketli yapılar performans ve kararlılık riski.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Aeronautics</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Bloklardan kurulan araç</td><td>Araba tezgahta yapılan tek eşya; sadece kapasite ekliyor</td><td class="st part">kısmen</td><td>Araba = çerçeve + 2 tekerlek + aks; dünyada bir fizik gövdesi; yükü ve ağırlığı var</td></tr>
+        <tr><td>Kütle ve kaldırma</td><td>Fizik oturumunun gövdeleri (ağaç, parça)</td><td class="st part">kısmen</td><td>Ağırlık, öküzün hızını düşürsün; sal suda yüzsün (kaldırma = hacim)</td></tr>
+        <tr><td>Sıcak hava balonu</td><td>Ateş zaten var; ısı kaynağı tanıdık</td><td class="st none">yok</td><td>Geç çağ hedefi: deri zarf + ateş = ilk uçuş</td></tr>
+        <tr><td>Rapier (kayan nokta)</td><td>Bizim sim sabit noktalı ve lockstep</td><td class="st have">farklı</td><td>Rapier doğrudan kullanılamaz; sabit noktalı kendi fiziğimiz doğru seçim</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- TINKERS -->
+  <section id="tinkers">
+    <h2><small>Alet yapımı ve metal işi</small>Tinkers' Construct</h2>
+    <p class="thesis">Alet parçalardan oluşur ve her parçanın malzemesi aletin karakterini değiştirir. Metal erir, akar, kalıba dökülür. Oyuncu bir alete sahip olur, onu büyütür.</p>
+    <div class="grid2">
+      <div>
+        <span class="tag">Parçalar ve malzemeler</span>
+        <p>Parça yapıcıda bir desen ve bir malzeme seçilir, kafa, bağlama, sap gibi parçalar çıkar. Tinker istasyonunda parçalar birleşip alet olur. Her malzeme istatistik ve bir özellik (trait) getirir: küçük aletler 3, büyük aletler 4 özellik taşır. Bir kafa ideal olarak en az iki farklı alette kullanılır.</p>
+      </div>
+      <div>
+        <span class="tag">Değiştiriciler</span>
+        <p>Keşifte bulunan malzemelerle alete değiştirici (modifier) eklenir; yuvalar sınırlıdır (yükseltme ve yetenek yuvaları). Değiştirici tezgahı eklenen değiştiriciyi geri söker. Alet kalıcı olarak kırılmaz: bozulunca onarılana kadar kullanılmaz, istenirse parçalarına geri dönüştürülür.</p>
+      </div>
+      <div>
+        <span class="tag">Metal işinin kademeleri</span>
+        <p><b>1.</b> Harç (eşit kum, çakıl, kil) pişince kavrulmuş tuğla olur. <b>2.</b> Tuğladan eritici: tek blok, yakıt yakar; güçlü cevherler sıvı lav ister. Döküm masasında kumdan kalıp geçici, altından kalıp kalıcıdır. <b>3.</b> Ergitme ocağı (smeltery): kontrol bloğu, tuğlaya bakır dökülerek yapılır; drenaj blokları ve çok tuğla ister, birçok cevheri birden eritir ve farklı metalleri karıştırıp alaşım yapar. <b>4.</b> Nether: kobalt, alaşım yapmayan ama yan ürün veren dökümhane, yakıt olarak alevli kan.</p>
+      </div>
+      <div>
+        <span class="tag">Öğretme</span>
+        <p>Oyuncu oyuna bir kitapla başlar ("Materials and You"). Kitap, paketteki malzemelere göre kendini günceller.</p>
+      </div>
+    </div>
+    <div class="flow" aria-label="Tinkers ilerleme zinciri">
+      <span>taş/ahşap parçalar</span><i>→</i><span>harç → tuğla</span><i>→</i><span>eritici + kum kalıp</span><i>→</i><span>altın kalıp</span><i>→</i><span>ergitme ocağı · alaşım</span><i>→</i><span>geniş aletler</span><i>→</i><span>kobalt · dökümhane</span>
+    </div>
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>Sahiplik: "bir demir kazma" değil, "benim kobalt kafalı, kemik saplı kazmam". Malzeme keşfi yeni bir kombinasyon demek.</li>
+      <li>Kalıp ikiliği (geçici ve kalıcı) kendi küçük ilerlemesi: önce her döküm için kalıp, sonra yatırım.</li>
+      <li>Kırılmayan aletler oyuncuyu cezalandırmadan bakım ister; kayıp korkusu yerine onarım alışkanlığı.</li>
+      <li>Erime ve döküm görsel ve fiziksel: sıvı metal akar, kalıp dolar.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>İstatistik ve özellik kombinasyonları dengeyi zorlaştırıyor; oyuncu tabloya bakmadan seçemiyor.</li>
+      <li>Parça yapıcı ve tinker istasyonu hâlâ menü ağırlıklı.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Tinkers</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Alet = kafa + bağlama + sap</td><td>Taş balta: keskin taş + dal + 2 lif, adım adım (yonta, yuva, yerleştir, bağla)</td><td class="st part">kısmen</td><td>Kafa, sap ve bağın malzemesi seçilebilsin: çakmaktaşı / bronz / demir kafa; dal / meşe sap; lif / deri / bronz perçin bağ</td></tr>
+        <tr><td>Malzeme özellikleri</td><td>Aletlerin sabit hız katsayısı var</td><td class="st none">yok</td><td>Az sayıda, okunur özellik: çakmaktaşı keskin ama çabuk aşınır, bronz dayanıklı, demir hızlı</td></tr>
+        <tr><td>Kumdan geçici, altından kalıcı kalıp</td><td>Döküm henüz yok</td><td class="st none">yok</td><td>Kil kalıp (bir dökümde kırılır, tarihsel olarak da doğru), sonra bronz kalıp (kalıcı)</td></tr>
+        <tr><td>Eritici → ergitme ocağı → alaşım</td><td>Taş ocak: tek bina, alaşım bir tarif</td><td class="st part">kısmen</td><td>Sıcaklık gerçek: kalay ~232 °C, bakır ~1085 °C, demir ~1538 °C. Ocak kademesi (açık ateş, kil ocak, körüklü ocak) neyin eridiğini belirler: kademe = erişim</td></tr>
+        <tr><td>Kırılmayan, onarılan alet</td><td>Aşınma yok</td><td class="st none">yok</td><td>Aşınma eklenince bu kural: alet kaybolmaz, körleşir; tezgahta onarılır</td></tr>
+        <tr><td>Kendini güncelleyen kitap</td><td>Defter: bilinen tarifler + ipuçları</td><td class="st have">var</td><td>Defterde malzeme sayfası: hangi malzeme neye iyi</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- MODULAR MACHINERY -->
+  <section id="mm">
+    <h2><small>Veriye dayalı makineler</small>Modular Machinery</h2>
+    <p class="thesis">Makine kodla değil veriyle tanımlanır: bir yapı şekli, giriş ve çıkış hazneleri, tarifler. Mod tek başına içerik vermez; içerik üretenin aracıdır.</p>
+    <div class="grid2">
+      <div>
+        <span class="tag">Makine tanımı</span>
+        <p>Ortada bir kontrol bloğu, çevresinde belirli bir desende parçalar. Desen doğruysa kontrol bloğu makineyi kurulmuş sayar ve tariflerini çalıştırır. Tanım bir JSON dosyasıdır: kayıt adı, görünen ad ve yapı düzeni (bir harf haritası, her harf bir blok). Bir plan (blueprint) ile kontrol bloğuna tıklanınca gereken yapı önizlenir.</p>
+      </div>
+      <div>
+        <span class="tag">Hazneler</span>
+        <p>Eşya giriş/çıkış veriyolları, sıvı hazneleri ve enerji haznesi, makinenin dünyayla bağlantısıdır ve kademelidir. Giriş haznesi olmayan makine eşya isteyen tarifi çalıştıramaz; çıkış haznesi dolarsa iş durur.</p>
+      </div>
+      <div>
+        <span class="tag">Tarifler</span>
+        <p>Tarifler ayrı dosyalardadır ve bir makineye bağlıdır. Her tarifin bir süresi (tick) ve bir gereksinim listesi vardır; her gereksinimin türü (eşya, sıvı, enerji), yönü (girdi ya da çıktı), miktarı ve isteğe bağlı bir olasılığı olur.</p>
+      </div>
+      <div>
+        <span class="tag">Tarif değiştiricileri</span>
+        <p>Yapıda belirli bir konuma normal blok yerine başka bir blok konursa tarif değişir: çıktı iki katı, süre kısa, girdi tüketme olasılığı düşük. Toplamalar önce, çarpmalar sonra uygulanır. Yükseltme, yapının kendisinde görünür.</p>
+      </div>
+    </div>
+    <h3>Neden çalışıyor</h3>
+    <ul>
+      <li>İçerik üretimi koddan ayrılıyor: yeni makine bir veri dosyası.</li>
+      <li>Çok bloklu yapı "büyük makine" hissi veriyor; yükseltme bir menü düğmesi değil, yapıya konan bir parça.</li>
+    </ul>
+    <h3>Tuzaklar</h3>
+    <ul>
+      <li>Oyuncu için anlamı tamamen paketi yapanın elinde; geliştiricileri de "olduğu gibi pakete atılmak için değil" diyor.</li>
+      <li>Her tick yapı doğrulamak pahalı; doğrulama sadece yapı değişince yapılmalı.</li>
+    </ul>
+    <h3>ALAZ'a çeviri</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Modular Machinery</th><th>ALAZ'daki karşılığı</th><th>Durum</th><th>Yapılacak</th></tr></thead>
+      <tbody>
+        <tr><td>Makine ve tarif JSON'da</td><td><code>rules.toml</code>: bina ve tarifler veride, kayıt sağlama toplamı taşıyor</td><td class="st have">var</td><td>—</td></tr>
+        <tr><td>Yapı deseni + kontrol bloğu</td><td>Bina tek tıkla konan tek parça</td><td class="st none">yok</td><td><code>rules.toml</code>'a <code>structure</code> alanı: ocak = taş halka + kil kubbe + körük yuvası; parça parça kurulur</td></tr>
+        <tr><td>Giriş/çıkış hazneleri</td><td>İstasyonların girdi deposu ve çıktısı var</td><td class="st have">var</td><td>Hazneler yapıda bir konuma bağlanabilir: oluk ya da bant oraya akar</td></tr>
+        <tr><td>Tarif değiştiricileri</td><td>Su çarkı ×2 ve saban ×2 kodda sabit (<code>powered</code>, <code>ploughed</code>)</td><td class="st part">kısmen</td><td>Bu etkileri veriye taşı: "körük varsa süre ×0,5", "sabanlı öküz varsa ×2"</td></tr>
+        <tr><td>İçerik üretenin aracı</td><td>Final: oyuncu kendi kaydından yeni dünya başlatır</td><td class="st part">fikir</td><td>Son çağda oyuncu makine tanımlar: "oyunu yapmak" mekaniğin kendisi olur</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <!-- SYNTHESIS -->
+  <section id="sentez">
+    <h2><small>Ortak zihniyet</small>Sentez: ALAZ için yedi ilke</h2>
+    <div class="principles">
+      <div><b>Her şey dünyada ve görünür</b><p>Güç milden akar, eşya yerde ya da bantta durur, araç fiziksel bir cisimdir. Bir şey durduğunda sebebi gözle görülür. (Create, Aeronautics, fizik oturumunun parçaları)</p></div>
+      <div><b>Parçalardan kur, tarif seçme</b><p>Alet parçalardan, makine yapı deseninden, araç bloklardan kurulur. Oyuncu bir listeden değil, bir tasarımdan üretir. (Tinkers, Modular Machinery, Aeronautics)</p></div>
+      <div><b>Kademe erişim demektir</b><p>Yeni malzeme sadece hızlandırmaz, yeni bir iş ya da yer açar: daha sıcak ocak yeni metal, daha sert kazma daha derin oda. Gerçek sıcaklıklar ve sertlikler bunu kendiliğinden verir. (Minecraft, Tinkers)</p></div>
+      <div><b>Cezalandırma, tasarıma davet et</b><p>Alet kaybolmaz, körleşir; başarısız montaj hurda verir ama yolu kapatmaz. Kayıp korkusu yerine bakım ve iyileştirme. (Tinkers, Create)</p></div>
+      <div><b>Gerçek sayılar kuraldır, ama oyunun içinde öğretilir</b><p>Sıcaklık, alaşım oranı, yağış, besin doğrudan oyun kuralı olur; dünyada da doğru olduğu için öğrenmeye değer. TFC'nin zayıf yanını alma: oyuncu bu sayıları bir wikide değil, oyunun içinde (algı, defter, renk) öğrenir. Tekrar eden işi bir sonraki çağda makine devralır. (TerraFirmaCraft)</p></div>
+      <div><b>Risk bir ritimdir</b><p>Tehlike rastgele değil, haber verilen ve tekrar eden bir döngüdür: ilk gece, kış, zamansal fırtına. Oyuncu ona hazırlanır; hazırlık (barınak, kiler, stoğun kendisi) oyunun bir parçası olur. (Vintage Story, TerraFirmaCraft, Minecraft)</p></div>
+      <div><b>Tek güç birimi, kayıplı köprüler</b><p>Dönme merkezde kalır; buhar, ısı ve elektrik ona bağlanır ve her dönüşüm bir şey kaybettirir. Yeni enerji türü yeni bir çağdır, ama önceki çağın ağını çöpe atmaz. (Create güç eklentileri)</p></div>
+    </div>
+    <p class="note">ALAZ'a özgü bir sınır: sim deterministik ve lockstep. Her yeni sistem (güç ağı, araç fiziği, sıcaklık) sabit noktalı tam sayılarla ve sıralı hesaplanmalı. Aeronautics'in kullandığı Rapier gibi kayan noktalı motorlar bu yüzden doğrudan kullanılamaz.</p>
+  </section>
+
+  <hr>
+
+  <!-- ROADMAP -->
+  <section id="yol">
+    <h2><small>Öneri</small>Yol haritası</h2>
+    <p>Sıra bağımlılığa göre: her adım bir sonrakinin zeminini kuruyor.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Adım</th><th>İş</th><th>İlham</th><th>Kimin alanı</th><th>Boyut</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Kademe = erişim: demir cevheri bronz kazma ister, mağaranın derin odaları demir ister; bazı malzemeler biyoma bağlanır</td><td>Minecraft</td><td>Oynanış</td><td>küçük</td></tr>
+        <tr><td class="num">2</td><td>Isı ve döküm: eşya sıcaklığı (renkli ölçek, algıya göre), çukur fırın, kil kalıplar (külçe, alet kafası), kapta eriyen metal mB ile, alaşım yüzde aralığıyla; ocak sıcaklığı neyin eridiğini belirler</td><td>TerraFirmaCraft, Tinkers</td><td>Oynanış</td><td>orta</td></tr>
+        <tr><td class="num">2b</td><td>Dövme: yeni mini oyun (öneri: Vintage Story tarzı 2D ızgara külçe, hedef şekle vur, şişir, kes; hata geri erir), örs kademeleri, dövme bonusu, demirde su verme; demir kütle örste dövülmeden işe yaramaz</td><td>TerraFirmaCraft, Vintage Story</td><td>Oynanış</td><td>orta</td></tr>
+        <tr><td class="num">3</td><td>Parçalı alet ve aşınma: kafa, sap, bağ malzemeleri, birkaç okunur özellik, körleşme ve onarım. Kayıt göçü gerekir (tek parça aletler parçalı olur)</td><td>Tinkers, Minecraft</td><td>Oynanış</td><td>büyük</td></tr>
+        <tr><td class="num">4</td><td>Mekanik güç ağı: su çarkı → mil → dişli; ilk sürüm Vintage Story'nin sade modeliyle (tork ≥ direnç toplamı), sonra Create'in hız ve stres ayrımı; tam sayı; su değirmeni (un), körük (ocak sıcaklığı), şahmerdan (dövme). Demir çağının çekirdeği</td><td>Create</td><td>Oynanış + fizik</td><td>büyük</td></tr>
+        <tr><td class="num">5</td><td>Yapı desenli binalar ve veride değiştiriciler: ocak, değirmen parça parça kurulur; su çarkı ve saban etkileri <code>rules.toml</code>'a taşınır</td><td>Modular Machinery</td><td>Oynanış</td><td>orta</td></tr>
+        <tr><td class="num">6</td><td>Fiziksel araçlar: parçalardan araba ve sal; ağırlık öküzü yavaşlatır; geç çağda sıcak hava balonu</td><td>Aeronautics</td><td>Fizik ağırlıklı</td><td>büyük</td></tr>
+        <tr><td class="num">7</td><td>Isı ağı ve buhar çağı: ısı tam sayı bir kaynak; kazan + silindir; makine malzemesi (bronz, dökme demir, çelik) basıncı belirler; dönmeye bağlanır</td><td>Steam Powered, New Age</td><td>Oynanış + fizik</td><td>büyük</td></tr>
+        <tr><td class="num">8</td><td>Elektrik çağı: dinamo ve motor köprüsü (kayıplı), tel menzili, mıknatıs malzemesi verimi belirler</td><td>Crafts &amp; Additions, New Age</td><td>Oynanış</td><td>büyük</td></tr>
+        <tr><td class="num">9</td><td>Elektronik: gerçek devre yasalarıyla küçük devreler (sabit noktalı çözüm); finale, bilgisayara giden yol</td><td>Power Grid</td><td>Oynanış</td><td>çok büyük</td></tr>
+        <tr><td class="num">10</td><td>Jeoloji ve arama: gizli damarlar, yüzeyde cevher parçaları, iki modlu arama aleti (yoğunluk + düğüm), cevher kaya türüne bağlı; mağarada destek kirişi ve çökmede kalite kaybı</td><td>TerraFirmaCraft</td><td>Oynanış + harita</td><td>büyük</td></tr>
+        <tr><td class="num">11</td><td>Beden ve mevsim: besin grupları en yüksek canı belirler; yiyecek bozulur, çömlek, kiler ve tuzlama korur; hayvan nesilleri; ekinin mevsim ve nem aralığı, toprak yorgunluğu; evcil hayvanda alışkanlık ve yaşlanma; ağır eşyalar yavaşlatır</td><td>TerraFirmaCraft</td><td>Oynanış</td><td>büyük</td></tr>
+        <tr><td class="num">12</td><td>Gizem katmanı (karar bekliyor): Vintage Story'nin zamansal kararlılığı gibi, algı sistemine ve finale bağlanan bir tehlike ve anlatı katmanı</td><td>Vintage Story</td><td>Tasarım</td><td>açık</td></tr>
+        <tr><td class="num">13</td><td>Derin kaynaklar ve yakıtlar: gizli petrol yatakları, bulma aleti, yakıt türleri; geç çağda güneş ısısı ve nükleer</td><td>Diesel Generators, New Age</td><td>Oynanış</td><td>büyük</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <hr>
+
+  <section id="kaynak">
+    <h2><small>Kaynaklar</small>Okunanlar</h2>
+    <div class="sources">
+      <a href="https://slimeknights.github.io/docs/gameplay/tinkers-construct-3">Tinkers' Construct 3 Overview (resmi)</a>
+      <a href="https://github.com/SlimeKnights/TinkersConstruct/wiki/New-in-Tinkers%27-Construct-3">New in Tinkers' Construct 3 (resmi wiki)</a>
+      <a href="https://slimeknights.github.io/docs/design">Tinkers' Construct tasarım belgeleri</a>
+      <a href="https://craftdownunder.co/guides/mods/create">Create rehberi (Craft Down Under)</a>
+      <a href="https://git.grimmauld.de/mirrors/Create/wiki/Andesite-Alloy">Create wiki: Andesite Alloy</a>
+      <a href="https://www.minecraft-guides.com/mod-guides/create-mod-windmill-guide/">Create yel değirmeni, RPM ve stres rehberi</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/create">Create, CurseForge sayfası</a>
+      <a href="https://wondrous-shortbread-bfd221.netlify.app/create/sequenced-assembly">Sıralı montaj (topluluk wikisi)</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/index.html">TerraFirmaCraft Saha Rehberi (resmi, 1.20.1)</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/getting_started/introduction.html">TFC: Giriş, toplama ve yontma</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/getting_started/pottery.html">TFC: Çömlek</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/getting_started/pit_kiln.html">TFC: Çukur fırın</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/getting_started/finding_ores.html">TFC: Cevher, metal ve döküm</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/getting_started/primitive_alloys.html">TFC: İlkel alaşımlar</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/metalworking/anvils.html">TFC: Örsler</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/metalworking/blast_furnace.html">TFC: Yüksek fırın</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/mechanics/bloomery.html">TFC: Bloomery (arama sonucu, eski adres)</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/mechanics/steel.html">TFC: Çelik (arama sonucu, eski adres)</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/core_mechanics/heating.html">TFC: Isıtma</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/core_mechanics/support_beams.html">TFC: Destek kirişleri ve çökme</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/core_mechanics/climate.html">TFC: Takvim ve iklim</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/core_mechanics/food_and_water.html">TFC: Yiyecek ve su</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/en_us/core_mechanics/size_and_weight.html">TFC: Boyut ve ağırlık</a>
+      <a href="https://terrafirmacraft.github.io/Field-Guide/18/en_us/the_world\geology.html">TFC: Jeoloji (1.18 rehberi)</a>
+      <a href="https://terrafirmagreg-team.github.io/Field-Guide-Modern/en_us/the_world/geology.html">TerraFirmaGreg: Jeoloji</a>
+      <a href="https://allthemods.github.io/alltheguides/gravitas2/farming_guide">Gravitas² tarım rehberi (TFC ekinleri)</a>
+      <a href="https://allthemods.github.io/alltheguides/gravitas2/husbandry_guide">Gravitas² hayvancılık rehberi (TFC hayvanları)</a>
+      <a href="https://modrinth.com/mod/terrafirmacraft/version/3.2.0">TerraFirmaCraft 3.2.0 değişiklikleri</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/tfc-anvil-enhancer">TFC Anvil Enhancer (dövme oyununu çözen eklenti)</a>
+      <a href="https://wiki.vintagestory.at/Smithing/en">Vintage Story: Dövme</a>
+      <a href="https://wiki.vintagestory.at/Steel_making/en">Vintage Story: Çelik yapımı</a>
+      <a href="https://wiki.vintagestory.at/Clay_forming/en">Vintage Story: Kil şekillendirme</a>
+      <a href="https://wiki.vintagestory.at/Pit_kiln">Vintage Story: Çukur fırın</a>
+      <a href="https://wiki.vintagestory.at/Special:MyLanguage/Mechanical_Power">Vintage Story: Mekanik güç</a>
+      <a href="https://wiki.vintagestory.at/Special:MyLanguage/Windmill">Vintage Story: Yel değirmeni</a>
+      <a href="https://wiki.vintagestory.at/Prospecting_Pick">Vintage Story: Arama kazması</a>
+      <a href="https://wiki.vintagestory.at/Satiety">Vintage Story: Tokluk ve besin</a>
+      <a href="https://wiki.vintagestory.at/Food_preservation">Vintage Story: Yiyecek koruma</a>
+      <a href="https://wiki.vintagestory.at/Animal_husbandry">Vintage Story: Hayvancılık</a>
+      <a href="https://wiki.vintagestory.at/Temporal_stability">Vintage Story: Zamansal kararlılık</a>
+      <a href="https://wiki.vintagestory.at/Modding:Types_Of_Mod">Vintage Story: Mod türleri</a>
+      <a href="https://wiki.vintagestory.at/The_Asset_System">Vintage Story: Varlık (asset) sistemi</a>
+      <a href="https://wiki.vintagestory.at/index.php/JSON_Patching">Vintage Story: JSON yamalama</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/create-new-age">Create: New Age, CurseForge</a>
+      <a href="https://modrinth.com/mod/FTeXqI9v">Create: New Age, Modrinth</a>
+      <a href="https://www.mc-mod.net/?p=708479">Create: New Age rehberi (mc-mod.net)</a>
+      <a href="https://start-dev-team.github.io/StarT-Wiki/Energy-Generation/Carbon-Brushes-and-Magnets/">Karbon fırçalar ve mıknatıslar (StarT Wiki)</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/createaddition">Create Crafts &amp; Additions, CurseForge</a>
+      <a href="https://modrinth.com/mod/kU1G12Nn">Create Crafts &amp; Additions, Modrinth</a>
+      <a href="https://modrinth.com/mod/zMna5NU5">Create: Diesel Generators, Modrinth</a>
+      <a href="https://modrinth.com/mod/create-diesel-generators/changelog">Create: Diesel Generators değişiklik günlüğü</a>
+      <a href="https://github.com/Altrious/SteamPowered">Create: Steam Powered (GitHub)</a>
+      <a href="https://moddex.gg/mod/create-power">Create: Power (Moddex)</a>
+      <a href="https://modrinth.com/mod/eWiBLJ9R">Create: Power Grid, Modrinth</a>
+      <a href="https://www.curseforge.com/projects/1321420">Create: Power Grid, CurseForge</a>
+      <a href="https://modrinth.com/collection/LzNjNtSJ">Create eklenti koleksiyonu (Modrinth)</a>
+      <a href="https://github.com/Creators-of-Aeronautics/Simulated-Project">Simulated Project (Simulated, Aeronautics, Offroad)</a>
+      <a href="https://github.com/ryanhcode/sable">Sable fizik kütüphanesi</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/create-aeronautics">Create Aeronautics, CurseForge</a>
+      <a href="https://modrinth.com/mod/e9CPu9Ub">Create Balloon, Modrinth (eklenti; yapay zekâyla yazıldığını belirtiyor)</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/create-propulsion/files/7610260">Create: Propulsion, CurseForge</a>
+      <a href="https://www.pcgamer.com/games/survival-crafting/this-hugely-impressive-minecraft-mod-lets-you-build-all-manner-of-functioning-vehicles-including-planes-combine-harvesters-and-even-airships/">PC Gamer: Create Aeronautics ile araçlar</a>
+      <a href="https://www.curseforge.com/minecraft/mc-mods/modular-machinery-reborn">Modular Machinery Reborn, CurseForge</a>
+      <a href="https://lostjarred.github.io/sites/webmodularmachineryoffline/00_keynotes.html">Modular Machinery: temel notlar</a>
+      <a href="https://lostjarred.github.io/sites/webmodularmachineryoffline/012_recipe_modifiers.html">Modular Machinery: tarif değiştiricileri</a>
+      <a href="https://newdocs.masterfulmc.com/current/structures">Masterful Machinery: yapı tanımı</a>
+    </div>
+    <p class="note">Minecraft bölümü oyunun bilinen mekaniklerine dayanıyor; ayrıca kaynak okunmadı.</p>
+  </section>
+</div>

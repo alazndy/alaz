@@ -1,0 +1,1622 @@
+# A.L.A.Z rules: buildings and recipes. Order matters (saves refer to recipes by index);
+# the save format stores a checksum of this file and rejects saves made with other rules.
+
+# Pick tier needed to step down into each cave chamber (stone 0, copper 1, bronze 2, iron 3).
+# Chamber 1 asks for copper once copper tools exist; until then stone.
+cave_tiers = [0, 1, 2, 3]
+
+[[building]]
+kind = "campfire"
+name = "Kamp ateşi"
+radius_mm = 500
+discovery = "fire"
+cost = [{ item = "wood", n = 3 }]
+needs = ["flint"]
+# a wood fire: quick to catch, not hot enough for clay or metal
+heat_max = 600
+heat_rate = 40
+
+[[building]]
+kind = "shelter"
+name = "Barınak"
+radius_mm = 1600
+discovery = "shelter"
+cost = [{ item = "wood", n = 10 }]
+
+[[building]]
+kind = "charcoal_kiln"
+name = "Kömür çukuru"
+radius_mm = 900
+discovery = "kiln"
+cost = [{ item = "stone", n = 6 }, { item = "wood", n = 3 }]
+
+[[building]]
+kind = "furnace"
+name = "Taş ocak"
+radius_mm = 700
+discovery = "furnace"
+cost = [{ item = "stone", n = 8 }, { item = "clay", n = 6 }]
+# charcoal in a stone and clay hearth
+heat_max = 1300
+heat_rate = 45
+
+[[building]]
+kind = "depot"
+name = "Ambar"
+radius_mm = 900
+discovery = "depot"
+cost = [{ item = "wood", n = 12 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "workshop"
+name = "Atölye"
+radius_mm = 1200
+discovery = "workshop"
+cost = [{ item = "wood", n = 10 }, { item = "stone", n = 8 }, { item = "iron_bloom", n = 2 }]
+
+[[building]]
+kind = "workbench"
+name = "Tezgah"
+radius_mm = 800
+discovery = "workbench"
+cost = [{ item = "wood", n = 8 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "field"
+name = "Tarla"
+radius_mm = 1500
+discovery = "farming"
+# stakes to mark it out; the hoe breaks the ground and is kept
+cost = [{ item = "wood", n = 2 }]
+needs = ["hoe"]
+
+[[building]]
+kind = "loom"
+name = "Dokuma tezgahı"
+radius_mm = 700
+discovery = "weaving"
+# an upright frame; fired clay weights keep the warp taut
+cost = [{ item = "wood", n = 4 }, { item = "clay", n = 2 }]
+
+[[building]]
+kind = "pen"
+name = "Ağıl"
+radius_mm = 600
+discovery = "husbandry"
+# a gate post in the middle; the fence ring around it is open ground the animals stand on
+cost = [{ item = "wood", n = 8 }]
+
+[[building]]
+kind = "pit_kiln"
+name = "Çukur fırın"
+radius_mm = 600
+discovery = "pottery"
+# dug with a shovel (kept); the straw and logs for each firing go in with the clay
+cost = [{ item = "fiber", n = 1 }]
+needs = ["shovel"]
+# smoulders slowly up to the heat that turns clay to ceramic
+heat_max = 1200
+heat_rate = 8
+
+[[building]]
+kind = "anvil"
+name = "Örs"
+radius_mm = 500
+discovery = "bronzework"
+# a flat block of hard stone, dressed with the hammer (kept)
+cost = [{ item = "stone", n = 6 }]
+needs = ["hammer"]
+
+[[building]]
+kind = "hand_mill"
+name = "El değirmeni"
+radius_mm = 700
+discovery = "milling"
+cost = [{ item = "stone", n = 4 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "animal_gin"
+name = "Hayvan manejı"
+radius_mm = 900
+discovery = "draught"
+# a post and a long sweep: an ox or a horse walking round it drives a mill within six metres
+cost = [{ item = "plank", n = 4 }, { item = "wood", n = 4 }]
+
+[[building]]
+kind = "bloomery"
+name = "Bloomery"
+radius_mm = 700
+discovery = "smelting"
+# a clay shaft; it only gets hot enough for iron with a working bellows within 3 m
+cost = [{ item = "stone", n = 6 }, { item = "clay", n = 6 }]
+heat_max = 1300
+heat_rate = 25
+
+[[building]]
+kind = "bellows"
+name = "Körük"
+radius_mm = 500
+discovery = "smelting"
+# worked by someone standing at it, by an animal at a gin within 6 m, or by a water wheel within 8 m
+cost = [{ item = "hide", n = 2 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "trip_hammer"
+name = "Şahmerdan"
+radius_mm = 900
+discovery = "mechanics"
+# a water wheel within 8 m (or an animal at a gin) lifts the hammer
+cost = [{ item = "plank", n = 6 }, { item = "iron_bloom", n = 1 }, { item = "gear", n = 1 }]
+
+[[building]]
+kind = "iron_anvil"
+name = "Demir örs"
+radius_mm = 500
+discovery = "ironwork"
+cost = [{ item = "iron_bloom", n = 4 }]
+needs = ["hammer"]
+
+[[building]]
+kind = "blast_furnace"
+name = "Yüksek fırın"
+radius_mm = 900
+discovery = "steelmaking"
+# fire brick; like the bloomery it needs a working bellows within 3 m to pass 1000 °C
+cost = [{ item = "fire_brick", n = 8 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 2 }]
+heat_max = 1550
+heat_rate = 20
+
+[[building]]
+kind = "steel_anvil"
+name = "Çelik örs"
+radius_mm = 500
+discovery = "steelmaking"
+cost = [{ item = "steel", n = 4 }]
+needs = ["hammer"]
+
+[[building]]
+kind = "windmill"
+name = "Yel değirmeni"
+radius_mm = 1200
+discovery = "mechanics"
+# sails of cloth on a wooden frame: power for machines within 8 m, like a water wheel, anywhere
+cost = [{ item = "plank", n = 8 }, { item = "cloth", n = 4 }, { item = "gear", n = 2 }]
+
+[[building]]
+kind = "conveyor"
+name = "Taşıyıcı bant"
+radius_mm = 600
+discovery = "steelmaking"
+# carries what stations within 3 m have made to the nearest depot within 12 m, while it has power
+cost = [{ item = "plank", n = 4 }, { item = "cloth", n = 2 }, { item = "gear", n = 1 }]
+
+[[building]]
+kind = "steam_engine"
+name = "Buhar makinesi"
+radius_mm = 1000
+discovery = "steam"
+# a boiler on a firebox and a cast-iron cylinder: while it burns coal and water it drives machines within 8 m
+cost = [{ item = "cast_iron_part", n = 3 }, { item = "steel", n = 2 }, { item = "fire_brick", n = 4 }]
+heat_max = 400
+heat_rate = 10
+
+[[building]]
+kind = "pump"
+name = "Pompa"
+radius_mm = 600
+discovery = "steam"
+# a piston pump: with power it keeps the deepest chamber of a cave within 15 m dry
+cost = [{ item = "cast_iron_part", n = 2 }, { item = "plank", n = 4 }]
+
+[[building]]
+kind = "rolling_mill"
+name = "Haddehane"
+radius_mm = 900
+discovery = "electricity"
+# powered rolls (8 m of a wheel, windmill, steam or a motor): copper ingots drawn to wire
+cost = [{ item = "steel", n = 2 }, { item = "cast_iron_part", n = 2 }, { item = "plank", n = 4 }]
+
+[[building]]
+kind = "dynamo"
+name = "Dinamo"
+radius_mm = 700
+discovery = "electricity"
+# turned by mechanical power within 8 m, it feeds the grid
+cost = [{ item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }, { item = "steel", n = 2 }, { item = "cast_iron_part", n = 1 }]
+
+[[building]]
+kind = "pole"
+name = "Elektrik direği"
+radius_mm = 300
+discovery = "electricity"
+# carries the grid: links grid buildings within 12 m
+cost = [{ item = "plank", n = 2 }, { item = "copper_wire", n = 2 }]
+
+[[building]]
+kind = "electric_motor"
+name = "Elektrik motoru"
+radius_mm = 500
+discovery = "electricity"
+# on a live grid it drives machines within 8 m
+cost = [{ item = "copper_wire", n = 6 }, { item = "magnet", n = 1 }, { item = "steel", n = 1 }]
+
+[[building]]
+kind = "electric_lamp"
+name = "Elektrik lambası"
+radius_mm = 300
+discovery = "electricity"
+cost = [{ item = "light_bulb", n = 1 }, { item = "plank", n = 1 }, { item = "copper_wire", n = 1 }]
+
+[[building]]
+kind = "computer"
+name = "Bilgisayar"
+radius_mm = 800
+discovery = "computing"
+# on a live grid it opens the design table: new rules, and the way to a new world
+cost = [{ item = "circuit_board", n = 4 }, { item = "glass", n = 2 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 4 }]
+
+[[building]]
+kind = "ruin"
+name = "Harabe"
+radius_mm = 900
+discovery = "retired"
+# never built: what an earlier world left behind
+cost = []
+
+[[building]]
+kind = "cellar"
+name = "Kiler"
+radius_mm = 900
+discovery = "pottery"
+# dug into the ground, cool and dark: stores anything like a depot, food spoils five times slower in it
+cost = [{ item = "stone", n = 8 }, { item = "wood", n = 4 }]
+needs = ["shovel"]
+
+[[building]]
+kind = "mine_shaft"
+name = "Maden kuyusu"
+radius_mm = 800
+discovery = "geology"
+# only on a hidden deposit (find it with a prospector's pick): brings up its ore, coal or oil
+cost = [{ item = "plank", n = 6 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "water_wheel"
+name = "Su çarkı"
+radius_mm = 1300
+discovery = "mechanics"
+cost = [{ item = "wood", n = 10 }, { item = "stone", n = 4 }, { item = "gear", n = 2 }]
+
+[[recipe]]
+id = "sharp_stone"
+name = "Keskin taş"
+inputs = [{ item = "stone", n = 2 }]
+outputs = [{ item = "sharp_stone", n = 1 }]
+ticks = 0
+discovery = "sharp_stone"
+fine_bonus = 1
+# bare hands are clumsy; a heavy tool makes a better hammer
+steps = [
+  { label = "Taşı yont", kind = "knap", strikes = 5, window = 22, period = 120, tools = [{ item = "stone_axe", bonus = 10 }, { item = "bronze_axe", bonus = 11 }, { item = "iron_axe", bonus = 12 }, { item = "iron_pickaxe", bonus = 14 }] },
+]
+
+[[recipe]]
+id = "stone_axe"
+name = "Taş balta"
+inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "stone_axe", n = 1 }]
+ticks = 0
+discovery = "stone_axe"
+# four jobs in a row; a clamp holds the parts while you work, so fitting and lashing get easier
+steps = [
+  { label = "Sapı düzelt", kind = "timing", strikes = 3, window = 10, period = 120, tools = [{ item = "stone_axe", bonus = 4 }, { item = "iron_axe", bonus = 6 }] },
+  { label = "Sapa yuva aç", kind = "knap", strikes = 2, window = 24, period = 120, tools = [{ item = "stone_axe", bonus = 8 }, { item = "iron_axe", bonus = 10 }] },
+  { label = "Taşı yuvaya yerleştir", kind = "fit", strikes = 2, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Lifle sıkıca bağla", kind = "tension", strikes = 3, window = 11, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "charcoal"
+name = "Kömür"
+station = "charcoal_kiln"
+inputs = [{ item = "wood", n = 5 }]
+outputs = [{ item = "charcoal", n = 2 }]
+ticks = 1800
+discovery = "kiln"
+
+[[recipe]]
+id = "iron_bloom"
+name = "Demir kütle"
+station = "furnace"
+inputs = [{ item = "iron_ore", n = 2 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "iron_bloom", n = 1 }]
+ticks = 2400
+discovery = "retired" # kept for old saves; iron now comes from the bloomery and the anvil
+heat = 1150
+
+[[recipe]]
+id = "automaton"
+name = "Otomat"
+station = "workshop"
+inputs = [{ item = "steel", n = 2 }, { item = "gear", n = 3 }, { item = "plank", n = 4 }, { item = "charcoal", n = 2 }]
+spawns = "bot"
+ticks = 3600
+discovery = "workshop"
+
+[[recipe]]
+id = "spear"
+name = "Mızrak"
+inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "spear", n = 1 }]
+ticks = 0
+discovery = "spear"
+fine_bonus = 1
+steps = [
+  { label = "Dalı doğrult ve sivilt", kind = "timing", strikes = 3, window = 10, period = 120, tools = [{ item = "stone_axe", bonus = 5 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Taşı uca yerleştir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Lifle sıkıca bağla", kind = "tension", strikes = 2, window = 11, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "cook_meat"
+name = "Et pişir"
+station = "campfire"
+inputs = [{ item = "raw_meat", n = 1 }]
+outputs = [{ item = "cooked_meat", n = 1 }]
+ticks = 300
+discovery = "cooking"
+heat = 150
+
+[[recipe]]
+id = "iron_axe"
+name = "Demir balta"
+station = "workbench"
+inputs = [{ item = "iron_bloom", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "iron_axe", n = 1 }]
+ticks = 900
+discovery = "retired" # kept for old saves; iron now comes from the bloomery and the anvil
+
+[[recipe]]
+id = "iron_pickaxe"
+name = "Demir kazma"
+station = "workbench"
+inputs = [{ item = "iron_bloom", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "iron_pickaxe", n = 1 }]
+ticks = 900
+discovery = "retired" # kept for old saves; iron now comes from the bloomery and the anvil
+
+[[recipe]]
+id = "gear"
+name = "Dişli"
+station = "workbench"
+inputs = [{ item = "iron_bloom", n = 1 }, { item = "wood", n = 2 }]
+outputs = [{ item = "gear", n = 1 }]
+ticks = 600
+discovery = "mechanics"
+
+[[recipe]]
+id = "bandage"
+name = "Sargı"
+inputs = [{ item = "herb", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "bandage", n = 1 }]
+ticks = 0
+discovery = "medicine"
+fine_bonus = 1
+steps = [
+  { label = "Otları ez", kind = "timing", strikes = 3, window = 13, period = 120, tools = [{ item = "sharp_stone", bonus = 4 }, { item = "stone_axe", bonus = 5 }, { item = "iron_axe", bonus = 7 }] },
+  { label = "Yarayı sar", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "bronze"
+name = "Bronz"
+station = "furnace"
+inputs = [{ item = "copper_ore", n = 3 }, { item = "tin_ore", n = 1 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "bronze", n = 2 }]
+ticks = 2400
+discovery = "retired" # kept for old saves; bronze is now alloyed by ratio and cast
+heat = 950
+
+[[recipe]]
+id = "bronze_axe"
+name = "Bronz balta"
+station = "workbench"
+inputs = [{ item = "bronze", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "bronze_axe", n = 1 }]
+ticks = 900
+discovery = "retired" # kept for old saves; bronze is now alloyed by ratio and cast
+
+[[recipe]]
+id = "bronze_pickaxe"
+name = "Bronz kazma"
+station = "workbench"
+inputs = [{ item = "bronze", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "bronze_pickaxe", n = 1 }]
+ticks = 900
+discovery = "retired" # kept for old saves; bronze is now alloyed by ratio and cast
+
+[[recipe]]
+id = "clamp"
+name = "Kıskaç"
+inputs = [{ item = "branch", n = 2 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "clamp", n = 1 }]
+ticks = 0
+discovery = "clamp"
+# two sticks lashed like tongs: it holds parts in place for you
+steps = [
+  { label = "Dalları eşitle", kind = "timing", strikes = 2, window = 11, period = 120, tools = [{ item = "stone_axe", bonus = 4 }] },
+  { label = "Dalları çaprazla ve bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+# a stacked pile of logs burns hotter and cleaner: the stack is a balancing game (strikes = pieces to place,
+# window = half-width of the ground it stands on, in cm)
+[[recipe]]
+id = "log_pile"
+name = "Odun yığını"
+inputs = [{ item = "wood", n = 5 }]
+outputs = [{ item = "log_pile", n = 1 }]
+ticks = 0
+discovery = "kiln"
+fine_bonus = 1
+steps = [
+  { label = "Odunları dengeli diz", kind = "stack", strikes = 5, window = 70, period = 0, tools = [{ item = "clamp", bonus = 20 }] },
+]
+
+[[recipe]]
+id = "charcoal_pile"
+name = "Kömür (yığından)"
+station = "charcoal_kiln"
+inputs = [{ item = "log_pile", n = 1 }]
+outputs = [{ item = "charcoal", n = 4 }]
+ticks = 1800
+discovery = "kiln"
+
+# --- Clothes: worn while carried, they keep the cold off. ---
+[[recipe]]
+id = "fiber_wrap"
+name = "Lif örtü"
+inputs = [{ item = "fiber", n = 5 }]
+outputs = [{ item = "fiber_wrap", n = 1 }]
+ticks = 0
+discovery = "clothing"
+fine_bonus = 0
+steps = [
+  { label = "Lifleri bük", kind = "tension", strikes = 3, window = 14, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "hide_cloak"
+name = "Post pelerin"
+inputs = [{ item = "hide", n = 2 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "hide_cloak", n = 1 }]
+ticks = 0
+discovery = "clothing"
+fine_bonus = 0
+steps = [
+  { label = "Postu kazı", kind = "timing", strikes = 3, window = 13, period = 120, tools = [{ item = "sharp_stone", bonus = 4 }, { item = "stone_axe", bonus = 5 }] },
+  { label = "Parçaları yerine koy", kind = "fit", strikes = 2, window = 24, period = 0, tools = [] },
+  { label = "Lifle dik", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "hide_boots"
+name = "Post çizme"
+inputs = [{ item = "hide", n = 1 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "hide_boots", n = 1 }]
+ticks = 0
+discovery = "clothing"
+fine_bonus = 0
+steps = [
+  { label = "Postu ayağa göre kes", kind = "fit", strikes = 2, window = 24, period = 0, tools = [] },
+  { label = "Lifle bağla", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+# --- Light for the dark places. ---
+[[recipe]]
+id = "torch"
+name = "Meşale"
+inputs = [{ item = "branch", n = 2 }, { item = "fiber", n = 1 }]
+needs = ["flint"]
+outputs = [{ item = "torch", n = 1 }]
+ticks = 0
+discovery = "fire"
+fine_bonus = 0
+
+# --- A broken bone knits slowly; bound in a splint it knits faster and still bears weight. ---
+[[recipe]]
+id = "splint"
+name = "Kırık tahtası"
+inputs = [{ item = "branch", n = 2 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "splint", n = 1 }]
+ticks = 0
+discovery = "medicine"
+fine_bonus = 0
+
+# --- Neolithic: the first farmers. Appended, so the recipe indexes in saves stay put. ---
+[[recipe]]
+id = "hoe"
+name = "Çapa"
+inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "hoe", n = 1 }]
+ticks = 0
+discovery = "farming"
+fine_bonus = 0
+steps = [
+  { label = "Eğri dalı kısalt", kind = "timing", strikes = 2, window = 11, period = 120, tools = [{ item = "stone_axe", bonus = 5 }, { item = "bronze_axe", bonus = 6 }, { item = "iron_axe", bonus = 7 }] },
+  { label = "Taşı dala yerleştir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Lifle sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+# sown seed grows on its own; a share of the harvest is kept back as next year's seed
+[[recipe]]
+id = "sow"
+name = "Ek ve büyüt"
+station = "field"
+inputs = [{ item = "seed", n = 2 }]
+outputs = [{ item = "grain", n = 6 }, { item = "seed", n = 3 }]
+# about a day and a quarter: a few harvests a season, none in winter
+ticks = 108000
+discovery = "farming"
+
+[[recipe]]
+id = "quern"
+name = "Öğütme taşı"
+inputs = [{ item = "stone", n = 3 }]
+outputs = [{ item = "quern", n = 1 }]
+ticks = 0
+discovery = "milling"
+fine_bonus = 0
+steps = [
+  { label = "Taşın yüzünü düzle", kind = "knap", strikes = 4, window = 24, period = 120, tools = [{ item = "stone_axe", bonus = 8 }, { item = "bronze_pickaxe", bonus = 12 }, { item = "iron_pickaxe", bonus = 14 }] },
+]
+
+[[recipe]]
+id = "flour"
+name = "Un"
+inputs = [{ item = "grain", n = 3 }]
+needs = ["quern"]
+outputs = [{ item = "flour", n = 2 }]
+ticks = 0
+discovery = "milling"
+fine_bonus = 1
+steps = [
+  { label = "Taneleri öğüt", kind = "timing", strikes = 4, window = 13, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "bread"
+name = "Ekmek"
+station = "campfire"
+inputs = [{ item = "flour", n = 1 }]
+outputs = [{ item = "bread", n = 1 }]
+ticks = 600
+discovery = "milling"
+heat = 200
+
+# --- Pottery: clay coiled ring on ring, then fired. A pot carries water away from the river. ---
+[[recipe]]
+id = "raw_pot"
+name = "Ham çömlek"
+inputs = [{ item = "clay", n = 3 }]
+outputs = [{ item = "raw_pot", n = 1 }]
+ticks = 0
+discovery = "pottery"
+fine_bonus = 1
+steps = [
+  { label = "Kili yoğur", kind = "tension", strikes = 2, window = 13, period = 120, tools = [] },
+  { label = "Kil halkaları üst üste koy", kind = "stack", strikes = 4, window = 60, period = 0, tools = [] },
+  { label = "Yüzeyi düzle", kind = "timing", strikes = 2, window = 12, period = 120, tools = [{ item = "sharp_stone", bonus = 4 }] },
+]
+
+# fired in a pit kiln, not at the camp fire: a camp fire is not hot or long enough for clay
+[[recipe]]
+id = "fire_pot"
+name = "Çömlek pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_pot", n = 1 }, { item = "fiber", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "pot", n = 1 }]
+ticks = 43200
+discovery = "pottery"
+heat = 900
+
+# --- Weaving: fibre on the loom becomes cloth; cloth is sewn into a tunic or a bag. ---
+[[recipe]]
+id = "cloth"
+name = "Kumaş doku"
+station = "loom"
+inputs = [{ item = "fiber", n = 4 }]
+outputs = [{ item = "cloth", n = 1 }]
+ticks = 1200
+discovery = "weaving"
+
+[[recipe]]
+id = "tunic"
+name = "Dokuma giysi"
+inputs = [{ item = "cloth", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "tunic", n = 1 }]
+ticks = 0
+discovery = "weaving"
+fine_bonus = 0
+steps = [
+  { label = "Kumaşı bedene göre kes", kind = "fit", strikes = 2, window = 24, period = 0, tools = [{ item = "sharp_stone", bonus = 6 }] },
+  { label = "Kenarları dik", kind = "tension", strikes = 3, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "bag"
+name = "Dokuma torba"
+inputs = [{ item = "cloth", n = 1 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "bag", n = 1 }]
+ticks = 0
+discovery = "weaving"
+fine_bonus = 0
+steps = [
+  { label = "Kumaşı katla ve dik", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+  { label = "Ağzını büzen ipi geçir", kind = "timing", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+# --- Husbandry: a pair of one kind kept in the pen and fed brings a young one, which works like its parents. ---
+[[recipe]]
+id = "breed_ox"
+name = "Öküz yavrusu"
+station = "pen"
+inputs = [{ item = "grain", n = 4 }]
+spawns = "ox"
+ticks = 7200
+discovery = "husbandry"
+
+[[recipe]]
+id = "breed_horse"
+name = "Tay"
+station = "pen"
+inputs = [{ item = "grain", n = 4 }]
+spawns = "horse"
+ticks = 7200
+discovery = "husbandry"
+
+[[recipe]]
+id = "breed_dog"
+name = "Köpek yavrusu"
+station = "pen"
+inputs = [{ item = "raw_meat", n = 2 }]
+spawns = "dog"
+ticks = 5400
+discovery = "husbandry"
+
+# --- Bronze age, draught: the wheel, the cart and the plough, pulled by an ox or a horse. ---
+[[recipe]]
+id = "wheel"
+name = "Tekerlek"
+station = "workbench"
+inputs = [{ item = "plank", n = 3 }, { item = "bronze", n = 1 }]
+outputs = [{ item = "wheel", n = 1 }]
+ticks = 900
+discovery = "draught"
+
+[[recipe]]
+id = "cart"
+name = "Araba"
+station = "workbench"
+inputs = [{ item = "wheel", n = 2 }, { item = "plank", n = 4 }]
+outputs = [{ item = "cart", n = 1 }]
+ticks = 1200
+discovery = "draught"
+
+[[recipe]]
+id = "plow"
+name = "Saban"
+station = "workbench"
+inputs = [{ item = "plank", n = 2 }, { item = "bronze", n = 1 }]
+outputs = [{ item = "plow", n = 1 }]
+ticks = 900
+discovery = "draught"
+
+# --- Stone age tools from loose stones and a stick. ---
+[[recipe]]
+id = "hammer"
+name = "Taş çekiç"
+inputs = [{ item = "stone", n = 2 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "hammer", n = 1 }]
+ticks = 0
+discovery = "hammer"
+fine_bonus = 0
+steps = [
+  { label = "Yuvarlak taşı seç ve kaba yont", kind = "knap", strikes = 2, window = 30, period = 120, tools = [] },
+  { label = "Taşı sapa sıkıca bağla", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "knife"
+name = "Taş bıçak"
+inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 1 }]
+outputs = [{ item = "knife", n = 1 }]
+ticks = 0
+discovery = "stone_axe"
+fine_bonus = 0
+steps = [
+  { label = "Bıçak ağzını incelt", kind = "knap", strikes = 3, window = 20, period = 120, tools = [{ item = "hammer", bonus = 8 }] },
+  { label = "Sapın yarığına oturt", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+]
+
+[[recipe]]
+id = "shovel"
+name = "Taş kürek"
+inputs = [{ item = "stone", n = 1 }, { item = "branch", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "shovel", n = 1 }]
+ticks = 0
+discovery = "stone_axe"
+fine_bonus = 0
+steps = [
+  { label = "Taşı yassılt", kind = "knap", strikes = 3, window = 24, period = 120, tools = [{ item = "hammer", bonus = 8 }] },
+  { label = "Dallara bağla", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+# --- Tools and what they open (tiers: stone 0, copper 1, bronze 2, iron 3). ---
+[[tool]]
+item = "stone_axe"
+kind = "axe"
+tier = 0
+durability = 60
+repair = "stone"
+[[tool]]
+item = "bronze_axe"
+kind = "axe"
+tier = 2
+durability = 250
+repair = "bronze"
+[[tool]]
+item = "iron_axe"
+kind = "axe"
+tier = 3
+durability = 650
+repair = "iron_bloom"
+[[tool]]
+item = "hammer"
+kind = "pick"
+tier = 0
+durability = 60
+repair = "stone"
+[[tool]]
+item = "bronze_pickaxe"
+kind = "pick"
+tier = 2
+durability = 250
+repair = "bronze"
+[[tool]]
+item = "iron_pickaxe"
+kind = "pick"
+tier = 3
+durability = 650
+repair = "iron_bloom"
+[[tool]]
+item = "knife"
+kind = "knife"
+tier = 0
+durability = 60
+repair = "stone"
+[[tool]]
+item = "shovel"
+kind = "shovel"
+tier = 0
+durability = 60
+repair = "stone"
+
+# Trees fall only to an axe (bare hands find branches on the ground). Rock seams want a hammer or a pick; the
+# first stones of an outcrop lie loose on top. Tin asks for copper once copper tools exist; until then stone.
+[[gate]]
+node = "Tree"
+tool = "axe"
+tier = 0
+[[gate]]
+node = "StoneOutcrop"
+tool = "pick"
+tier = 0
+loose = 2
+[[gate]]
+node = "CopperOutcrop"
+tool = "pick"
+tier = 0
+loose = 1
+[[gate]]
+node = "TinOutcrop"
+tool = "pick"
+tier = 1
+[[gate]]
+node = "IronOutcrop"
+tool = "pick"
+tier = 2
+
+# a full kiln: four pots at once for the same fuel and time
+[[recipe]]
+id = "fire_pots"
+name = "Dört çömlek pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_pot", n = 4 }, { item = "fiber", n = 4 }, { item = "wood", n = 4 }]
+outputs = [{ item = "pot", n = 4 }]
+ticks = 43200
+discovery = "pottery"
+heat = 900
+
+# --- The other founder crops: lentils on dry land, flax where it is wet. ---
+[[recipe]]
+id = "sow_lentil"
+name = "Mercimek ek"
+station = "field"
+inputs = [{ item = "lentil", n = 2 }]
+outputs = [{ item = "lentil", n = 7 }]
+ticks = 108000
+discovery = "farming"
+
+[[recipe]]
+id = "sow_flax"
+name = "Keten ek"
+station = "field"
+inputs = [{ item = "flax", n = 2 }]
+outputs = [{ item = "flax", n = 6 }]
+ticks = 108000
+discovery = "farming"
+
+# flax stems give long fibre: linen comes off the loom quicker than wild fibre
+[[recipe]]
+id = "linen"
+name = "Keten doku"
+station = "loom"
+inputs = [{ item = "flax", n = 3 }]
+outputs = [{ item = "cloth", n = 1 }]
+ticks = 900
+discovery = "weaving"
+
+# lentils simmered in a pot of water; the pot comes back
+[[recipe]]
+id = "soup"
+name = "Mercimek çorbası"
+station = "campfire"
+inputs = [{ item = "lentil", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "soup", n = 1 }, { item = "pot", n = 1 }]
+ticks = 600
+discovery = "farming"
+heat = 100
+
+# --- Spoilage: the share of a stack that goes bad in a day, permille. Rot turns to manure. Winter halves it, each
+# storage jar in a depot slows it there, the realistic setting doubles it. ---
+[[perish]]
+item = "raw_meat"
+per_day = 500
+[[perish]]
+item = "berries"
+per_day = 350
+[[perish]]
+item = "cooked_meat"
+per_day = 250
+[[perish]]
+item = "soup"
+per_day = 200
+[[perish]]
+item = "herb"
+per_day = 100
+[[perish]]
+item = "bread"
+per_day = 50
+[[perish]]
+item = "flour"
+per_day = 20
+[[perish]]
+item = "grain"
+per_day = 10
+[[perish]]
+item = "lentil"
+per_day = 10
+
+# a big storage jar: coiled from five clay, fired in a pit kiln
+[[recipe]]
+id = "raw_large_pot"
+name = "Ham büyük çömlek"
+inputs = [{ item = "clay", n = 5 }]
+outputs = [{ item = "raw_large_pot", n = 1 }]
+ticks = 0
+discovery = "pottery"
+fine_bonus = 0
+steps = [
+  { label = "Kili yoğur", kind = "tension", strikes = 2, window = 13, period = 120, tools = [] },
+  { label = "Geniş halkaları üst üste koy", kind = "stack", strikes = 6, window = 70, period = 0, tools = [] },
+  { label = "Yüzeyi düzle", kind = "timing", strikes = 2, window = 12, period = 120, tools = [{ item = "sharp_stone", bonus = 4 }] },
+]
+
+[[recipe]]
+id = "fire_large_pot"
+name = "Büyük çömlek pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_large_pot", n = 1 }, { item = "fiber", n = 2 }, { item = "wood", n = 3 }]
+outputs = [{ item = "large_pot", n = 1 }]
+ticks = 43200
+discovery = "pottery"
+heat = 900
+
+# --- Copper age: casting. A crucible of fibre-tempered clay, clay moulds pressed around a model, copper melted in a
+# pit kiln (1085 °C) and poured by hand. A good cast gives the mould back unless it cracks; a spill cools to ore. ---
+[[recipe]]
+id = "raw_crucible"
+name = "Pota (ham)"
+inputs = [{ item = "clay", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "raw_crucible", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Kile lif kat, yoğur", kind = "tension", strikes = 2, window = 13, period = 120, tools = [] },
+  { label = "Kalın duvarlı bir kap biçimlendir", kind = "timing", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "raw_mold_axe"
+name = "Balta kalıbı (ham)"
+inputs = [{ item = "clay", n = 2 }]
+needs = ["stone_axe"]
+outputs = [{ item = "raw_mold_axe", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Modeli kile bastır", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
+  { label = "Kenarları düzelt", kind = "timing", strikes = 2, window = 13, period = 120, tools = [{ item = "knife", bonus = 4 }] },
+]
+
+[[recipe]]
+id = "raw_mold_pick"
+name = "Kazma kalıbı (ham)"
+inputs = [{ item = "clay", n = 2 }]
+needs = ["hammer"]
+outputs = [{ item = "raw_mold_pick", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Modeli kile bastır", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
+  { label = "Kenarları düzelt", kind = "timing", strikes = 2, window = 13, period = 120, tools = [{ item = "knife", bonus = 4 }] },
+]
+
+[[recipe]]
+id = "raw_mold_knife"
+name = "Bıçak kalıbı (ham)"
+inputs = [{ item = "clay", n = 1 }]
+needs = ["knife"]
+outputs = [{ item = "raw_mold_knife", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Modeli kile bastır", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
+  { label = "Kenarları düzelt", kind = "timing", strikes = 2, window = 13, period = 120, tools = [{ item = "knife", bonus = 4 }] },
+]
+
+[[recipe]]
+id = "raw_mold_ingot"
+name = "Külçe kalıbı (ham)"
+inputs = [{ item = "clay", n = 2 }, { item = "stone", n = 1 }]
+needs = []
+outputs = [{ item = "raw_mold_ingot", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Modeli kile bastır", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
+  { label = "Kenarları düzelt", kind = "timing", strikes = 2, window = 13, period = 120, tools = [{ item = "knife", bonus = 4 }] },
+]
+
+[[recipe]]
+id = "fire_crucible"
+name = "Pota pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_crucible", n = 1 }, { item = "fiber", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "crucible", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900
+
+[[recipe]]
+id = "fire_mold_axe"
+name = "Balta kalıbı pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_mold_axe", n = 1 }, { item = "fiber", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "mold_axe", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900
+
+[[recipe]]
+id = "fire_mold_pick"
+name = "Kazma kalıbı pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_mold_pick", n = 1 }, { item = "fiber", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "mold_pick", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900
+
+[[recipe]]
+id = "fire_mold_knife"
+name = "Bıçak kalıbı pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_mold_knife", n = 1 }, { item = "fiber", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "mold_knife", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900
+
+[[recipe]]
+id = "fire_mold_ingot"
+name = "Külçe kalıbı pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_mold_ingot", n = 1 }, { item = "fiber", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "mold_ingot", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900
+
+[[recipe]]
+id = "melt_copper"
+name = "Bakır erit"
+station = "pit_kiln"
+inputs = [{ item = "copper_ore", n = 4 }, { item = "crucible", n = 1 }, { item = "fiber", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "molten_copper", n = 1 }]
+ticks = 7200
+discovery = "casting"
+heat = 1085
+
+[[recipe]]
+id = "pour_copper_axe_head"
+name = "Balta kafası dök"
+inputs = [{ item = "molten_copper", n = 1 }, { item = "mold_axe", n = 1 }]
+outputs = [{ item = "copper_axe_head", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+mold = "mold_axe"
+fail_returns = [{ item = "copper_ore", n = 3 }, { item = "crucible", n = 1 }, { item = "mold_axe", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "pour_copper_pick_head"
+name = "Kazma kafası dök"
+inputs = [{ item = "molten_copper", n = 1 }, { item = "mold_pick", n = 1 }]
+outputs = [{ item = "copper_pick_head", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+mold = "mold_pick"
+fail_returns = [{ item = "copper_ore", n = 3 }, { item = "crucible", n = 1 }, { item = "mold_pick", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "pour_copper_knife_head"
+name = "Bıçak dök"
+inputs = [{ item = "molten_copper", n = 1 }, { item = "mold_knife", n = 1 }]
+outputs = [{ item = "copper_knife_head", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+mold = "mold_knife"
+fail_returns = [{ item = "copper_ore", n = 3 }, { item = "crucible", n = 1 }, { item = "mold_knife", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "pour_copper_ingot"
+name = "Külçe dök"
+inputs = [{ item = "molten_copper", n = 1 }, { item = "mold_ingot", n = 1 }]
+outputs = [{ item = "copper_ingot", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+mold = "mold_ingot"
+fail_returns = [{ item = "copper_ore", n = 3 }, { item = "crucible", n = 1 }, { item = "mold_ingot", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "copper_axe"
+name = "Bakır balta"
+inputs = [{ item = "copper_axe_head", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "copper_axe", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "copper_pickaxe"
+name = "Bakır kazma"
+inputs = [{ item = "copper_pick_head", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "copper_pickaxe", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "copper_knife"
+name = "Bakır bıçak"
+inputs = [{ item = "copper_knife_head", n = 1 }, { item = "branch", n = 1 }]
+outputs = [{ item = "copper_knife", n = 1 }]
+ticks = 0
+discovery = "casting"
+fine_bonus = 0
+steps = [
+  { label = "Bıçağı sapa oturt", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+]
+
+[[tool]]
+item = "copper_axe"
+kind = "axe"
+tier = 1
+durability = 150
+repair = "copper_ore"
+[[tool]]
+item = "copper_pickaxe"
+kind = "pick"
+tier = 1
+durability = 150
+repair = "copper_ore"
+[[tool]]
+item = "copper_knife"
+kind = "knife"
+tier = 1
+durability = 150
+repair = "copper_ore"
+
+# --- Bronze by ratio. Load copper and tin ore into the stone furnace, then melt: four ores make an ingot; if copper
+# is 85-95% (88-92% realistic) it is bronze, else brittle bad bronze that remelts to ore. ---
+[[recipe]]
+id = "alloy_bronze"
+name = "Alaşım erit"
+station = "furnace"
+inputs = [{ item = "charcoal", n = 2 }]
+outputs = []
+ticks = 2400
+discovery = "alloying"
+heat = 950
+alloy = { base = "copper_ore", add = "tin_ore", ores_per_ingot = 4, output = "bronze", bad = "bad_bronze", lo = 85, hi = 95, lo_realistic = 88, hi_realistic = 92 }
+
+[[recipe]]
+id = "remelt_bad_bronze"
+name = "Bozuk bronzu çöz"
+station = "furnace"
+inputs = [{ item = "bad_bronze", n = 1 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "copper_ore", n = 3 }, { item = "tin_ore", n = 1 }]
+ticks = 1200
+discovery = "alloying"
+heat = 950
+
+[[recipe]]
+id = "melt_bronze"
+name = "Bronz erit"
+station = "pit_kiln"
+inputs = [{ item = "bronze", n = 1 }, { item = "crucible", n = 1 }, { item = "fiber", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "molten_bronze", n = 1 }]
+ticks = 6000
+discovery = "bronzework"
+heat = 950
+
+[[recipe]]
+id = "pour_bronze_axe_head"
+name = "Bronz balta kafası dök"
+inputs = [{ item = "molten_bronze", n = 1 }, { item = "mold_axe", n = 1 }]
+outputs = [{ item = "bronze_axe_head", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+mold = "mold_axe"
+fail_returns = [{ item = "bronze", n = 1 }, { item = "crucible", n = 1 }, { item = "mold_axe", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 11, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "pour_bronze_pick_head"
+name = "Bronz kazma kafası dök"
+inputs = [{ item = "molten_bronze", n = 1 }, { item = "mold_pick", n = 1 }]
+outputs = [{ item = "bronze_pick_head", n = 1 }, { item = "crucible", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+mold = "mold_pick"
+fail_returns = [{ item = "bronze", n = 1 }, { item = "crucible", n = 1 }, { item = "mold_pick", n = 1 }]
+steps = [
+  { label = "Eriyiği kalıba dök", kind = "tension", strikes = 2, window = 11, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "bronze_axe_hafted"
+name = "Bronz balta"
+inputs = [{ item = "bronze_axe_head", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "bronze_axe", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+[[recipe]]
+id = "bronze_pickaxe_hafted"
+name = "Bronz kazma"
+inputs = [{ item = "bronze_pick_head", n = 1 }, { item = "branch", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "bronze_pickaxe", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+  { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
+]
+
+# --- Forging at the anvil (with the hammer), the saw and planks, the mill. ---
+[[recipe]]
+id = "forge_saw"
+name = "Testere döv"
+inputs = [{ item = "bronze", n = 2 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "anvil"
+outputs = [{ item = "saw", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Kızgın külçeyi yassılt", kind = "timing", strikes = 4, window = 10, period = 110, tools = [] },
+  { label = "Dişleri aç", kind = "knap", strikes = 4, window = 20, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "forge_bronze_axe_head"
+name = "Bronz balta kafası döv"
+inputs = [{ item = "bronze", n = 1 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "anvil"
+outputs = [{ item = "bronze_axe_head", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 1
+steps = [
+  { label = "Kızgın külçeyi döv", kind = "timing", strikes = 4, window = 10, period = 110, tools = [] },
+  { label = "Ağzı incelt", kind = "knap", strikes = 2, window = 20, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "forge_bronze_pick_head"
+name = "Bronz kazma kafası döv"
+inputs = [{ item = "bronze", n = 1 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "anvil"
+outputs = [{ item = "bronze_pick_head", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 1
+steps = [
+  { label = "Kızgın külçeyi döv", kind = "timing", strikes = 4, window = 10, period = 110, tools = [] },
+  { label = "Ucu sivrilt", kind = "knap", strikes = 2, window = 20, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "plank"
+name = "Tahta biç"
+inputs = [{ item = "wood", n = 1 }]
+needs = ["saw"]
+outputs = [{ item = "plank", n = 2 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Kütüğü boyuna biç", kind = "timing", strikes = 2, window = 14, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "mill_flour"
+name = "Değirmende öğüt"
+station = "hand_mill"
+inputs = [{ item = "grain", n = 3 }]
+outputs = [{ item = "flour", n = 3 }]
+ticks = 600
+discovery = "milling"
+
+# --- Iron age: iron is not cast but beaten. The bloomery gives slaggy sponge iron; beaten on an anvil (or by a
+# water-driven trip hammer) it becomes wrought iron; iron tools are forged on an iron anvil. ---
+[[recipe]]
+id = "bloom_sponge"
+name = "Demir indir"
+station = "bloomery"
+inputs = [{ item = "iron_ore", n = 2 }, { item = "charcoal", n = 3 }]
+outputs = [{ item = "sponge_iron", n = 1 }]
+ticks = 2400
+discovery = "smelting"
+heat = 1150
+
+[[recipe]]
+id = "refine_iron"
+name = "Süngerimsi demiri döv"
+inputs = [{ item = "sponge_iron", n = 1 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "anvil"
+outputs = [{ item = "iron_bloom", n = 1 }]
+ticks = 0
+discovery = "smelting"
+fine_bonus = 0
+steps = [
+  { label = "Cürufu döverek çıkar", kind = "timing", strikes = 5, window = 10, period = 110, tools = [] },
+]
+
+[[recipe]]
+id = "trip_refine_iron"
+name = "Şahmerdanda döv"
+station = "trip_hammer"
+inputs = [{ item = "sponge_iron", n = 1 }]
+outputs = [{ item = "iron_bloom", n = 1 }]
+ticks = 1200
+discovery = "mechanics"
+
+[[recipe]]
+id = "forge_iron_axe"
+name = "Demir balta döv"
+inputs = [{ item = "iron_bloom", n = 2 }, { item = "charcoal", n = 1 }, { item = "plank", n = 1 }]
+needs = ["hammer"]
+near = "iron_anvil"
+outputs = [{ item = "iron_axe", n = 1 }]
+ticks = 0
+discovery = "ironwork"
+fine_bonus = 0
+steps = [
+  { label = "Kızgın demiri döv", kind = "timing", strikes = 5, window = 9, period = 110, tools = [] },
+  { label = "Ağzı incelt", kind = "knap", strikes = 2, window = 18, period = 120, tools = [] },
+  { label = "Sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+]
+
+[[recipe]]
+id = "forge_iron_pickaxe"
+name = "Demir kazma döv"
+inputs = [{ item = "iron_bloom", n = 2 }, { item = "charcoal", n = 1 }, { item = "plank", n = 1 }]
+needs = ["hammer"]
+near = "iron_anvil"
+outputs = [{ item = "iron_pickaxe", n = 1 }]
+ticks = 0
+discovery = "ironwork"
+fine_bonus = 0
+steps = [
+  { label = "Kızgın demiri döv", kind = "timing", strikes = 5, window = 9, period = 110, tools = [] },
+  { label = "Ucu sivrilt", kind = "knap", strikes = 2, window = 18, period = 120, tools = [] },
+  { label = "Sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
+]
+
+# --- Steel and the mechanical age. ---
+[[recipe]]
+id = "raw_fire_brick"
+name = "Ateş tuğlası (ham)"
+inputs = [{ item = "fire_clay", n = 2 }]
+outputs = [{ item = "raw_fire_brick", n = 2 }]
+ticks = 0
+discovery = "steelmaking"
+fine_bonus = 0
+steps = [
+  { label = "Kalıba bastır", kind = "timing", strikes = 2, window = 14, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "fire_fire_brick"
+name = "Ateş tuğlası pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_fire_brick", n = 4 }, { item = "fiber", n = 2 }, { item = "wood", n = 3 }]
+outputs = [{ item = "fire_brick", n = 4 }]
+ticks = 21600
+discovery = "steelmaking"
+heat = 1100
+
+[[recipe]]
+id = "pig_iron"
+name = "Pik demir dök"
+station = "blast_furnace"
+inputs = [{ item = "iron_ore", n = 3 }, { item = "charcoal", n = 3 }, { item = "limestone", n = 1 }]
+outputs = [{ item = "pig_iron", n = 2 }]
+ticks = 3000
+discovery = "steelmaking"
+heat = 1450
+
+[[recipe]]
+id = "forge_high_carbon"
+name = "Pik demiri döv"
+inputs = [{ item = "pig_iron", n = 1 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "iron_anvil"
+outputs = [{ item = "high_carbon_steel", n = 1 }]
+ticks = 0
+discovery = "steelmaking"
+fine_bonus = 0
+steps = [
+  { label = "Karbonu döverek at", kind = "timing", strikes = 5, window = 9, period = 110, tools = [] },
+]
+
+[[recipe]]
+id = "forge_steel"
+name = "Çelik döv"
+inputs = [{ item = "high_carbon_steel", n = 1 }, { item = "charcoal", n = 1 }]
+needs = ["hammer"]
+near = "iron_anvil"
+outputs = [{ item = "steel", n = 1 }]
+ticks = 0
+discovery = "steelmaking"
+fine_bonus = 0
+steps = [
+  { label = "Katla ve döv", kind = "timing", strikes = 5, window = 8, period = 105, tools = [] },
+  { label = "Suya ver", kind = "tension", strikes = 1, window = 12, period = 120, tools = [] },
+]
+
+# --- The steam age. ---
+[[recipe]]
+id = "coke"
+name = "Kok pişir"
+station = "furnace"
+inputs = [{ item = "coal", n = 2 }]
+outputs = [{ item = "coke", n = 1 }]
+ticks = 1800
+discovery = "steam"
+heat = 1000
+
+[[recipe]]
+id = "cast_iron_part"
+name = "Dökme demir parça dök"
+station = "blast_furnace"
+inputs = [{ item = "pig_iron", n = 2 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "cast_iron_part", n = 1 }]
+ticks = 1800
+discovery = "steam"
+heat = 1200
+
+[[recipe]]
+id = "raise_steam"
+name = "Buhar kaldır"
+station = "steam_engine"
+inputs = [{ item = "coal", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "pot", n = 1 }]
+ticks = 3600
+discovery = "steam"
+
+[[recipe]]
+id = "raise_steam_coke"
+name = "Kokla buhar kaldır"
+station = "steam_engine"
+inputs = [{ item = "coke", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "pot", n = 1 }]
+ticks = 7200
+discovery = "steam"
+
+[[recipe]]
+id = "glass"
+name = "Cam erit"
+station = "furnace"
+inputs = [{ item = "sand", n = 2 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "glass", n = 1 }]
+ticks = 1800
+discovery = "steam"
+heat = 1200
+
+# --- Electricity. ---
+[[recipe]]
+id = "copper_wire"
+name = "Tel çek"
+station = "rolling_mill"
+inputs = [{ item = "copper_ingot", n = 1 }]
+outputs = [{ item = "copper_wire", n = 4 }]
+ticks = 1200
+discovery = "electricity"
+
+[[recipe]]
+id = "magnet"
+name = "Mıknatıs yap"
+inputs = [{ item = "steel", n = 1 }, { item = "iron_ore", n = 2 }]
+needs = ["hammer"]
+near = "iron_anvil"
+outputs = [{ item = "magnet", n = 1 }]
+ticks = 0
+discovery = "electricity"
+fine_bonus = 0
+steps = [
+  { label = "Çeliği mıknatıs taşıyla tek yöne sür", kind = "timing", strikes = 6, window = 12, period = 110, tools = [] },
+]
+
+[[recipe]]
+id = "light_bulb"
+name = "Ampul yap"
+inputs = [{ item = "glass", n = 1 }, { item = "copper_wire", n = 1 }, { item = "coke", n = 1 }]
+outputs = [{ item = "light_bulb", n = 1 }]
+ticks = 0
+discovery = "electricity"
+fine_bonus = 0
+steps = [
+  { label = "Kömür teli yerleştir", kind = "fit", strikes = 2, window = 18, period = 120, tools = [{ item = "clamp", bonus = 10 }] },
+  { label = "Camı kapat", kind = "tension", strikes = 1, window = 12, period = 120, tools = [] },
+]
+
+# --- Electronics. ---
+[[recipe]]
+id = "silicon"
+name = "Silisyum indir"
+station = "blast_furnace"
+inputs = [{ item = "sand", n = 2 }, { item = "coke", n = 1 }]
+outputs = [{ item = "silicon", n = 1 }]
+ticks = 3000
+discovery = "electronics"
+heat = 1500
+
+[[recipe]]
+id = "transistor"
+name = "Transistör yap"
+station = "workbench"
+inputs = [{ item = "silicon", n = 1 }, { item = "copper_wire", n = 2 }]
+outputs = [{ item = "transistor", n = 2 }]
+ticks = 1200
+discovery = "electronics"
+
+[[recipe]]
+id = "circuit_board"
+name = "Devre kartı yap"
+station = "workbench"
+inputs = [{ item = "plank", n = 1 }, { item = "copper_wire", n = 2 }, { item = "transistor", n = 2 }]
+outputs = [{ item = "circuit_board", n = 1 }]
+ticks = 1800
+discovery = "electronics"
+
+# --- Geology: hidden deposits, the prospector's pick, the mine shaft; rock oil as steam fuel. ---
+[[recipe]]
+id = "prospector_pick"
+name = "Arama kazması döv"
+inputs = [{ item = "bronze", n = 1 }, { item = "branch", n = 1 }]
+needs = ["hammer"]
+near = "anvil"
+outputs = [{ item = "prospector_pick", n = 1 }]
+ticks = 0
+discovery = "geology"
+fine_bonus = 0
+steps = [
+  { label = "Küçük kafayı döv", kind = "timing", strikes = 3, window = 11, period = 110, tools = [] },
+  { label = "Sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
+]
+
+[[recipe]]
+id = "mine"
+name = "Kuyudan çıkar"
+station = "mine_shaft"
+inputs = [{ item = "plank", n = 1 }]
+outputs = []
+ticks = 2400
+discovery = "geology"
+mine = true
+
+[[recipe]]
+id = "raise_steam_oil"
+name = "Petrolle buhar kaldır"
+station = "steam_engine"
+inputs = [{ item = "oil", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "pot", n = 1 }]
+ticks = 10800
+discovery = "steam"
+
+# --- Casting kit: the crucible and an axe mould fired together, one firing instead of two. ---
+[[recipe]]
+id = "fire_casting_kit"
+name = "Pota ve balta kalıbını birlikte pişir"
+station = "pit_kiln"
+inputs = [{ item = "raw_crucible", n = 1 }, { item = "raw_mold_axe", n = 1 }, { item = "fiber", n = 2 }, { item = "wood", n = 2 }]
+outputs = [{ item = "crucible", n = 1 }, { item = "mold_axe", n = 1 }]
+ticks = 21600
+discovery = "casting"
+heat = 900

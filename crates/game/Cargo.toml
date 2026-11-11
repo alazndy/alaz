@@ -1,0 +1,15 @@
+[package]
+name = "alaz"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alaz-sim = { path = "../sim" }
+alaz-render = { path = "../render" }
+alaz-net = { path = "../net" }
+winit = "0.30.13"
+pollster = "1.0.1"
+libc = "0.2"
+
+[dev-dependencies]
+egui_kittest = "0.37.0"
