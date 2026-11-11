@@ -196,7 +196,8 @@ fn discoveries_and_hand_crafting() {
     assert!(w.knows(Discovery::StoneAxe));
     craft_perfectly(&mut w, a, "stone_axe");
     assert_eq!(count(&w, 0, ItemKind::StoneAxe), 1);
-    assert_eq!(w.take_events().iter().filter(|e| matches!(e, Event::Discovered(_))).count(), 4);
+    // sharp stone, fire, stone axe, spear, and with the spear, fishing
+    assert_eq!(w.take_events().iter().filter(|e| matches!(e, Event::Discovered(_))).count(), 5);
 }
 
 #[test]
