@@ -1,0 +1,94 @@
+# Builds the install packages: Windows (installer + portable zip) and Linux (tar.gz with an installer script).
+# By hand (Actions → "Sürüm paketleri" → Run workflow) it only builds them; a version tag (v0.2.0 …) also publishes
+# them as a GitHub release.
+name: Sürüm paketleri
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Sürüm
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.1.0-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Derle
+        run: cargo build --release -p alaz
+      - name: Hızlı testler (arayüz, ağ, çizim)
+        run: cargo test --release -p alaz -p alaz-net -p alaz-render
+      - name: Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Kurulum dosyası
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" "/DSourceExe=..\..\target\release\alaz.exe" packaging\windows\alaz.iss
+          Rename-Item "dist\ALAZ-${{ steps.ver.outputs.version }}-Setup.exe" "ALAZ-${{ steps.ver.outputs.version }}-windows-setup.exe"
+      - name: Taşınabilir zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item target\release\alaz.exe portable\
+          Copy-Item README.md portable\
+          Compress-Archive -Path portable\* -DestinationPath "dist\ALAZ-${{ steps.ver.outputs.version }}-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    # an older base system, so the binary runs on older distributions too
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Sistem kütüphaneleri
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev
+      - name: Sürüm
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.1.0-$(git rev-parse --short HEAD)"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Derle
+        run: cargo build --release -p alaz
+      - name: Testler
+        run: cargo test --release --workspace
+      - name: Paket
+        run: |
+          d="ALAZ-${{ steps.ver.outputs.version }}-linux-x86_64"
+          mkdir -p "$d" dist
+          cp target/release/alaz packaging/linux/install.sh packaging/linux/uninstall.sh packaging/linux/alaz.desktop packaging/linux/alaz.png README.md "$d/"
+          strip "$d/alaz" || true
+          tar -czf "dist/$d.tar.gz" "$d"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Sürüm sayfası
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "A.L.A.Z ${GITHUB_REF_NAME#v}" --notes-file packaging/RELEASE_NOTES.md

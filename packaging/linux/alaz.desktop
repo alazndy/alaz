@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=A.L.A.Z
+GenericName=Hayatta kalma ve otomasyon oyunu
+Comment=Ape Learns Another Zing: taş devrinden bilgisayar çağına
+Exec=alaz
+Icon=alaz
+Terminal=false
+Categories=Game;StrategyGame;Simulation;
+Keywords=survival;crafting;automation;pixel;

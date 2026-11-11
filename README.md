@@ -7,7 +7,7 @@ Taş devrinden bilgisayar çağına uzanan bir hayatta kalma, keşif ve otomasyo
 
 Döngünün sonunda bu dünyanın izleri, bir sonraki dünyada harabe olarak durur.
 
-Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen deterministik ve tamsayı tabanlı; çok oyunculu kip lockstep çalışır. Platform: Linux.
+Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen deterministik ve tamsayı tabanlı; çok oyunculu kip lockstep çalışır. Platform: Linux ve Windows.
 
 > Tasarım belgesi: [DESIGN.md](DESIGN.md) · Yol haritası ve kararlar: [PLAN.md](PLAN.md) · Son hata ayıklama raporu: [docs/hata-ayiklama-raporu.md](docs/hata-ayiklama-raporu.md)
 
@@ -54,7 +54,15 @@ Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen 
 
 ## Kurulum ve çalıştırma
 
-Gerekenler: Rust (2024 edition, güncel stable), Vulkan destekli bir ekran kartı sürücüsü, Linux (Wayland veya X11).
+**Hazır paketler:** [Sürümler](https://github.com/alazndy/alaz/releases) sayfasından:
+- **Windows:** `…-windows-setup.exe` kurar; `…-windows-portable.zip` kurmadan çalışır.
+- **Linux:** `…-linux-x86_64.tar.gz` dosyasını aç, `./install.sh` çalıştır. Oyun `~/.local/bin` altına kurulur ve menüye eklenir; sudo gerekmez.
+
+Kurulum ayrıntıları için sürüm notlarına bak. Paketler `.github/workflows/release.yml` ile üretilir: bir `v*` etiketi gönderilince Windows ve Linux paketleri derlenip sürüm sayfası oluşur.
+
+**Kaynaktan:**
+
+Gerekenler: Rust (2024 edition, güncel stable), Vulkan ya da DirectX 12 destekli bir ekran kartı sürücüsü; Linux (Wayland veya X11) ya da Windows 10/11.
 
 ```bash
 git clone https://github.com/alazndy/alaz.git
@@ -74,7 +82,7 @@ Komut satırı seçenekleri:
 | `--host [--port N]` | Çok oyunculu sunucu (varsayılan port 7777) |
 | `--join ADRES` | Sunucuya katıl |
 
-Kayıtların yeri sırasıyla `$ALAZ_SAVE_DIR`, `$XDG_DATA_HOME/alaz`, `~/.local/share/alaz`.
+Kayıtların yeri: `$ALAZ_SAVE_DIR`; yoksa Windows'ta `%APPDATA%\ALAZ`, Linux'ta `$XDG_DATA_HOME/alaz` ya da `~/.local/share/alaz`.
 
 ## Kontroller
 
