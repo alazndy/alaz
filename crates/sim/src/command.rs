@@ -90,6 +90,8 @@ pub enum CommandKind {
     Drop { item: ItemKind, n: u16 },
     /// Fish the water at (tx, ty), from the bank or wading: a rod or a spear, and a school close by.
     Fish { tx: i32, ty: i32 },
+    /// Move a building (with everything in it) to a new spot nearby.
+    Relocate { building: u32, x: i64, y: i64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

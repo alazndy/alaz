@@ -67,11 +67,15 @@ fn steps(w: &World, me: &alaz_sim::world::Agent, binds: &Keybinds) -> Vec<Step> 
     let built = |kind: BuildingKind| w.buildings.iter().any(|b| b.kind == kind);
     vec![
         Step { title: "Yürü, etrafa bak", how: format!("{}{}{}{} ile yürü, fareyle bak. Koşmak: {}.", k(Action::MoveUp), k(Action::MoveLeft), k(Action::MoveDown), k(Action::MoveRight), k(Action::Sprint)), done: moved },
-        Step { title: "Taş topla", how: "Yerdeki taşa sağ tıkla. İmleç üstündeyken adı yazar.".into(), done: w.has_seen(ItemKind::Stone) },
+        // the same order as the goal line at the top and as the recipes open up
+        Step { title: "İki taş topla", how: "Yerdeki taşa sağ tıkla. İmleç üstündeyken adı yazar.".into(), done: w.has_seen(ItemKind::Stone) },
+        Step { title: "Keskin taş yap", how: format!("Yap sekmesini aç ({}), iki taşı ellerine al ve Dene: yontma oyunu başlar.", k(Action::Craft)), done: w.has_seen(ItemKind::SharpStone) },
         Step { title: "Dal ve lif topla", how: "Kuru dallara ve sarı lif otlarına sağ tıkla.".into(), done: w.has_seen(ItemKind::Branch) && w.has_seen(ItemKind::Fiber) },
-        Step { title: "Bir şey yap", how: format!("Yap sekmesini aç ({}), iki taşı ellerine al ve dene: yontma oyunu başlar.", k(Action::Craft)), done: w.has_seen(ItemKind::SharpStone) },
-        Step { title: "Ye ve iç", how: "Yemiş topla; alttaki çubuktan Ye ve Su iç düğmelerini kullan. Sağ alttaki çubuklar açlık, su ve sıcaklık.".into(), done: w.has_seen(ItemKind::Berries) },
+        Step { title: "Taş balta yap", how: "Keskin taş, bir dal ve iki lifi ellerinde dene.".into(), done: w.has_seen(ItemKind::StoneAxe) },
+        Step { title: "Odun kes", how: "Baltayla bir ağaca sağ tıkla; devrilince gövdesine sağ tıkla. Üç odun lazım.".into(), done: w.has_seen(ItemKind::Wood) },
+        Step { title: "Çakmaktaşı bul", how: "İki taş, dal ve liften çekiç yap; çekiçle bir kaya damarına sağ tıkla.".into(), done: w.has_seen(ItemKind::Flint) },
         Step { title: "Ateş yak", how: format!("İnşa sekmesinden ({}) kamp ateşi kur. Ateş ısıtır ve kurtları uzak tutar.", k(Action::Build)), done: built(BuildingKind::Campfire) },
+        Step { title: "Ye ve iç", how: "Yemiş topla; alttaki çubuktan Ye ve Su iç düğmelerini kullan.".into(), done: w.has_seen(ItemKind::Berries) },
         Step { title: "Barınak kur", how: "Gece soğuk olur: ateşin yanına bir barınak kur.".into(), done: built(BuildingKind::Shelter) },
     ]
 }
@@ -234,7 +238,7 @@ mod tests {
         h.get_by_label("Başla").click();
         h.run();
         assert!(h.query_by_label_contains("Çok eskiden").is_none());
-        assert!(h.query_by_label_contains("İlk adımlar 0/7").is_some() || h.query_by_label_contains("İlk adımlar  0/7").is_some());
+        assert!(h.query_by_label_contains("İlk adımlar 0/10").is_some() || h.query_by_label_contains("İlk adımlar  0/10").is_some());
         assert!(h.query_by_label_contains("Yürü, etrafa bak").is_some());
     }
 

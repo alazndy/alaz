@@ -190,11 +190,13 @@ struct Walk {
     /// Crafting: the last strike count seen and seconds since the hand last came down.
     craft: u64,
     strike: f32,
+    /// How fast the body is turning (radians a second): turns ease in and out, and the body leans into them.
+    spin: f32,
 }
 
 impl Walk {
     fn at(x: f32, z: f32, heading: f32, hp: i32) -> Walk {
-        Walk { x, z, heading, phase: 0.0, amp: 0.0, hp, hurt: 0.0, prev: [x, z], sim: [x, z], tick: 0, stride: 0.3, speed: 0.0, craft: 0, strike: 9.0 }
+        Walk { x, z, heading, phase: 0.0, amp: 0.0, hp, hurt: 0.0, prev: [x, z], sim: [x, z], tick: 0, stride: 0.3, speed: 0.0, craft: 0, strike: 9.0, spin: 0.0 }
     }
 
     /// Where to draw it this frame: between the last two simulated positions.
@@ -1130,6 +1132,23 @@ impl Renderer {
                     v.pos[1] += lift.max(0.0);
                 }
             }
+            // the body leans into a turn and a little forward when it hurries (not when swimming or in the air)
+            let depth_here = alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
+            if a.kind == AgentKind::Human && flight.is_none() && depth_here == 0 {
+                let roll = (-w.spin * w.speed * 0.07).clamp(-0.22, 0.22);
+                let lean = (w.speed * 0.035).clamp(0.0, 0.11);
+                if roll.abs() > 0.002 || lean > 0.002 {
+                    let h = w.heading;
+                    let fwd = glam::Vec3::new(h.sin(), 0.0, h.cos());
+                    let right = glam::Vec3::new(h.cos(), 0.0, -h.sin());
+                    let rot = glam::Quat::from_axis_angle(fwd, roll) * glam::Quat::from_axis_angle(right, lean);
+                    let foot = glam::Vec3::new(x, 0.0, z);
+                    for v in &mut dynamic[body_start..] {
+                        let p = glam::Vec3::from(v.pos);
+                        v.pos = (rot * (p - foot) + foot).to_array();
+                    }
+                }
+            }
             // in the water: wading, the body goes in to the waist; out of its depth, it lies forward on the surface
             // and swims (the walk's arm swing becomes the stroke), riding up and down on the very swell drawn there
             let depth = alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
@@ -1162,6 +1181,12 @@ impl Renderer {
         for &i in routes {
             if let Some(a) = world.agents.get(i) {
                 push_route(&mut dynamic, world, a, tick);
+                // a resource being gone for glows itself, as under the pointer, instead of carrying a flag
+                if let alaz_sim::world::Task::Gather { node, .. } = a.task {
+                    if let Some(n) = world.nodes.get(node.0 as usize) {
+                        push_hover_rim(&mut dynamic, world, (n.tx, n.ty), world.perception_level(), &cam, secs);
+                    }
+                }
             }
         }
         let dyn_buf = self.vertex_buffer(&dynamic);
@@ -1335,10 +1360,12 @@ fn step_walk(w: &mut Walk, x: f32, z: f32, dt: f32, base: f32) -> bool {
     let moved = step > 0.0002 && step < 3.0;
     let v = if moved { step / dt.max(1e-3) } else { 0.0 };
     w.speed += (v - w.speed) * (1.0 - (-10.0 * dt).exp());
-    if moved {
-        let want = dx.atan2(dz);
-        w.heading += wrap_pi(want - w.heading) * (1.0 - (-14.0 * dt).exp());
-    }
+    // turning: a spring toward where it is going (no snapping round), its speed kept for the lean
+    let want = if moved { dx.atan2(dz) } else { w.heading };
+    let omega = 11.0;
+    let off = wrap_pi(want - w.heading);
+    w.spin += (omega * omega * off - 2.0 * omega * w.spin) * dt.min(0.05);
+    w.heading += w.spin * dt;
     // walking is about 1.5 m/s; faster is a run, with longer strides
     let pace = if w.speed > 0.05 { (w.speed / 1.5).clamp(1.0, 1.8) } else { 0.0 };
     w.amp += (pace - w.amp) * (1.0 - (-12.0 * dt).exp());
@@ -2464,6 +2491,10 @@ fn push_route(out: &mut Vec<Vertex>, world: &World, a: &alaz_sim::world::Agent, 
         }
     }
     let end = *pts.last().unwrap();
+    // going to a resource: no flag, the resource itself glows (drawn by the caller)
+    if matches!(a.task, Task::Gather { .. }) {
+        return;
+    }
     let pulse = 0.5 + 0.5 * (tick as f32 / 12.0).sin();
     push_box(out, [end[0], 0.0, end[1]], [0.04, 1.3, 0.04], [0.9, 0.85, 0.6], 0.5);
     push_box(out, [end[0] + 0.2, 1.0, end[1]], [0.22, 0.28, 0.03], [1.0, 0.3 + 0.4 * pulse, 0.2], 1.0);

@@ -13,6 +13,7 @@ mod icons;
 mod keys;
 mod lang;
 mod menu;
+mod fx;
 mod saveio;
 mod story;
 mod ui_art;
@@ -460,6 +461,8 @@ struct App {
     last_save_tick: u64,
     autosave_ticks: u64,
     build_mode: Option<BuildingKind>,
+    /// Set while a placed building is being moved: the ghost places it instead of building a new one.
+    moving: Option<usize>,
     grid_snap: bool,
     selected: Option<Selection>,
     recording: bool,
@@ -471,6 +474,10 @@ struct App {
     last_stage: u8,
     knap: hud::KnapState,
     story: story::Story,
+    /// The title screen and the way into a world.
+    fx: fx::Fx,
+    /// How many times the dog has been petted (just picks the line).
+    pets: u32,
     /// A debug script driving the player (`ALAZ_SCRIPT=file`), and where its log goes.
     script: Option<alaz_sim::debug::Script>,
     script_done: bool,
@@ -579,6 +586,9 @@ impl App {
             last_stage: 255,
             knap: hud::KnapState::default(),
             story: story::Story::default(),
+            fx: fx::Fx::default(),
+            pets: 0,
+            moving: None,
             script_done: false,
             script: std::env::var("ALAZ_SCRIPT").ok().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| alaz_sim::debug::Script::new(&t)),
             audio: audio::Audio::new(),
@@ -640,6 +650,15 @@ impl App {
         }
         app.last_save_tick = app.world.tick;
         app.center_camera();
+        // the title screen, or straight into the world; not in the dev demo, benchmarks or when turned off
+        let quiet_fx = args.demo || app.perf.is_some() || std::env::var_os("ALAZ_NOFX").is_some();
+        if !quiet_fx {
+            if app.menu.is_some() {
+                app.fx.boot();
+            } else {
+                app.fx.enter_world(&app.world);
+            }
+        }
         // a fresh world opens with its story; a loaded one only tells the ages still to come
         if app.world.tick == 0 && app.menu.is_none() && !args.demo {
             app.story.begin(&app.world);
@@ -725,6 +744,16 @@ impl App {
                 }
             }
             A::Grid => self.grid_snap = !self.grid_snap,
+            A::Drop => {
+                // one of whatever there is most of (tools stay in hand)
+                let pick = self.me_agent().and_then(|m| {
+                    alaz_sim::ItemKind::ALL.iter().copied().filter(|k| !k.is_tool() && m.inventory.get(*k) > 0).max_by_key(|k| m.inventory.get(*k))
+                });
+                match pick {
+                    Some(item) => self.issue(CommandKind::Drop { item, n: 1 }),
+                    None => self.say("Bırakacak bir şey yok.".to_string()),
+                }
+            }
             A::Mute => {
                 if let Some(a) = self.audio.as_mut() {
                     a.toggle_mute();
@@ -804,6 +833,7 @@ impl App {
                         self.replace_world(w);
                         self.no_save = false;
                         self.menu = None;
+                        self.fx.enter_world(&self.world);
                         self.say(format!("Yuva {n} yüklendi."));
                     }
                     Ok(None) => {}
@@ -824,6 +854,7 @@ impl App {
                 self.story.begin(&self.world);
                 self.no_save = false;
                 self.menu = None;
+                self.fx.enter_world(&self.world);
                 self.save_game(false);
                 self.say("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.");
                 self.say("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.");
@@ -881,6 +912,7 @@ impl App {
         let now = Instant::now();
         let raw_dt = (now - self.last).as_secs_f32();
         let dt = (now - self.last).as_secs_f32().min(0.25);
+        self.fx.update(dt);
         self.last = now;
         if let Some(g) = self.gfx.as_ref() {
             self.cam.win = g.renderer.size();
@@ -1163,6 +1195,7 @@ impl App {
                     E::Hunted { agent, .. } if *agent == self.me => a.play(audio::Sfx::Hit),
                     E::Fell { agent, .. } if *agent == self.me => a.play(audio::Sfx::Thud),
                     E::TreeDown { x, y, .. } if self.near_me(*x, *y, 30_000) => a.play(audio::Sfx::Timber),
+                    E::Chopped { agent } if *agent == self.me => a.play(audio::Sfx::Chop),
                     E::RockBounce { x, y } | E::Rockfall { x, y } if self.near_me(*x, *y, 20_000) => a.play(audio::Sfx::Rumble),
                     _ => {}
                 }
@@ -1278,6 +1311,7 @@ impl App {
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
         let mut story = std::mem::take(&mut self.story);
+        let mut fx = std::mem::take(&mut self.fx);
         let me_id = self.me;
         let mut menu = self.menu.take();
         let mut menu_act = None;
@@ -1296,6 +1330,8 @@ impl App {
             cam.target.x += (t * 61.0).sin() * k;
             cam.target.z += (t * 47.0).cos() * k;
         }
+        // the swoop into a new world is only how it is drawn: the game's own camera is left alone
+        fx.camera(&mut cam);
         g.renderer.render(world, &cam, ghost, self.me, &route_of, |ctx| {
             if flash > 0.0 {
                 hud::hurt_vignette(ctx, flash);
@@ -1308,7 +1344,8 @@ impl App {
                 Some(m) => menu_act = m.draw(ctx, &mut binds),
                 None => {
                     hud::draw(ctx, world, &ui_ctx, &mut knap, &mut acts);
-                    if let Some(me_a) = world.agents.get(me_id.0 as usize) {
+                    // the story's first page waits until the way in has played
+                    if let Some(me_a) = world.agents.get(me_id.0 as usize).filter(|_| !fx.entering()) {
                         story.draw(ctx, world, me_a, &binds, ui_ctx.selection.is_some());
                     }
                     if let Some(t) = &pointer_text {
@@ -1316,7 +1353,13 @@ impl App {
                     }
                 }
             }
+            fx.draw(ctx);
         });
+        // a click on the title screen only skips it
+        if fx.splash_up() {
+            menu_act = None;
+        }
+        self.fx = fx;
         self.menu = menu;
         self.binds = binds;
         let render_ms = render_t0.elapsed().as_secs_f32() * 1000.0;
@@ -1335,6 +1378,14 @@ impl App {
                 }
                 UiAction::ToggleTab(t) => self.toggle_tab(t),
                 UiAction::ToggleGrid => self.grid_snap = !self.grid_snap,
+                UiAction::MoveBuilding(i) => {
+                    if let Some(b) = self.world.buildings.get(i) {
+                        self.build_mode = Some(b.kind);
+                        self.moving = Some(i);
+                        self.selected = None;
+                        self.say("Yeni yeri sol tıkla seç; sağ tık vazgeçer.".to_string());
+                    }
+                }
                 UiAction::Deselect => self.selected = None,
                 UiAction::ToggleRecording => {
                     if !self.recording {
@@ -1358,6 +1409,7 @@ impl App {
                         self.save_game(false);
                         self.replace_world(next);
                         self.save_game(false);
+                        self.fx.enter_world(&self.world);
                         self.say("Yeni bir dünya. Yine hiçbir şey bilmiyorsun; ama bu dünya senin kurallarınla dönüyor, eski yaptıkların harabe olarak duruyor.");
                     }
                 }
@@ -1516,6 +1568,34 @@ impl App {
         })
     }
 
+    /// The pointer's ray, walked down from 2.5 m to the ground: the ground point under it at each height (mm).
+    fn pointer_samples(&self) -> Vec<(i64, i64)> {
+        let Some(g) = self.gfx.as_ref() else { return Vec::new() };
+        if g.renderer.pointer_over_ui() {
+            return Vec::new();
+        }
+        let (w, h) = g.renderer.size();
+        let ndc = (2.0 * self.cursor.0 / w as f32 - 1.0, 1.0 - 2.0 * self.cursor.1 / h as f32);
+        let seed = self.world.seed;
+        (0..=10)
+            .rev()
+            .filter_map(|k| {
+                let lift = k as f32 * 0.25;
+                self.cam.ground_at_height(ndc.0, ndc.1, |x, z| alaz_render::ground_height(seed, x, z) + lift).map(|p| ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64))
+            })
+            .collect()
+    }
+
+    /// The building whose model the pointer is on, if any (its roof as well as its foot).
+    fn pick_building(&self) -> Option<usize> {
+        self.pointer_samples().into_iter().find_map(|(x, y)| self.world.building_at(x, y, 300))
+    }
+
+    /// The worker (dog, ox, horse, bot) the pointer is on, if any.
+    fn pick_worker(&self) -> Option<usize> {
+        self.pointer_samples().into_iter().find_map(|(x, y)| self.world.worker_at(x, y, 700))
+    }
+
     /// What the pointer is on, in words, with what a right click would do: a resource, something lying on the
     /// ground, a building, a person or an animal.
     fn pointer_text(&self) -> Option<String> {
@@ -1543,11 +1623,11 @@ impl App {
             _ => {}
         }
         let rules = w.rules();
-        if let Some(b) = w.buildings.iter().find(|b| {
-            let r = rules.building(b.kind).radius_mm.max(500) as i64;
-            dist2(b.x, b.y, x, y) <= r * r
-        }) {
+        if let Some(b) = self.pick_building().and_then(|i| w.buildings.get(i)) {
             return Some(format!("{}  ·  sol tık: aç", rules.building(b.kind).name));
+        }
+        if let Some(a) = self.pick_worker().and_then(|i| w.agents.get(i)) {
+            return Some(format!("{}  ·  sol tık: aç", hud::kind_name(a.kind)));
         }
         if let Some(a) = w.agents.iter().filter(|a| a.id != self.me && a.health > 0).find(|a| dist2(a.x, a.y, x, y) <= 700 * 700) {
             return Some(hud::kind_name(a.kind).to_string());
@@ -1629,6 +1709,9 @@ impl App {
 
     fn placement_ok(&self, kind: BuildingKind, x: i64, y: i64) -> bool {
         let Some(a) = self.me_agent() else { return false };
+        if let Some(i) = self.moving {
+            return self.world.can_place_except(kind, x, y, Some(i)).is_ok() && dist2(a.x, a.y, x, y) <= BUILD_RADIUS_MM * BUILD_RADIUS_MM;
+        }
         self.world.can_place(kind, x, y).is_ok()
             && dist2(a.x, a.y, x, y) <= BUILD_RADIUS_MM * BUILD_RADIUS_MM
             && a.inventory.has(&rules().building(kind).cost)
@@ -1714,19 +1797,33 @@ impl App {
                 if let Some((x, y)) = self.ghost_pos() {
                     // the sim says why a bad spot is refused; build mode stays on so the next try is one click
                     let ok = self.placement_ok(kind, x, y);
-                    self.issue(CommandKind::Build { kind, x, y });
+                    match self.moving {
+                        Some(i) => self.issue(CommandKind::Relocate { building: i as u32, x, y }),
+                        None => self.issue(CommandKind::Build { kind, x, y }),
+                    }
                     if ok {
                         self.build_mode = None;
+                        self.moving = None;
                     }
                 }
             } else {
                 self.build_mode = None;
+                self.moving = None;
             }
             return;
         }
         let Some(p) = self.cursor_ground() else { return };
         let (px, py) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
         if primary {
+            // a building or a worker under the pointer (anywhere on its model): open it; elsewhere, walk there
+            if let Some(i) = self.pick_building() {
+                self.selected = Some(Selection::Building(i));
+                return;
+            }
+            if let Some(i) = self.pick_worker() {
+                self.selected = Some(Selection::Agent(i));
+                return;
+            }
             self.issue(CommandKind::MoveTo { x: px, y: py });
             return;
         }
@@ -1735,11 +1832,25 @@ impl App {
             self.issue(kind);
             return;
         }
-        if let Some(i) = self.world.building_at(px, py, 300) {
+        if let Some(i) = self.pick_building() {
             self.selected = Some(Selection::Building(i));
             return;
         }
-        if let Some(i) = self.world.worker_at(px, py, 1_000) {
+        if let Some(i) = self.pick_worker() {
+            // your own dog, close by: a right click pets it
+            let me = self.me_agent().map(|m| (m.x, m.y));
+            if let (Some(d), Some((mx, my))) = (self.world.agents.get(i), me) {
+                if d.kind == alaz_sim::AgentKind::Dog && (d.x - mx).pow(2) + (d.y - my).pow(2) <= 2_500i64.pow(2) {
+                    if let Some(a) = self.audio.as_mut() {
+                        a.play(audio::Sfx::Bark);
+                        a.play(audio::Sfx::Tame);
+                    }
+                    let line = ["Köpeğin başını okşadın; kuyruğunu sallıyor.", "Köpek sırtüstü yattı, karnını kaşıdın.", "Köpek elini yaladı."];
+                    self.pets = self.pets.wrapping_add(1);
+                    self.say(line[self.pets as usize % line.len()].to_string());
+                    return;
+                }
+            }
             self.selected = Some(Selection::Agent(i));
             return;
         }

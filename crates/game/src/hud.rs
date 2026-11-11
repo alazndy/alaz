@@ -62,6 +62,8 @@ pub enum UiAction {
     AssignRecorded(AgentId),
     /// Start a new world from this one (the loop).
     NewCycle,
+    /// Pick a building up to set it down elsewhere.
+    MoveBuilding(usize),
 }
 
 pub fn item_name(k: ItemKind) -> &'static str {
@@ -394,6 +396,7 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
             Reject::NeedsPair => "Yavru için o türden iki hayvan ağılın içinde olmalı. İşçi panelinden \"Ağıla götür\" de.".into(),
             Reject::NoFlint => "Kıvılcım çıkaracak bir şey yok: ateş yakmak için çakmaktaşı gerek. Taş damarlarını kazarken arada bir çıkar.".into(),
         },
+        Event::Chopped { .. } => return None,
         Event::Caught { agent } if *agent != me => return None,
         Event::Caught { .. } => "Bir balık tuttun.".to_string(),
         Event::Prospected { agent, .. } if *agent != me => return None,
@@ -1183,27 +1186,63 @@ fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &
             });
         });
     }
-    for (i, r) in hand {
-        egui::Frame::new().fill(Color32::from_black_alpha(90)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(r.name.as_str()).strong());
-                    need_row(ui, w, &r.inputs, &me.inventory);
-                    needs_row(ui, w, &r.needs, &me.inventory);
-                    if !r.steps.is_empty() {
-                        let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
-                        ui.label(RichText::new(format!("Adımlar: {}", names.join(" → "))).small().weak());
-                    }
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory), egui::Button::new("Yap").min_size(egui::vec2(60.0, 28.0))).clicked() {
-                        acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
-                    }
-                });
-            });
-        });
-    }
+    // the book as a wall of cards: what it makes, big; what it takes underneath; click a lit card to make it
+    let card_w = 132.0;
+    let cols = ((ui.available_width() + 6.0) / (card_w + 6.0)).floor().max(1.0) as usize;
+    let mut sorted = hand;
+    // what can be made right now first
+    sorted.sort_by_key(|(_, r)| !(me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory)));
+    egui::Grid::new("craft_cards").spacing([6.0, 6.0]).show(ui, |ui| {
+        for (n, (i, r)) in sorted.into_iter().enumerate() {
+            let can = me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory);
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 150.0), egui::Sense::click());
+            let p = ui.painter();
+            let hover = resp.hovered() && can;
+            p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
+            let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
+            p.rect_stroke(rect, 0.0, Stroke::new(if hover { 3.0 } else { 2.0 }, edge), egui::StrokeKind::Inside);
+            // the product
+            if let Some(o) = r.outputs.first() {
+                let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 38.0), egui::vec2(56.0, 56.0));
+                crate::icons::draw_slot(p, icon, o.item, true);
+                if o.n > 1 {
+                    p.text(icon.right_bottom() - egui::vec2(2.0, 1.0), Align2::RIGHT_BOTTOM, format!("x{}", o.n), egui::FontId::proportional(22.0), Color32::WHITE);
+                }
+            }
+            let name_col = if can { Color32::from_rgb(244, 220, 160) } else { Color32::from_rgb(150, 136, 112) };
+            let galley = p.layout(r.name.clone(), egui::FontId::proportional(22.0), name_col, card_w - 10.0);
+            p.galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 72.0), galley, name_col);
+            // what it takes: small icons, red when short
+            let k = r.inputs.len().max(1) as f32;
+            let iw = 26.0;
+            let mut x = rect.center().x - (k * (iw + 4.0) - 4.0) / 2.0;
+            for c in &r.inputs {
+                let ir = egui::Rect::from_min_size(egui::pos2(x, rect.bottom() - 36.0), egui::vec2(iw, iw));
+                crate::icons::draw_slot(p, ir, c.item, w.has_seen(c.item));
+                let short = me.inventory.get(c.item) < c.n;
+                p.text(ir.right_bottom() + egui::vec2(1.0, 3.0), Align2::RIGHT_BOTTOM, c.n.to_string(), egui::FontId::proportional(11.0), if short { Color32::from_rgb(240, 90, 70) } else { Color32::WHITE });
+                x += iw + 4.0;
+            }
+            let mut tip = format!("{}\n", r.name);
+            for c in &r.inputs {
+                tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
+            }
+            for k in &r.needs {
+                tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
+            }
+            if !r.steps.is_empty() {
+                let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
+                tip += &format!("Adımlar: {}", names.join(" → "));
+            }
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, format!("Yap: {}", r.name)));
+            if resp.on_hover_text(tip).clicked() && can {
+                acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
+            }
+            if (n + 1) % cols == 0 {
+                ui.end_row();
+            }
+        }
+    });
 }
 
 fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, acts: &mut Vec<UiAction>) {
@@ -1315,9 +1354,44 @@ fn tab_routes(ui: &mut egui::Ui, w: &World, ui_ctx: &UiCtx, acts: &mut Vec<UiAct
     }
 }
 
+/// The size of the whole interface (kept between runs in ui.cfg beside the saves).
+pub fn ui_zoom_controls(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Arayüz boyutu").strong());
+        let z = ui.ctx().zoom_factor();
+        let mut set = None;
+        if ui.button(" - ").clicked() {
+            set = Some((z - 0.1).max(0.6));
+        }
+        if ui.button(format!("%{:.0}", z * 100.0)).on_hover_text("Sıfırla").clicked() {
+            set = Some(1.0);
+        }
+        if ui.button(" + ").clicked() {
+            set = Some((z + 0.1).min(2.0));
+        }
+        if let Some(z) = set {
+            ui.ctx().set_zoom_factor(z);
+            let _ = std::fs::create_dir_all(crate::saveio::base_dir());
+            let _ = std::fs::write(crate::saveio::base_dir().join("ui.cfg"), format!("zoom={z:.2}\n"));
+        }
+    });
+}
+
+/// The interface size saved last time (1.0 when none).
+pub fn saved_ui_zoom() -> f32 {
+    std::fs::read_to_string(crate::saveio::base_dir().join("ui.cfg"))
+        .ok()
+        .and_then(|t| t.lines().find_map(|l| l.strip_prefix("zoom=").and_then(|v| v.trim().parse::<f32>().ok())))
+        .unwrap_or(1.0)
+        .clamp(0.6, 2.0)
+}
+
 fn tab_help(ui: &mut egui::Ui, binds: &Keybinds) {
+    ui_zoom_controls(ui);
+    ui.label(RichText::new("Ctrl + 0 da arayüzü normal boyuta döndürür.").small().weak());
+    ui.add_space(6.0);
     ui.label(RichText::new("Fare").strong());
-    ui.label("Sol tık: yürü, yerleştir. Sağ tık: topla / makine panelini aç / evcilleştir / ava git / inşayı iptal et");
+    ui.label("Sol tık: yürü, bina ya da işçi aç, yerleştir. Sağ tık: topla / evcilleştir / ava git / balık tut / inşayı iptal et");
     ui.label("Tekerlek: yakınlaş   ·   Orta tuş sürükle: kamerayı döndür ve eğ   ·   Shift + orta tuş: kamerayı kaydır");
     ui.add_space(6.0);
     ui.label(RichText::new("Klavye (Menü > Tuşlar'dan değiştirebilirsin)").strong());
@@ -1362,6 +1436,8 @@ fn set_pixel_font(ctx: &egui::Context) {
         fonts.families.entry(fam).or_default().insert(0, "alaz-pixel".into());
     }
     ctx.set_fonts(fonts);
+    // and the interface size chosen last time
+    ctx.set_zoom_factor(saved_ui_zoom());
 }
 
 pub fn apply_style(ctx: &egui::Context) {
@@ -1420,7 +1496,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
     if let Some(tab) = ui_ctx.tab.filter(|_| w.craft_view(ui_ctx.me).is_none()) {
         egui::Area::new(egui::Id::NULL.with("tab")).anchor(Align2::CENTER_BOTTOM, [0.0, -70.0]).show(ctx, |ui| {
             panel_frame().show(ui, |ui| {
-                ui.set_width(460.0_f32.min(ctx.content_rect().width() - 40.0));
+                ui.set_width(600.0_f32.min(ctx.content_rect().width() - 40.0));
                 // leave room for the action bar below and the status line above, whatever the window size
                 let max_h = (ctx.content_rect().height() - 62.0 - 130.0).clamp(120.0, 520.0);
                 ui.horizontal(|ui| {
@@ -1707,6 +1783,13 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
             ui.set_min_width(380.0);
             step_header(ui, def, v);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(380.0, 96.0), egui::Sense::hover());
+            // a miss jolts the piece; a hit throws chips off it
+            let left = last.map_or(0.0, |(_, t)| t.max(0.0) / 0.35);
+            let shake = match last {
+                Some((false, _)) => ((1.0 - left) * 40.0).sin() * 7.0 * left,
+                _ => 0.0,
+            };
+            let rect = rect.translate(egui::vec2(shake, 0.0));
             let p = ui.painter();
             p.rect_filled(rect, 0.0, Color32::from_rgb(52, 42, 33));
             let x_of = |t: f32| rect.left() + 14.0 + (rect.width() - 28.0) * (t / v.span as f32).clamp(0.0, 1.0);
@@ -1729,8 +1812,30 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
             };
             p.rect_filled(zone, 0.0, Color32::from_rgba_unmultiplied(zone_color.r(), zone_color.g(), zone_color.b(), 70));
             p.rect_stroke(zone, 0.0, Stroke::new(2.5, zone_color), egui::StrokeKind::Middle);
+            // the heart of the zone: dead centre is the clean blow
+            let core = (v.half as f32 * 0.3).max(1.0);
+            let heart = egui::Rect::from_min_max(egui::pos2(x_of(v.center as f32 - core), cy - 17.0), egui::pos2(x_of(v.center as f32 + core), cy + 17.0));
+            p.rect_filled(heart, 0.0, Color32::from_rgba_unmultiplied(250, 230, 120, 90));
+            // a marker close to the zone glows, so the moment can be felt coming
+            let near = 1.0 - ((v.pos as f32 - v.center as f32).abs() / (v.half as f32 * 3.0)).clamp(0.0, 1.0);
+            if let Some((true, _)) = last {
+                // chips fly up and out from where the blow landed
+                let age = 1.0 - left;
+                let hx = x_of(v.center as f32);
+                for k in 0..10 {
+                    let a = k as f32 * 0.63 + 0.3;
+                    let (dx, dy) = (a.cos() * 70.0 * age, -a.sin().abs() * 60.0 * age + 80.0 * age * age);
+                    p.rect_filled(egui::Rect::from_center_size(egui::pos2(hx + dx, cy - 6.0 + dy), egui::vec2(4.0, 4.0)), 0.0, Color32::from_rgba_unmultiplied(214, 168, 110, (left * 255.0) as u8));
+                }
+                p.text(egui::pos2(hx, rect.top() + 4.0), Align2::CENTER_TOP, "İsabet!", egui::FontId::proportional(22.0), Color32::from_rgba_unmultiplied(150, 250, 150, (left * 255.0) as u8));
+            } else if let Some((false, _)) = last {
+                p.text(egui::pos2(rect.center().x, rect.top() + 4.0), Align2::CENTER_TOP, "Iska", egui::FontId::proportional(22.0), Color32::from_rgba_unmultiplied(250, 120, 110, (left * 255.0) as u8));
+            }
             // the scraper moves along it; strike when it is over the marked spot
             let mx = x_of(v.pos as f32);
+            if near > 0.0 {
+                p.circle_filled(egui::pos2(mx, cy - 26.0), 10.0 + 8.0 * near, Color32::from_rgba_unmultiplied(255, 220, 120, (near * 60.0) as u8));
+            }
             p.add(egui::Shape::convex_polygon(
                 vec![egui::pos2(mx - 9.0, cy - 40.0), egui::pos2(mx + 9.0, cy - 40.0), egui::pos2(mx + 3.0, cy - 12.0), egui::pos2(mx - 3.0, cy - 12.0)],
                 Color32::from_rgb(190, 192, 200),
@@ -2003,6 +2108,9 @@ fn draw_building(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("Kapat").clicked() {
                         acts.push(UiAction::Deselect);
+                    }
+                    if ui.small_button("Taşı").on_hover_text("Binayı içindekilerle başka bir yere koy").clicked() {
+                        acts.push(UiAction::MoveBuilding(i));
                     }
                 });
             });

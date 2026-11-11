@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "alaz"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alaz-net",
  "alaz-render",
@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "alaz-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alaz-sim",
  "postcard",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "alaz-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alaz-sim",
  "bytemuck",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "alaz-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "postcard",
  "serde",

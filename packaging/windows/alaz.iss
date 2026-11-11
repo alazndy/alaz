@@ -2,7 +2,7 @@
 ; Built by .github/workflows/windows.yml:  iscc /DAppVersion=0.1.0 /DSourceExe=..\..\target\release\alaz.exe packaging\windows\alaz.iss
 
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 #ifndef SourceExe
   #define SourceExe "..\..\target\release\alaz.exe"

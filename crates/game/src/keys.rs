@@ -32,11 +32,12 @@ pub enum Action {
     Load,
     Mute,
     Grid,
+    Drop,
     Menu,
 }
 
 impl Action {
-    pub const ALL: [Action; 26] = [
+    pub const ALL: [Action; 27] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -62,6 +63,7 @@ impl Action {
         Action::Load,
         Action::Mute,
         Action::Grid,
+        Action::Drop,
         Action::Menu,
     ];
 
@@ -92,6 +94,7 @@ impl Action {
             Action::Load => "Kayıt yükle",
             Action::Mute => "Sesi aç / kapat",
             Action::Grid => "Izgaraya oturt",
+            Action::Drop => "Eşya bırak (en çok olandan 1)",
             Action::Menu => "Menü / iptal",
         }
     }
@@ -123,6 +126,7 @@ impl Action {
             Action::Load => "load",
             Action::Mute => "mute",
             Action::Grid => "grid",
+            Action::Drop => "drop",
             Action::Menu => "menu",
         }
     }
@@ -155,6 +159,7 @@ impl Action {
             Action::Load => (K::F9, None),
             Action::Mute => (K::KeyM, None),
             Action::Grid => (K::KeyG, None),
+            Action::Drop => (K::KeyZ, None),
             Action::Menu => (K::Escape, None),
         };
         [Some(a), b]

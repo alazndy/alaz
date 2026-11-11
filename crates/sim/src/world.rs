@@ -481,6 +481,8 @@ pub enum Event {
     CropFrozen { building: u32 },
     /// A fish landed.
     Caught { agent: AgentId },
+    /// An axe bit into wood (a standing tree or a trunk on the ground).
+    Chopped { agent: AgentId },
     /// A prospector read the rock: deposits within about 50 m, and the nearest one's offset in tiles.
     Prospected { agent: AgentId, kinds: Vec<ItemKind>, nearest: Option<(ItemKind, i32, i32)> },
     /// Food in someone's pack went bad (it turned to manure).
@@ -1604,6 +1606,11 @@ impl World {
 
     /// Terrain, overlap and resource checks for placing a building. Ignores cost and reach.
     pub fn can_place(&self, kind: BuildingKind, x: i64, y: i64) -> Result<(), Reject> {
+        self.can_place_except(kind, x, y, None)
+    }
+
+    /// As `can_place`, ignoring one building (the one being moved).
+    pub fn can_place_except(&self, kind: BuildingKind, x: i64, y: i64, skip: Option<usize>) -> Result<(), Reject> {
         let rules_now = self.rules_arc();
         let r = (&*rules_now).building(kind).radius_mm;
         if kind == BuildingKind::WaterWheel
@@ -1618,7 +1625,10 @@ impl World {
             }
         }
         let defs = &*rules_now;
-        for b in &self.buildings {
+        for (bi, b) in self.buildings.iter().enumerate() {
+            if Some(bi) == skip {
+                continue;
+            }
             let min = r + defs.building(b.kind).radius_mm + 200;
             if dist2(b.x, b.y, x, y) < min * min {
                 return Err(Reject::Blocked);
@@ -2068,6 +2078,24 @@ impl World {
                 self.obstacles.block_footprint(&self.map, x, y, def.radius_mm);
                 self.obstacles.built_for = self.buildings.len();
             }
+            CommandKind::Relocate { building, x, y } => {
+                let (i, x, y) = (*building as usize, *x, *y);
+                if !human || i >= self.buildings.len() {
+                    return;
+                }
+                let (ox, oy) = (self.buildings[i].x, self.buildings[i].y);
+                if dist2(ax, ay, x, y) > BUILD_RADIUS_MM * BUILD_RADIUS_MM || dist2(ax, ay, ox, oy) > BUILD_RADIUS_MM * BUILD_RADIUS_MM {
+                    return self.reject(id, Reject::TooFar);
+                }
+                // checked as if it were not standing where it is now
+                if let Err(why) = self.can_place_except(self.buildings[i].kind, x, y, Some(i)) {
+                    return self.reject(id, why);
+                }
+                self.buildings[i].x = x;
+                self.buildings[i].y = y;
+                self.obstacles.built_for = usize::MAX;
+                self.sync_obstacles();
+            }
             CommandKind::StartJob { building, recipe } => {
                 let Some(def) = (&*rules_now).recipes.get(recipe.0 as usize) else { return };
                 let Some(b) = self.buildings.get_mut(*building as usize) else { return };
@@ -2372,6 +2400,11 @@ impl World {
                         let back = (h >> 16) as i64 % 9 - 4;
                         let z = crate::map::elevation_at_mm(seed, cx, cy) as i64 + 250;
                         thrown.push((ItemKind::Wood, (cx, cy, z), (sx * out / 1000 + b.dx as i64 * back / 1000, sy * out / 1000 + b.dy as i64 * back / 1000, 30 + (h >> 24) as i64 % 14)));
+                        // the crown end goes first: its leafy boughs come away as branches, to the other side
+                        if b.wood * 3 >= b.full * 2 {
+                            thrown.push((ItemKind::Branch, (cx, cy, z), (-sx * out / 1000, -sy * out / 1000, 34 + (h >> 20) as i64 % 10)));
+                        }
+                        events.push(Event::Chopped { agent: a.id });
                         if b.wood == 0 {
                             a.task = Task::Idle;
                             seek.push(ai);
@@ -2495,6 +2528,7 @@ impl World {
                         // deep in a cave the seam is mixed: every few swings turn up ore instead of plain stone
                         if n.kind == NodeKind::Tree {
                             // chopping a standing tree only brings it down; the wood is got from the trunk on the ground
+                            events.push(Event::Chopped { agent: a.id });
                             *node_acc ^= node_contrib(node.0, n);
                             n.amount = n.amount.saturating_sub(NodeKind::Tree.initial_amount().div_ceil(FELL_CUTS));
                             *node_acc ^= node_contrib(node.0, n);

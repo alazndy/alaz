@@ -18,7 +18,7 @@ pub fn slot() -> u8 {
     SLOT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn base_dir() -> PathBuf {
+pub fn base_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("ALAZ_SAVE_DIR") {
         return PathBuf::from(d);
     }

@@ -32,9 +32,11 @@ pub enum Sfx {
     Timber,
     /// Rock knocking on rock.
     Rumble,
+    /// An axe biting into wood.
+    Chop,
 }
 
-const ALL: [Sfx; 12] = [Sfx::Hit, Sfx::Miss, Sfx::Chime, Sfx::Fanfare, Sfx::Fail, Sfx::Hurt, Sfx::Ding, Sfx::Tame, Sfx::Bark, Sfx::Thud, Sfx::Timber, Sfx::Rumble];
+const ALL: [Sfx; 13] = [Sfx::Hit, Sfx::Miss, Sfx::Chime, Sfx::Fanfare, Sfx::Fail, Sfx::Hurt, Sfx::Ding, Sfx::Tame, Sfx::Bark, Sfx::Thud, Sfx::Timber, Sfx::Rumble, Sfx::Chop];
 
 pub struct Audio {
     tx: Sender<Msg>,
@@ -142,6 +144,12 @@ fn synth(s: Sfx) -> Vec<f32> {
             }
         }
         Sfx::Ding => tone(880.0, 0.25, 14.0, 0.22, &mut v, 0.0),
+        Sfx::Chop => {
+            // a dry knock with a short woody ring: the bite, then the wood answering
+            noise_burst(0.06, 70.0, 0.9, 0.0, &mut v);
+            tone(180.0, 0.12, 38.0, 0.55, &mut v, 0.0);
+            tone(310.0, 0.07, 55.0, 0.25, &mut v, 0.004);
+        }
         Sfx::Thud => {
             noise_burst(0.25, 18.0, 0.9, 0.08, &mut v);
             tone(62.0, 0.3, 11.0, 0.7, &mut v, 0.0);

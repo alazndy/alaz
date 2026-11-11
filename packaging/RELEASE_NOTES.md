@@ -28,3 +28,11 @@ cd ALAZ-*-linux-x86_64
 - **Sekmeler:** I çanta, C yap, B inşa, H hedefler, F1 yardım.
 
 Ayrıntılar için README'ye bak.
+
+## 0.2.0'da yeni
+- Açılış ekranı ve dünyaya giriş animasyonu (ALAZ_NOFX=1 ile kapatılır).
+- Sol tık binaları ve işçileri açar; binalar "Taşı" ile yer değiştirir.
+- Yapım defteri resimli kartlar; arayüz boyutu Yardım (F1) sekmesinden ayarlanır.
+- Z tuşu eşya bırakır; köpeğine sağ tıkla, sev.
+- Balta sesi, yumuşak dönüş ve eğilme, toplanacak şey parlar, zamanlama oyununda isabet efektleri.
+- "İlk adımlar" listesi hedef şeridiyle aynı sırada.
