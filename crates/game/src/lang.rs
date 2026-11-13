@@ -103,3 +103,59 @@ mod tests {
         assert_eq!(GRUNTS.len(), ItemKind::ALL.len());
     }
 }
+
+/// What a thing looks like to eyes that cannot yet tell it apart: below the level given, it passes for the
+/// first thing named. Stones are stones until the eye learns flint and then the ores; grass is grass until seed
+/// and flax stand out; clay is clay until fire clay does.
+const LOOKALIKES: [(ItemKind, ItemKind, u8); 9] = [
+    (ItemKind::Flint, ItemKind::Stone, 1),
+    (ItemKind::CopperOre, ItemKind::Stone, 2),
+    (ItemKind::TinOre, ItemKind::Stone, 2),
+    (ItemKind::IronOre, ItemKind::Stone, 2),
+    (ItemKind::Limestone, ItemKind::Stone, 2),
+    (ItemKind::Coal, ItemKind::Stone, 2),
+    (ItemKind::Seed, ItemKind::Fiber, 2),
+    (ItemKind::Flax, ItemKind::Fiber, 2),
+    (ItemKind::FireClay, ItemKind::Clay, 3),
+];
+
+/// The thing `k` passes for at the world's perception now (itself once the eye can tell).
+pub fn looks_like(w: &World, k: ItemKind) -> ItemKind {
+    let lvl = w.perception_level();
+    LOOKALIKES.iter().find(|(real, _, need)| *real == k && lvl < *need).map_or(k, |(_, seen, _)| *seen)
+}
+
+/// Things that still pass for something else now, and the level at which they will stand out.
+pub fn blurred_at(level: u8) -> Vec<(ItemKind, ItemKind)> {
+    LOOKALIKES.iter().filter(|(_, _, need)| *need == level).map(|(r, s, _)| (*r, *s)).collect()
+}
+
+/// Everything in the bag that passes for `seen` (its real kinds and how many of each).
+pub fn hidden_in(w: &World, inv: &alaz_sim::world::Inventory, seen: ItemKind) -> Vec<(ItemKind, u16)> {
+    ItemKind::ALL.iter().copied().filter(|k| looks_like(w, *k) == seen && inv.get(*k) > 0).map(|k| (k, inv.get(k))).collect()
+}
+
+#[cfg(test)]
+mod lookalike_tests {
+    use super::*;
+
+    #[test]
+    fn lookalikes_come_apart_as_the_eye_sharpens() {
+        let mut w = World::new(5);
+        assert_eq!(w.perception_level(), 0);
+        assert_eq!(looks_like(&w, ItemKind::Flint), ItemKind::Stone, "a fresh eye sees flint as stone");
+        assert_eq!(looks_like(&w, ItemKind::CopperOre), ItemKind::Stone);
+        assert_eq!(looks_like(&w, ItemKind::Wood), ItemKind::Wood);
+        // handle enough things and the eye learns
+        for &k in ItemKind::ALL.iter() {
+            w.mark_seen(k);
+            if w.perception_level() >= 2 {
+                break;
+            }
+        }
+        assert!(w.perception_level() >= 2);
+        assert_eq!(looks_like(&w, ItemKind::Flint), ItemKind::Flint);
+        assert_eq!(looks_like(&w, ItemKind::CopperOre), ItemKind::CopperOre);
+        assert_eq!(looks_like(&w, ItemKind::FireClay), ItemKind::Clay, "fire clay stands out later still");
+    }
+}

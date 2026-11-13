@@ -33,11 +33,15 @@ pub enum Action {
     Mute,
     Grid,
     Drop,
+    /// Hold the work fast with the other hand (the craft minigames that need it).
+    Grip,
+    /// The sandbox panel (items, clock, sky); only in a creative world.
+    Creative,
     Menu,
 }
 
 impl Action {
-    pub const ALL: [Action; 27] = [
+    pub const ALL: [Action; 29] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -64,6 +68,8 @@ impl Action {
         Action::Mute,
         Action::Grid,
         Action::Drop,
+        Action::Grip,
+        Action::Creative,
         Action::Menu,
     ];
 
@@ -95,6 +101,8 @@ impl Action {
             Action::Mute => "Sesi aç / kapat",
             Action::Grid => "Izgaraya oturt",
             Action::Drop => "Eşya bırak (en çok olandan 1)",
+            Action::Grip => "Tut (işi diğer elinle sabitle, basılı tut)",
+            Action::Creative => "Yaratıcı panel (eşya ver, zaman, hava)",
             Action::Menu => "Menü / iptal",
         }
     }
@@ -127,6 +135,8 @@ impl Action {
             Action::Mute => "mute",
             Action::Grid => "grid",
             Action::Drop => "drop",
+            Action::Grip => "grip",
+            Action::Creative => "creative",
             Action::Menu => "menu",
         }
     }
@@ -160,6 +170,8 @@ impl Action {
             Action::Mute => (K::KeyM, None),
             Action::Grid => (K::KeyG, None),
             Action::Drop => (K::KeyZ, None),
+            Action::Grip => (K::KeyT, None),
+            Action::Creative => (K::KeyY, None),
             Action::Menu => (K::Escape, None),
         };
         [Some(a), b]

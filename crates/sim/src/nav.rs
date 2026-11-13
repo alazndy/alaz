@@ -263,6 +263,13 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
     if len == 0 {
         return Free::Arrived;
     }
+    if a.fly {
+        return match step_toward(a, nav, tx, ty, true) {
+            Step::Moved => Free::Moved,
+            Step::Arrived => Free::Arrived,
+            Step::Blocked => Free::Blocked,
+        };
+    }
     let step = len.min(speed);
     let (nx, ny) = (a.x + dx * step / len, a.y + dy * step / len);
     let here = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
@@ -285,6 +292,19 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
 
 /// `swim`: walking on by hand, a person may go into water; a planned route only leaves it, never enters it.
 fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
+    if a.fly {
+        // sandbox flight: straight over water, rock and buildings, four times a walker's pace
+        let speed = a.kind.speed_mm() * 4;
+        let (dx, dy) = (tx - a.x, ty - a.y);
+        let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
+        let (nx, ny) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
+        if nav.map.terrain_mm(nx, ny).is_none() {
+            return Step::Blocked;
+        }
+        a.x = nx;
+        a.y = ny;
+        return if (nx, ny) == (tx, ty) { Step::Arrived } else { Step::Moved };
+    }
     let mut speed = a.kind.speed_mm();
     let depth = crate::map::water_depth(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
     if a.sprint && a.stamina > 0 && depth < 2 {
@@ -332,6 +352,9 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
 
 /// Move one step toward (tx, ty), walking around water and buildings.
 pub(crate) fn advance(a: &mut Agent, nav: &mut Nav, tx: i64, ty: i64) -> Step {
+    if a.fly {
+        return step_toward(a, nav, tx, ty, true);
+    }
     let goal = (tx.div_euclid(TILE_MM) as i32, ty.div_euclid(TILE_MM) as i32);
     if a.path_goal != goal {
         a.path.clear();

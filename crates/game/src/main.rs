@@ -13,6 +13,7 @@ mod icons;
 mod keys;
 mod lang;
 mod menu;
+mod pxui;
 mod fx;
 mod saveio;
 mod story;
@@ -36,6 +37,7 @@ struct Args {
     seed: Option<u64>,
     hardcore: bool,
     demo: bool,
+    creative: bool,
     host: bool,
     size: i32,
     port: u16,
@@ -43,19 +45,20 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { new_game: false, seed: None, hardcore: false, demo: false, host: false, size: alaz_sim::map::MAP_W, port: alaz_net::DEFAULT_PORT, join: None };
+    let mut a = Args { new_game: false, seed: None, hardcore: false, demo: false, creative: false, host: false, size: alaz_sim::map::MAP_W, port: alaz_net::DEFAULT_PORT, join: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--new" => a.new_game = true,
             "--hardcore" => a.hardcore = true,
             "--demo" => a.demo = true,
+            "--creative" => a.creative = true,
             "--host" => a.host = true,
             "--size" => a.size = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.size),
             "--port" => a.port = it.next().and_then(|v| v.parse().ok()).unwrap_or(a.port),
             "--join" => a.join = it.next(),
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()),
-            _ => eprintln!("bilinmeyen argüman: {arg} (--new, --seed N, --hardcore, --demo, --size N, --host [--port N], --join ADRES)"),
+            _ => eprintln!("bilinmeyen argüman: {arg} (--new, --seed N, --hardcore, --creative, --demo, --size N, --host [--port N], --join ADRES)"),
         }
     }
     a
@@ -76,6 +79,9 @@ fn new_world_with(seed: u64, hardcore: bool, size: i32, settings: alaz_sim::worl
     let (sx, sy) = w.spawn_mm;
     w.spawn_agent(sx, sy);
     w.hardcore = hardcore;
+    if settings.difficulty == alaz_sim::world::Difficulty::Creative {
+        w.unlock_everything();
+    }
     w
 }
 
@@ -307,6 +313,8 @@ fn demo_setup(w: &mut World) -> Selection {
                 alaz_sim::MinigameKind::Knap => Some(CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 }),
                 alaz_sim::MinigameKind::Fit => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
                 alaz_sim::MinigameKind::Tension => Some(CommandKind::Tighten { power: v.power as u8 }),
+                alaz_sim::MinigameKind::Trim => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
+                alaz_sim::MinigameKind::Rub => Some(CommandKind::Rub { pace: v.power as u8, grip: true }),
                 alaz_sim::MinigameKind::Timing => (v.pos.abs_diff(v.center) <= v.half / 3).then_some(CommandKind::Strike),
                 alaz_sim::MinigameKind::Stack => Some(CommandKind::PlaceAt { x: 0, y: 0 }),
             };
@@ -454,6 +462,8 @@ struct App {
     cursor: (f32, f32),
     last: Instant,
     accum: f32,
+    /// Sandbox: how many sim ticks run per tick of real time (solo only).
+    time_scale: u32,
     fps_t: f32,
     fps_n: u32,
     hints: Vec<(String, f32)>,
@@ -463,6 +473,10 @@ struct App {
     build_mode: Option<BuildingKind>,
     /// Set while a placed building is being moved: the ghost places it instead of building a new one.
     moving: Option<usize>,
+    /// Quarter turns for the building being placed or moved (R turns it).
+    facing: u8,
+    /// A building just ordered, to be turned to `facing` once it stands: (x, y, quarter turns).
+    turn_after: Option<(i64, i64, u8)>,
     grid_snap: bool,
     selected: Option<Selection>,
     recording: bool,
@@ -553,7 +567,12 @@ impl App {
             None => {
                 hints.push(("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.".into(), hud::HINT_SECONDS));
                 hints.push(("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.".into(), hud::HINT_SECONDS));
-                new_world(args.seed.unwrap_or_else(random_seed), args.hardcore, args.size)
+                new_world_with(
+                    args.seed.unwrap_or_else(random_seed),
+                    args.hardcore,
+                    args.size,
+                    alaz_sim::world::WorldSettings { difficulty: if args.creative { alaz_sim::world::Difficulty::Creative } else { Default::default() }, ..Default::default() },
+                )
             }
         };
         let mut app = Self {
@@ -566,6 +585,8 @@ impl App {
             cursor: (0.0, 0.0),
             last: Instant::now(),
             accum: 0.0,
+            // dev aid: ALAZ_TIME_SCALE=N runs a sandbox world N times faster from the start
+            time_scale: std::env::var("ALAZ_TIME_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1u32).clamp(1, 10),
             fps_t: 0.0,
             fps_n: 0,
             hints,
@@ -589,6 +610,8 @@ impl App {
             fx: fx::Fx::default(),
             pets: 0,
             moving: None,
+            facing: 0,
+            turn_after: None,
             script_done: false,
             script: std::env::var("ALAZ_SCRIPT").ok().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| alaz_sim::debug::Script::new(&t)),
             audio: audio::Audio::new(),
@@ -624,6 +647,7 @@ impl App {
             Ok("craft") => Some(hud::Tab::Craft),
             Ok("build") => Some(hud::Tab::Build),
             Ok("help") => Some(hud::Tab::Help),
+            Ok("creative") => Some(hud::Tab::Creative),
             _ => None,
         };
         if show_menu && app.perf.as_ref().is_none_or(|p| p.bench_secs.is_none()) {
@@ -744,6 +768,8 @@ impl App {
                 }
             }
             A::Grid => self.grid_snap = !self.grid_snap,
+            // held, not pressed: the minigames read it every frame
+            A::Grip => {}
             A::Drop => {
                 // one of whatever there is most of (tools stay in hand)
                 let pick = self.me_agent().and_then(|m| {
@@ -800,7 +826,14 @@ impl App {
             A::Craft => self.toggle_tab(hud::Tab::Craft),
             A::Build => self.toggle_tab(hud::Tab::Build),
             A::Goals => self.toggle_tab(hud::Tab::Goals),
+            // while placing, R turns the building; otherwise it opens the routes
+            A::Routes if self.build_mode.is_some() => self.facing = (self.facing + 1) & 3,
             A::Routes => self.toggle_tab(hud::Tab::Routes),
+            A::Creative => {
+                if self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative {
+                    self.toggle_tab(hud::Tab::Creative);
+                }
+            }
             A::Help => self.toggle_tab(hud::Tab::Help),
             A::Sprint | A::MoveUp | A::MoveDown | A::MoveLeft | A::MoveRight | A::CamUp | A::CamDown | A::CamLeft | A::CamRight | A::RotLeft | A::RotRight => {}
         }
@@ -913,6 +946,15 @@ impl App {
         let raw_dt = (now - self.last).as_secs_f32();
         let dt = (now - self.last).as_secs_f32().min(0.25);
         self.fx.update(dt);
+        // a building ordered turned: once it stands, turn it
+        if let Some((x, y, q)) = self.turn_after {
+            if let Some(i) = self.world.buildings.iter().position(|b| b.x == x && b.y == y) {
+                self.turn_after = None;
+                for _ in 0..q {
+                    self.issue(CommandKind::Turn { building: i as u32 });
+                }
+            }
+        }
         self.last = now;
         if let Some(g) = self.gfx.as_ref() {
             self.cam.win = g.renderer.size();
@@ -1038,9 +1080,10 @@ impl App {
             self.accum = 0.0;
             self.pending.clear();
         } else {
-            self.accum += dt;
+            let scale = if matches!(self.net, Net::Solo) && self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative { self.time_scale.max(1) } else { 1 };
+            self.accum += dt * scale as f32;
             let mut steps = 0;
-            while self.accum >= STEP && steps < 5 {
+            while self.accum >= STEP && steps < 5 * scale {
                 let mut local = std::mem::take(&mut self.pending);
                 // a debug script plays as this player, one tick at a time
                 if let Some(sc) = self.script.as_mut() {
@@ -1072,7 +1115,7 @@ impl App {
                 self.accum -= STEP;
                 steps += 1;
             }
-            if steps == 5 {
+            if steps == 5 * scale {
                 self.accum = 0.0;
             }
         }
@@ -1267,6 +1310,7 @@ impl App {
             z_m: y as f32 / 1000.0,
             kind,
             valid: self.placement_ok(kind, x, y),
+            facing: self.facing,
         });
         // what the pointer is on gets a bright rim, so it is plain what a right click would take
         let hover = if self.menu.is_none() && self.build_mode.is_none() && self.world.craft_view(self.me).is_none() {
@@ -1307,6 +1351,8 @@ impl App {
             recording: self.recording,
             recorded: &self.recorded,
             anchor: world_ref_anchor,
+            grip: self.binds.held(&self.keys, keys::Action::Grip),
+            time_scale: self.time_scale,
         };
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
@@ -1374,13 +1420,17 @@ impl App {
                 UiAction::Cmd(kind) => self.issue(kind),
                 UiAction::BeginBuild(k) => {
                     self.build_mode = Some(k);
+                    self.facing = 0;
+                    self.moving = None;
                     self.selected = None;
                 }
                 UiAction::ToggleTab(t) => self.toggle_tab(t),
+                UiAction::SetTimeScale(s) => self.time_scale = s.clamp(1, 10),
                 UiAction::ToggleGrid => self.grid_snap = !self.grid_snap,
                 UiAction::MoveBuilding(i) => {
                     if let Some(b) = self.world.buildings.get(i) {
                         self.build_mode = Some(b.kind);
+                        self.facing = b.facing;
                         self.moving = Some(i);
                         self.selected = None;
                         self.say("Yeni yeri sol tıkla seç; sağ tık vazgeçer.".to_string());
@@ -1798,8 +1848,19 @@ impl App {
                     // the sim says why a bad spot is refused; build mode stays on so the next try is one click
                     let ok = self.placement_ok(kind, x, y);
                     match self.moving {
-                        Some(i) => self.issue(CommandKind::Relocate { building: i as u32, x, y }),
-                        None => self.issue(CommandKind::Build { kind, x, y }),
+                        Some(i) => {
+                            self.issue(CommandKind::Relocate { building: i as u32, x, y });
+                            let have = self.world.buildings.get(i).map_or(0, |b| b.facing);
+                            for _ in 0..(self.facing + 4 - have) % 4 {
+                                self.issue(CommandKind::Turn { building: i as u32 });
+                            }
+                        }
+                        None => {
+                            self.issue(CommandKind::Build { kind, x, y });
+                            if self.facing != 0 {
+                                self.turn_after = Some((x, y, self.facing));
+                            }
+                        }
                     }
                     if ok {
                         self.build_mode = None;

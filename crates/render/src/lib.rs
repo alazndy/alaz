@@ -42,6 +42,19 @@ pub struct Ghost {
     pub z_m: f32,
     pub kind: BuildingKind,
     pub valid: bool,
+    /// Quarter turns, as it will face once placed.
+    pub facing: u8,
+}
+
+/// Turn the vertices pushed since `start` by quarter turns about (cx, cz).
+fn turn_quarters(out: &mut [Vertex], start: usize, cx: f32, cz: f32, q: u8) {
+    for v in &mut out[start..] {
+        for _ in 0..(q & 3) {
+            let (dx, dz) = (v.pos[0] - cx, v.pos[2] - cz);
+            v.pos[0] = cx - dz;
+            v.pos[2] = cz + dx;
+        }
+    }
 }
 
 const NIGHT_TINT: [f32; 3] = [0.30, 0.38, 0.62];
@@ -54,6 +67,8 @@ const BUILD_BUDGET_MS: f64 = 2.5;
 struct Chunk {
     terrain: Option<(wgpu::Buffer, u32)>,
     nodes: Option<(wgpu::Buffer, u32)>,
+    /// Grass, flowers, pebbles: too small to show in the sun's shadow map, so they are kept apart and not cast.
+    decor: Option<(wgpu::Buffer, u32)>,
     nodes_version: (u64, u64),
     /// What had been seen when the nodes were built (unknown things look plain).
     seen: u128,
@@ -166,6 +181,78 @@ pub struct Renderer {
     shadow_dir: [f32; 3],
     /// Where the cloud field has drifted to (it moves with the wind, so it is summed frame by frame).
     cloud_off: [f32; 2],
+    prof: Option<GpuProf>,
+    /// `ALAZ_SHOT`: where to write the picture, and how many frames to wait first
+    shot: Option<(String, u32)>,
+}
+
+/// GPU time of each pass, from timestamp queries (`ALAZ_GPUPROF`). Reading them back waits for the GPU every
+/// frame, so the frame rate under it is lower than normal: only the split between passes is meant to be read.
+struct GpuProf {
+    set: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    read: wgpu::Buffer,
+    period_ns: f32,
+    sums: [f64; GpuProf::PASSES],
+    /// CPU side of the same frames: waiting for the swapchain, building the scene, the interface (run + tessellate),
+    /// recording and submitting
+    cpu: [f64; 4],
+    frames: u32,
+    since: std::time::Instant,
+}
+
+impl GpuProf {
+    const PASSES: usize = 7;
+    const NAMES: [&'static str; GpuProf::PASSES] = ["shadow", "terrain", "nodes", "dynamic", "outline", "pixel", "egui"];
+
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> GpuProf {
+        let n = (Self::PASSES * 2) as u32;
+        let size = n as u64 * 8;
+        GpuProf {
+            set: device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("gpu prof"), ty: wgpu::QueryType::Timestamp, count: n }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false }),
+            read: device.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }),
+            period_ns: queue.get_timestamp_period(),
+            sums: [0.0; Self::PASSES],
+            cpu: [0.0; 4],
+            frames: 0,
+            since: std::time::Instant::now(),
+        }
+    }
+
+    fn writes(&self, pass: usize) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        Some(wgpu::RenderPassTimestampWrites { query_set: &self.set, beginning_of_pass_write_index: Some(pass as u32 * 2), end_of_pass_write_index: Some(pass as u32 * 2 + 1) })
+    }
+
+    fn resolve(&self, enc: &mut wgpu::CommandEncoder) {
+        enc.resolve_query_set(&self.set, 0..(Self::PASSES * 2) as u32, &self.resolve, 0);
+        enc.copy_buffer_to_buffer(&self.resolve, 0, &self.read, 0, (Self::PASSES * 16) as u64);
+    }
+
+    /// After the frame is submitted: wait for it, add its pass times, print every 5 s.
+    fn collect(&mut self, device: &wgpu::Device) {
+        let slice = self.read.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        if let Ok(data) = slice.get_mapped_range() {
+            let ts: &[u64] = bytemuck::cast_slice(&data);
+            for i in 0..Self::PASSES {
+                self.sums[i] += ts[i * 2 + 1].saturating_sub(ts[i * 2]) as f64 * self.period_ns as f64 / 1e6;
+            }
+            self.frames += 1;
+        }
+        self.read.unmap();
+        if self.since.elapsed().as_secs_f32() >= 5.0 && self.frames > 0 {
+            let n = self.frames as f64;
+            let parts: Vec<String> = (0..Self::PASSES).map(|i| format!("{} {:.2}", Self::NAMES[i], self.sums[i] / n)).collect();
+            println!("[gpu] ms/frame: {} | total {:.2}", parts.join(" "), self.sums.iter().sum::<f64>() / n);
+            println!("[cpu] ms/frame: acquire {:.2} scene {:.2} ui {:.2} submit {:.2}", self.cpu[0] / n, self.cpu[1] / n, self.cpu[2] / n, self.cpu[3] / n);
+            self.sums = [0.0; Self::PASSES];
+            self.cpu = [0.0; 4];
+            self.frames = 0;
+            self.since = std::time::Instant::now();
+        }
+    }
 }
 
 /// Render-side walking state: where a creature was, which way it faces, and how far into its stride it is.
@@ -226,7 +313,11 @@ impl Renderer {
             ..Default::default()
         }))
         .expect("no adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("request device");
+        // ALAZ_GPUPROF=1 times every pass on the GPU (when the adapter can) and prints it every 5 s
+        let gpu_prof = std::env::var_os("ALAZ_GPUPROF").is_some() && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let features = if gpu_prof { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_features: features, ..Default::default() })).expect("request device");
+        let prof = gpu_prof.then(|| GpuProf::new(&device, &queue));
 
         let mut config = surface.get_default_config(&adapter, size.width.max(1), size.height.max(1)).expect("surface unsupported");
         // ALAZ_NOVSYNC lifts the 60 fps cap so performance tests measure real frame cost
@@ -566,6 +657,8 @@ impl Renderer {
             sim_alpha: None,
             shadow_dir: [0.0, 1.0, 0.0],
             cloud_off: [0.0, 0.0],
+            prof,
+            shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,
             last_frame: std::time::Instant::now(),
             tick_seen: 0,
@@ -600,10 +693,39 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             })
             .create_view(&Default::default())
+    }
+
+    /// Dev aid (`ALAZ_SHOT=file.ppm`, `ALAZ_SHOT_FRAMES=n`): writes the drawn picture itself (the small inked one,
+    /// before it is enlarged; no interface) to a file and quits, so a screenshot never depends on which window the
+    /// desktop has in front.
+    fn write_shot(&self, path: &str, w: u32, h: u32) {
+        let row = (w * 4).div_ceil(256) * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            self.inked.texture().as_image_copy(),
+            wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let Ok(data) = slice.get_mapped_range() else { return };
+        let bgra = matches!(self.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+        let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * row + x * 4) as usize;
+                let (r, g, b) = if bgra { (data[i + 2], data[i + 1], data[i]) } else { (data[i], data[i + 1], data[i + 2]) };
+                out.extend_from_slice(&[r, g, b]);
+            }
+        }
+        let _ = std::fs::write(path, out);
     }
 
     fn make_mark_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, format: wgpu::TextureFormat, vs: &str, fs: &str, compare: wgpu::CompareFunction) -> wgpu::RenderPipeline {
@@ -738,6 +860,7 @@ impl Renderer {
         routes: &[usize],
         mut hud: impl FnMut(&egui::Context),
     ) {
+        let t_start = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
@@ -753,6 +876,7 @@ impl Renderer {
             _ => return,
         };
         let view = frame.texture.create_view(&Default::default());
+        let t_acquired = std::time::Instant::now();
         let (win_w, win_h) = (self.config.width, self.config.height);
         let mut cam = *cam;
         cam.win = (win_w, win_h);
@@ -904,6 +1028,8 @@ impl Renderer {
             for (i, (_, f)) in fires.iter().take(8).enumerate() {
                 g[68 + i * 4..72 + i * 4].copy_from_slice(f);
             }
+            // how many there are, so the shader's light loop stops there (most of the time there are none)
+            g[100] = fires.len().min(8) as f32;
         }
         g[16..19].copy_from_slice(&tint);
         g[19] = world.perception_permille() as f32 / 1000.0;
@@ -963,10 +1089,16 @@ impl Renderer {
                     Some((self.vertex_buffer(&v), v.len() as u32))
                 });
                 let mut v = Vec::new();
+                shapes::rooted(true);
                 build_decor(&mut v, world, (x0, y0, x1, y1));
+                pre_lift(world, &mut v);
+                let decor = (!v.is_empty()).then(|| (self.vertex_buffer(&v), v.len() as u32));
+                v.clear();
                 build_nodes(&mut v, world, (x0, y0, x1, y1), world.perception_level());
+                shapes::rooted(false);
+                pre_lift(world, &mut v);
                 let nodes = (!v.is_empty()).then(|| (self.vertex_buffer(&v), v.len() as u32));
-                self.chunks.insert(key, Chunk { terrain, nodes, nodes_version: world.node_stamp(x0, y0), seen: world.seen_bits(), level: world.perception_level(), used: 0 });
+                self.chunks.insert(key, Chunk { terrain, nodes, decor, nodes_version: world.node_stamp(x0, y0), seen: world.seen_bits(), level: world.perception_level(), used: 0 });
                 built += 1;
                 build_ms += t.elapsed().as_secs_f64() * 1000.0;
             }
@@ -1000,7 +1132,9 @@ impl Renderer {
             if b.kind == BuildingKind::Campfire {
                 push_campfire(&mut dynamic, bx, bz, b.fuel as f32 / alaz_sim::world::FIRE_FUEL_MAX as f32, secs, None);
             } else {
+                let start = dynamic.len();
                 push_building(&mut dynamic, b.kind, bx, bz, b.active(), tick, None);
+                turn_quarters(&mut dynamic, start, bx, bz, b.facing);
             }
         }
         if let Some(g) = ghost {
@@ -1008,7 +1142,9 @@ impl Renderer {
             let r = rules().building(g.kind).radius_mm as f32 / 1000.0;
             set_anchor(g.x_m, g.z_m);
             push_box(&mut dynamic, [g.x_m, 0.03, g.z_m], [r, 0.02, r], tint, 1.0);
+            let start = dynamic.len();
             push_building(&mut dynamic, g.kind, g.x_m, g.z_m, false, tick, Some(tint));
+            turn_quarters(&mut dynamic, start, g.x_m, g.z_m, g.facing);
         }
         let mm = |v: f32| (v * 1000.0) as i64;
         let now = std::time::Instant::now();
@@ -1192,6 +1328,7 @@ impl Renderer {
         let dyn_buf = self.vertex_buffer(&dynamic);
 
         // --- egui
+        let t_scene = std::time::Instant::now();
         let raw = self.egui_state.take_egui_input(&self.window);
         let full = self.egui_ctx.run_pass(raw, |ctx| hud(ctx));
         self.egui_state.handle_platform_output(&self.window, full.platform_output);
@@ -1207,6 +1344,7 @@ impl Renderer {
             pixels_per_point: full.pixels_per_point,
         };
 
+        let t_ui = std::time::Instant::now();
         let mut enc = self.device.create_command_encoder(&Default::default());
         {
             // what the sun sees: only models cast; the ground and flat decals just receive
@@ -1218,12 +1356,13 @@ impl Renderer {
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.prof.as_ref().and_then(|p| p.writes(0)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.shadow_pipeline);
             pass.set_bind_group(0, Some(&self.shadow_bind_group), &[]);
+            // (the decor is left out: grass and flowers are thinner than a shadow texel)
             for key in &visible {
                 let Some(c) = self.chunks.get(key) else { continue };
                 if let Some((b, n)) = &c.nodes {
@@ -1235,7 +1374,16 @@ impl Renderer {
             pass.draw(0..dynamic.len() as u32, 0..1);
         }
         let extra = self.egui_renderer.update_buffers(&self.device, &self.queue, &mut enc, &prims, &screen);
-        {
+        // the scene: the chunks' models first, then the ground, then what moves. Models first: the ground's shading
+        // is the dearest in the game, and where a tree or rock already stands the depth test now skips it. One pass
+        // normally; three when profiling, so each part gets its own GPU time (0 ground, 1 models, 2 what moves).
+        // zoomed all the way out, grass tufts and flowers are a texel or two of noise over far more ground: they are
+        // left out there (a third of the scene's vertices)
+        let decor_shown = (cam.zoom * 3.0).round() > 2.0;
+        let parts: &[&[usize]] = if self.prof.is_some() { &[&[1], &[0], &[2]] } else { &[&[1, 0, 2]] };
+        let mut verts = 0u64;
+        for (pi, &part) in parts.iter().enumerate() {
+            let first = pi == 0;
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1243,16 +1391,16 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.01 * tint[0] as f64, g: 0.012 * tint[1] as f64, b: 0.02 * tint[2] as f64, a: 1.0 }),
+                        load: if first { wgpu::LoadOp::Clear(wgpu::Color { r: 0.01 * tint[0] as f64, g: 0.012 * tint[1] as f64, b: 0.02 * tint[2] as f64, a: 1.0 }) } else { wgpu::LoadOp::Load },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    depth_ops: Some(wgpu::Operations { load: if first { wgpu::LoadOp::Clear(1.0) } else { wgpu::LoadOp::Load }, store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: None,
+                timestamp_writes: self.prof.as_ref().and_then(|p| p.writes(1 + part[0])),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1260,31 +1408,44 @@ impl Renderer {
             pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
             pass.set_bind_group(0, Some(&self.bind_group), &[]);
             pass.set_pipeline(&self.tri_pipeline);
-            let mut verts = 0u64;
-            for key in &visible {
-                let Some(c) = self.chunks.get(key) else { continue };
-                if let Some((b, n)) = &c.terrain {
-                    pass.set_vertex_buffer(0, b.slice(..));
-                    pass.draw(0..*n, 0..1);
-                    verts += *n as u64;
+            for &what in part {
+                match what {
+                    0 => {
+                        for key in &visible {
+                            let Some(c) = self.chunks.get(key) else { continue };
+                            if let Some((b, n)) = &c.terrain {
+                                pass.set_vertex_buffer(0, b.slice(..));
+                                pass.draw(0..*n, 0..1);
+                                verts += *n as u64;
+                            }
+                        }
+                    }
+                    1 => {
+                        for key in &visible {
+                            let Some(c) = self.chunks.get(key) else { continue };
+                            for (b, n) in c.nodes.iter().chain(c.decor.iter().filter(|_| decor_shown)) {
+                                pass.set_vertex_buffer(0, b.slice(..));
+                                pass.draw(0..*n, 0..1);
+                                verts += *n as u64;
+                            }
+                        }
+                    }
+                    _ => {
+                        pass.set_vertex_buffer(0, dyn_buf.slice(..));
+                        pass.draw(0..dynamic.len() as u32, 0..1);
+                        if !me_body.is_empty() {
+                            pass.set_pipeline(&self.mark_pipeline);
+                            pass.draw(me_body.clone(), 0..1);
+                            pass.set_pipeline(&self.hidden_pipeline);
+                            pass.draw(me_body.clone(), 0..1);
+                            pass.set_pipeline(&self.tri_pipeline);
+                        }
+                    }
                 }
-                if let Some((b, n)) = &c.nodes {
-                    pass.set_vertex_buffer(0, b.slice(..));
-                    pass.draw(0..*n, 0..1);
-                    verts += *n as u64;
-                }
-            }
-            self.stats.chunks_drawn = visible.len() as u32;
-            self.stats.vertices = verts + dynamic.len() as u64;
-            pass.set_vertex_buffer(0, dyn_buf.slice(..));
-            pass.draw(0..dynamic.len() as u32, 0..1);
-            if !me_body.is_empty() {
-                pass.set_pipeline(&self.mark_pipeline);
-                pass.draw(me_body.clone(), 0..1);
-                pass.set_pipeline(&self.hidden_pipeline);
-                pass.draw(me_body.clone(), 0..1);
             }
         }
+        self.stats.chunks_drawn = visible.len() as u32;
+        self.stats.vertices = verts + dynamic.len() as u64;
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("outline"),
@@ -1295,7 +1456,7 @@ impl Renderer {
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self.prof.as_ref().and_then(|p| p.writes(4)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1314,7 +1475,7 @@ impl Renderer {
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: self.prof.as_ref().and_then(|p| p.writes(5)),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1333,19 +1494,39 @@ impl Renderer {
                         ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: self.prof.as_ref().and_then(|p| p.writes(6)),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 })
                 .forget_lifetime();
             self.egui_renderer.render(&mut pass, &prims, &screen);
         }
+        if let Some(p) = &self.prof {
+            p.resolve(&mut enc);
+        }
         self.queue.submit(extra.into_iter().chain([enc.finish()]));
+        if let Some(p) = &mut self.prof {
+            let ms = |a: std::time::Instant, b: std::time::Instant| (b - a).as_secs_f64() * 1000.0;
+            let now = std::time::Instant::now();
+            p.cpu[0] += ms(t_start, t_acquired);
+            p.cpu[1] += ms(t_acquired, t_scene);
+            p.cpu[2] += ms(t_scene, t_ui);
+            p.cpu[3] += ms(t_ui, now);
+            p.collect(&self.device);
+        }
         for id in &tex.free {
             self.egui_renderer.free_texture(id);
         }
         self.window.pre_present_notify();
         self.queue.present(frame);
+        if let Some((path, left)) = &mut self.shot {
+            if *left == 0 {
+                let path = path.clone();
+                self.write_shot(&path, sw, sh);
+                std::process::exit(0);
+            }
+            *left -= 1;
+        }
     }
 }
 
@@ -1479,6 +1660,22 @@ fn shore_field(world: &World, hx: i32, hy: i32) -> Vec<f32> {
             (signed(x - 1, y - 1) + signed(x, y - 1) + signed(x - 1, y) + signed(x, y)) * 0.25
         })
         .collect()
+}
+
+/// Stand the models of a cached mesh on the ground here, once, instead of in the vertex shader every frame (twice:
+/// the sun's view and the eye's). The shader reads the height back from `kind` (see `unpack` in shader.wgsl); it is
+/// the same bilinear surface the shader would have sampled.
+fn pre_lift(world: &World, verts: &mut [Vertex]) {
+    let mut last = ([f32::NAN; 2], 0.0);
+    for v in verts.iter_mut().filter(|v| v.kind == 4.0) {
+        let anchored = v.off != [0.0, 0.0];
+        let at = if anchored { v.off } else { [v.pos[0], v.pos[2]] };
+        // a model's vertices share one anchor, so its height is worked out once
+        if at != last.0 {
+            last = (at, ground_height(world.seed, at[0], at[1]));
+        }
+        v.kind = 1000.0 + last.1 + if anchored { 0.02 } else { 0.0 };
+    }
 }
 
 pub fn ground_height(seed: u64, x: f32, z: f32) -> f32 {
@@ -3669,4 +3866,52 @@ fn push_fish(out: &mut Vec<Vertex>, world: &World, view: (f32, f32, f32, f32), t
         ty += step;
     }
     set_anchor(0.0, 0.0);
+}
+
+#[cfg(test)]
+mod vertex_census {
+    use super::*;
+
+    /// How many vertices each kind of thing costs around the spawn (`cargo test -p alaz-render census -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn census() {
+        let mut world = World::with_size(alaz_sim::map::tag_seed_v2(7), 4096, 4096);
+        let (sx, sy) = world.spawn_mm;
+        world.spawn_agent(sx, sy);
+        let (cx, cy) = (sx / 1000 / CHUNK_TILES as i64, sy / 1000 / CHUNK_TILES as i64);
+        let (x0, y0, x1, y1) = ((cx as i32 - 2) * CHUNK_TILES, (cy as i32 - 2) * CHUNK_TILES, (cx as i32 + 3) * CHUNK_TILES, (cy as i32 + 3) * CHUNK_TILES);
+        let (art, _) = sprites::build();
+        let mut terrain = Vec::new();
+        build_terrain(&mut terrain, &art, &world, (x0, y0, x1, y1));
+        shapes::rooted(true);
+        let mut decor: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for ty in y0..y1 {
+            for tx in x0..x1 {
+                let mut v = Vec::new();
+                build_decor(&mut v, &world, (tx, ty, tx + 1, ty + 1));
+                if !v.is_empty() {
+                    let e = decor.entry(format!("decor {:?}", world.map.terrain(tx, ty).unwrap())).or_default();
+                    e.0 += 1;
+                    e.1 += v.len();
+                }
+            }
+        }
+        let mut nodes: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+        for n in world.nodes_in(x0, y0, x1, y1) {
+            let mut v = Vec::new();
+            push_node(&mut v, &world, n, 0);
+            let e = nodes.entry(format!("node {:?}", n.kind)).or_default();
+            e.0 += 1;
+            e.1 += v.len();
+        }
+        let tiles = ((x1 - x0) * (y1 - y0)) as usize;
+        println!("5x5 chunks = {tiles} tiles; terrain verts {}", terrain.len());
+        let mut total = terrain.len();
+        for (k, (n, v)) in decor.iter().chain(nodes.iter()) {
+            println!("{k:28} count {n:6}  verts {v:8}  per item {:6.0}", *v as f32 / *n as f32);
+            total += v;
+        }
+        println!("total {total} ({:.0} per chunk)", total as f32 / 25.0);
+    }
 }

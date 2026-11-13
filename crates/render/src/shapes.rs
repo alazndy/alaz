@@ -3,6 +3,20 @@
 
 use super::{vl, Vertex};
 
+/// One texel of the drawn picture, in metres (it has 16 * 4/3 texels to the metre).
+const TEXEL: f32 = 1.0 / 21.3;
+
+thread_local! {
+    /// While a chunk's fixed scenery is built: nothing in it ever leaves the ground, so an end standing on the ground
+    /// can be left open. (Bodies jump, swim and lean; theirs stay closed.)
+    static ROOTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Mark what is built from now on as fixed scenery (see `ROOTED`).
+pub fn rooted(on: bool) {
+    ROOTED.with(|r| r.set(on));
+}
+
 const LIGHT: [f32; 3] = [-0.45, 0.78, -0.42];
 
 /// Light level 0..1 of a surface facing `n` (sun from the upper left, a little ambient).
@@ -40,6 +54,11 @@ pub fn limb(out: &mut Vec<Vertex>, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, c
     let ul = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
     u = [u[0] / ul, u[1] / ul, u[2] / ul];
     let w = cross(ax, u);
+    // an end is left open where it can never be seen: standing on the ground in fixed scenery (the ground covers it), or thinner than
+    // a texel of the picture (21 to the metre), where its cap would be triangles smaller than a pixel
+    let rooted = ROOTED.with(|r| r.get());
+    let open = |p: [f32; 3], r: f32, down: bool| r < TEXEL || (rooted && down && p[1] < 0.03);
+    let (cap_a, cap_b) = (!open(a, r0, ax[1] > 0.5), !open(b, r1, ax[1] < -0.5));
     let ring = |k: usize, base: [f32; 3], r: f32| {
         let t = k as f32 * std::f32::consts::TAU / segs as f32;
         let (s, c) = t.sin_cos();
@@ -53,14 +72,20 @@ pub fn limb(out: &mut Vec<Vertex>, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, c
         let l = shade(n);
         tri(out, [p0, p1, p2], l, col, 0.0);
         tri(out, [p0, p2, p3], l, col, 0.0);
-        tri(out, [a, p1, p0], shade([-ax[0], -ax[1], -ax[2]]), col, 0.0);
-        tri(out, [b, p3, p2], shade(ax), col, 0.0);
+        if cap_a {
+            tri(out, [a, p1, p0], shade([-ax[0], -ax[1], -ax[2]]), col, 0.0);
+        }
+        if cap_b {
+            tri(out, [b, p3, p2], shade(ax), col, 0.0);
+        }
     }
 }
 
 /// A rough ellipsoid centred on `c` with radii `r`. `wob` pushes the surface in and out per vertex.
 #[allow(clippy::too_many_arguments)]
 pub fn sphere(out: &mut Vec<Vertex>, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu: usize, nv: usize, wob: f32, seed: u32) {
+    // a ball only a texel or two across (a berry, a petal, a seed head) shows no roundness at all: eight faces do
+    let (nu, nv) = if r[0].max(r[1]).max(r[2]) < 2.5 * TEXEL { (nu.min(4), nv.min(2)) } else { (nu, nv) };
     let pt = |i: usize, j: usize| -> ([f32; 3], [f32; 3]) {
         let (th, ph) = (i as f32 * std::f32::consts::TAU / nu as f32, j as f32 * std::f32::consts::PI / nv as f32);
         let d = [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()];

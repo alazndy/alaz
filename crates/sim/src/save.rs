@@ -10,7 +10,9 @@ use crate::world::{Agent, World, WorldSettings};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 4] = b"ALAZ";
-pub const FORMAT_VERSION: u32 = 24;
+pub const FORMAT_VERSION: u32 = 25;
+/// The format before buildings could be turned. Still read (everything faces the same way).
+const PRE_FACING_VERSION: u32 = 24;
 /// The format before flint: 32 item slots and the rules without flint. Still read, and upgraded on load.
 const LEGACY_VERSION: u32 = 17;
 /// The format before gravity: nobody in the air and nothing falling. Still read, and upgraded on load.
@@ -56,7 +58,7 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
 }
 
 fn readable(version: u32) -> bool {
-    matches!(version, FORMAT_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
+    matches!(version, FORMAT_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
 }
 const HEADER_LEN: usize = 4 + 4 + 8;
 
@@ -147,6 +149,35 @@ struct SaveExt {
     nutrition: Vec<[u16; 3]>,
     /// A world made in chunks: the chunks made, in order (replayed on load, so node ids match).
     chunks: Vec<(i32, i32)>,
+    /// Per building, in order: which way it faces (quarter turns).
+    facing: Vec<u8>,
+}
+
+/// The extension block as format 24 wrote it (no facing).
+#[derive(Deserialize)]
+struct SaveExtV24 {
+    settings: WorldSettings,
+    recipe_ids: Vec<String>,
+    custom_rules: Option<String>,
+    buildings: Vec<(i16, u16)>,
+    generations: Vec<u8>,
+    wear: Vec<Vec<(ItemKind, u16)>>,
+    nutrition: Vec<[u16; 3]>,
+    chunks: Vec<(i32, i32)>,
+}
+
+impl SaveExtV24 {
+    fn upgrade(self) -> SaveExt {
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: Vec::new() }
+    }
+}
+
+#[derive(Deserialize)]
+struct SaveDataV24 {
+    core: SaveCore,
+    air: Vec<crate::physics::Air>,
+    bodies: Vec<crate::physics::Body>,
+    ext: SaveExtV24,
 }
 
 /// The extension block as format 23 wrote it (no chunk list).
@@ -163,7 +194,7 @@ struct SaveExtV23 {
 
 impl SaveExtV23 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new(), facing: Vec::new() }
     }
 }
 
@@ -188,7 +219,7 @@ struct SaveExtV22 {
 
 impl SaveExtV22 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new() }
     }
 }
 
@@ -212,7 +243,7 @@ struct SaveExtV21 {
 
 impl SaveExtV21 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new() }
     }
 }
 
@@ -236,6 +267,7 @@ impl SaveExt {
             wear: Vec::new(),
             nutrition: Vec::new(),
             chunks: Vec::new(),
+            facing: Vec::new(),
         }
     }
 }
@@ -331,6 +363,7 @@ impl World {
             wear: self.agents.iter().map(|a| a.wear.clone()).collect(),
             nutrition: self.agents.iter().map(|a| a.nutrition).collect(),
             chunks: self.chunks_done.clone(),
+            facing: self.buildings.iter().map(|b| b.facing).collect(),
         };
         let data = SaveData { core, air: self.air.clone(), bodies: self.bodies.clone(), ext };
         let payload = postcard::to_allocvec(&data).expect("serialize save");
@@ -410,6 +443,11 @@ impl World {
             for (b, &(temp, soil)) in w.buildings.iter_mut().zip(&ext.buildings) {
                 b.temp = temp;
                 b.fertility = soil;
+            }
+        }
+        if ext.facing.len() == w.buildings.len() {
+            for (b, &f) in w.buildings.iter_mut().zip(&ext.facing) {
+                b.facing = f & 3;
             }
         }
         if !ext.nutrition.is_empty() {
@@ -548,12 +586,14 @@ mod tests {
         w.settings = WorldSettings { difficulty: crate::world::Difficulty::Realistic, season_days: 9 };
         w.buildings[0].temp = 640;
         w.buildings[0].fertility = 720;
+        w.buildings[0].facing = 3;
         w.agents[1].generation = 4;
         let own = format!("{}\n[[recipe]]\nid = \"own_test\"\nname = \"Deneme\"\ninputs = [{{ item = \"stone\", n = 1 }}]\noutputs = [{{ item = \"stone\", n = 1 }}]\nticks = 0\ndiscovery = \"sharp_stone\"\n", crate::rules::Rules::base_text());
         w.set_custom_rules(own).expect("own rules parse");
         let b = World::from_bytes(&w.to_bytes()).expect("load");
         assert_eq!(b.settings, w.settings);
         assert_eq!((b.buildings[0].temp, b.buildings[0].fertility, b.agents[1].generation), (640, 720, 4));
+        assert_eq!(b.buildings[0].facing, 3, "a turned building stays turned");
         assert_eq!(b.rules().recipes.len(), rules().recipes.len() + 1, "the world keeps its own rules");
         assert_eq!(b.hash(), w.hash());
     }

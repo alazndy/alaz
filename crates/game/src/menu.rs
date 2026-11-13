@@ -36,7 +36,7 @@ pub struct Menu {
     born: Option<f64>,
 }
 
-const DIFFICULTIES: [&str; 2] = ["Affedici", "Gerçekçi"];
+const DIFFICULTIES: [&str; 3] = ["Affedici", "Gerçekçi", "Yaratıcı"];
 const SEASONS: [(&str, u8); 3] = [("Mevsim 3 gün", 3), ("Mevsim 6 gün", 6), ("Mevsim 9 gün", 9)];
 
 /// A row of choices with a sliding highlight, like the map size picker.
@@ -633,10 +633,10 @@ impl Menu {
                     ui.add_space(6.0);
                     // difficulty and season length are fixed for the life of the world
                     segmented(ui, "difficulty", &DIFFICULTIES, &mut self.difficulty_idx);
-                    ui.label(egui::RichText::new(if self.difficulty_idx == 0 {
-                        "Affedici: işler kısa, başarısız el işinde malzemenin yarısı geri gelir, kış serin."
-                    } else {
-                        "Gerçekçi: uzun işler, kalıcı hatalar, sert kış. Sonradan değiştirilemez."
+                    ui.label(egui::RichText::new(match self.difficulty_idx {
+                        0 => "Affedici: işler kısa, başarısız el işinde malzemenin yarısı geri gelir, kış serin.",
+                        1 => "Gerçekçi: uzun işler, kalıcı hatalar, sert kış. Sonradan değiştirilemez.",
+                        _ => "Yaratıcı: ihtiyaç ve ölüm yok, her şey açık ve bedava, eşya ver, zamanı ve havayı değiştir, koşarken uç.",
                     }).small().color(Color32::from_rgb(190, 176, 150)));
                     ui.add_space(4.0);
                     let season_names: Vec<&str> = SEASONS.iter().map(|s| s.0).collect();
@@ -661,7 +661,11 @@ impl Menu {
                     let label = if occupied { "Yeni dünya başlat (yuvanın üstüne yazar)" } else { "Yeni dünya başlat" };
                     if button(ui, label, vec2(ui.available_width(), 48.0), Look::Primary).clicked() {
                         let seed = self.seed_text.trim().parse::<u64>().ok();
-                        let difficulty = if self.difficulty_idx == 0 { alaz_sim::world::Difficulty::Forgiving } else { alaz_sim::world::Difficulty::Realistic };
+                        let difficulty = match self.difficulty_idx {
+                            0 => alaz_sim::world::Difficulty::Forgiving,
+                            1 => alaz_sim::world::Difficulty::Realistic,
+                            _ => alaz_sim::world::Difficulty::Creative,
+                        };
                         let settings = alaz_sim::world::WorldSettings { difficulty, season_days: SEASONS[self.season_idx].1 };
                         act = Some(MenuAction::New { slot: self.slot, seed, size: SIZES[self.size_idx].1, hardcore: self.hardcore, settings });
                     }

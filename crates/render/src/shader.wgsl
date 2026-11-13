@@ -13,7 +13,7 @@ struct Globals {
     cam_r: vec4<f32>,   // camera right
     cam_u: vec4<f32>,   // camera up (on screen)
     fires: array<vec4<f32>, 8>, // burning fires: xyz position, w reach in metres (0 = none)
-    occ: array<vec4<f32>, 16>,  // objects hiding the player: xy anchor, z how far faded open (0..1)
+    occ: array<vec4<f32>, 16>,  // [0].x: how many of `fires` burn; the rest unused
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
@@ -147,10 +147,24 @@ fn wind_dir() -> vec2<f32> {
 
 // kinds: 1 ground tile, 4 model face (uv.x = light level), 5 decal on the ground (shadow, pool of light)
 // where a vertex really stands: lifted onto the ground under its anchor, and swaying if it is a leaf or blade
-fn place(v: VIn) -> vec3<f32> {
+// A model in a chunk's cached mesh has its ground height worked out on the CPU when the mesh is built, carried in
+// `kind` as 1000 + height; it is a model (4) in every other way.
+fn unpack(v0: VIn) -> VIn {
+    var v = v0;
+    if (v0.kind > 500.0) { v.kind = 4.0; }
+    return v;
+}
+
+fn place(v0: VIn) -> vec3<f32> {
+    let v = unpack(v0);
     // everything stands on the ground: models ride up on their anchor point, ground and decals follow the surface
     let anchored = v.kind == 4.0 && (v.off.x != 0.0 || v.off.y != 0.0);
-    let lift = ground_h(select(v.pos.xz, v.off, anchored)) + select(0.0, 0.02, anchored);
+    var lift = 0.0;
+    if (v0.kind > 500.0) {
+        lift = v0.kind - 1000.0;
+    } else {
+        lift = ground_h(select(v.pos.xz, v.off, anchored)) + select(0.0, 0.02, anchored);
+    }
     // leaves and grass blades lean and swing in the wind: the whole plant by its anchor's phase, more the higher the part
     var sway = vec3<f32>(0.0);
     if (v.kind == 4.0 && v.uv.y > 1.5 && v.uv.y < 2.5 && (v.glow < 0.5 || v.glow > 1.5)) {
@@ -191,10 +205,11 @@ struct SOut {
 };
 
 // the sun's view: only solid models cast (the ground, decals and lights do not)
-@vertex fn vs_shadow(v: VIn) -> SOut {
+@vertex fn vs_shadow(v0: VIn) -> SOut {
+    let v = unpack(v0);
     var o: SOut;
     let casts = v.kind == 4.0 && v.glow < 0.5;
-    o.clip = select(vec4<f32>(0.0, 0.0, -1.0, 1.0), globals.sun_vp * vec4<f32>(place(v), 1.0), casts);
+    o.clip = select(vec4<f32>(0.0, 0.0, -1.0, 1.0), globals.sun_vp * vec4<f32>(place(v0), 1.0), casts);
     o.p3 = vec3<f32>(v.pos.x - v.off.x, v.pos.y, v.pos.z - v.off.y);
     o.mat = v.uv.y;
     return o;
@@ -229,9 +244,10 @@ fn cloud_shade(w: vec2<f32>) -> f32 {
 @vertex fn vs(v: VIn) -> VOut {
     return vs_body(v);
 }
-fn vs_body(v: VIn) -> VOut {
+fn vs_body(v0: VIn) -> VOut {
+    let v = unpack(v0);
     var o: VOut;
-    let wp = place(v);
+    let wp = place(v0);
     o.clip = globals.view_proj * vec4<f32>(wp, 1.0);
     o.world = wp;
     o.anchor = select(vec2<f32>(-1.0e6), v.off, v.kind == 4.0 && (v.off.x != 0.0 || v.off.y != 0.0));
@@ -296,7 +312,8 @@ fn fire_light(n: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
     // by day the sun drowns it out
     let night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
     let k = 0.25 + 0.75 * night;
-    for (var i = 0; i < 8; i = i + 1) {
+    let count = i32(globals.occ[0].x);
+    for (var i = 0; i < count; i = i + 1) {
         let fl = globals.fires[i];
         if (fl.w < 0.5) { continue; }
         let d = fl.xyz - wp;
@@ -320,6 +337,25 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
     let p = globals.light.w;
     if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && (v.glow < 0.5 || v.glow > 1.5) && v.p3.y > 1.15 && leaf_gap(v.p3)) { discard; }
+    // a crown standing between the eye and the player opens up around them: leaves near the player on screen, and
+    // nearer the camera than the player, are thinned out in a pixel pattern (more toward the middle), so the
+    // player is never lost under a big tree
+    if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && v.glow < 0.5 && globals.peek.w > 0.5) {
+        let d = v.world - globals.peek.xyz;
+        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
+        let ahead = dot(d, to_eye);
+        let sx = dot(d, globals.cam_r.xyz);
+        let sy = dot(d, globals.cam_u.xyz);
+        let r = length(vec2<f32>(sx, sy * 0.8));
+        if (ahead > 0.6 && r < 2.6) {
+            let k = 1.0 - smoothstep(1.2, 2.6, r);
+            // a 4x4 ordered pattern in 2-pixel squares: even, fine holes rather than blots
+            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
+            let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+            let dither = (bayer[c.y * 4u + c.x] + 0.5) / 16.0;
+            if (dither < 0.85 * k) { discard; }
+        }
+    }
     // the bright rim around whatever the pointer is on: one flat colour, no light, no haze
     if (v.glow > 1.5) {
         return vec4<f32>(pow(v.color, vec3<f32>(2.2)), 1.0);
@@ -368,7 +404,11 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
                 col = mix(col, vec3<f32>(0.9, 0.96, 0.97), 0.75 * (1.0 - depth / 2.2));
             }
             // the side of each wave facing the sun lighter, the far side darker: shows its shape
-            col = col * (1.0 + 0.9 * dot(vec2<f32>(sw.y, sw.z), normalize(globals.sun.xz + vec2<f32>(0.001))));
+            col = col * (1.0 + 0.9 * clamp(globals.sun.w / 0.8, 0.2, 1.0) * dot(vec2<f32>(sw.y, sw.z), normalize(globals.sun.xz + vec2<f32>(0.001))));
+            // at night open water drinks the light: it faces straight up into the (blue, moonlit) sky, so without this
+            // it would read brighter than the land around it
+            let sea_night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
+            col = col * mix(1.0, 0.55, sea_night * sea_night);
             // whitecaps only on the highest crests, and only once the wind is fresh
             if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(floor(w * 21.0) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
                 col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);

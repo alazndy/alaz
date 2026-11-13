@@ -49,6 +49,10 @@ pub enum MinigameKind {
     /// Stacking pieces one on another: drop each at a sideways position; the pile must balance
     /// (the centre of mass of everything above must rest on the piece below).
     Stack,
+    /// Trimming a branch: knots and twigs stick out of it; hit the marked one (a point on the branch).
+    Trim,
+    /// Rubbing a piece along its length with the other hand holding it: drag at an even pace, hold the grip.
+    Rub,
 }
 
 #[derive(Clone, Debug, Deserialize)]

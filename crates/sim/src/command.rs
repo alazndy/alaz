@@ -37,10 +37,22 @@ pub enum CommandKind {
     Strike,
     /// One knapping strike: where on the rim of the stone (degrees, 0..359) and how hard (0..=100).
     StrikeAt { angle: u16, power: u8 },
+    /// A knapping strike made without holding the stone fast: it slips, and a loose stone breaks easily.
+    StrikeLoose { angle: u16, power: u8 },
+    /// One pass of a rubbing step: the pace it was dragged at (0..=100) and whether the piece was held fast.
+    Rub { pace: u8, grip: bool },
     /// Place a part for a fitting step: a point in a square, -100..=100 on both axes.
     PlaceAt { x: i16, y: i16 },
     /// Pull a lashing tight with this pressure (0..=100).
     Tighten { power: u8 },
+    /// Sandbox only: put this many of an item in the pack.
+    Give { item: ItemKind, n: u16 },
+    /// Sandbox only: move the clock forward to this minute of the day (0..1440); today if it is still to come.
+    SetClock { minute: u16 },
+    /// Sandbox only: move the clock forward to the next time this sky holds (0 clear, 1 rain, 2 snow).
+    SkipToWeather { sky: u8 },
+    /// Sandbox only: move the clock forward to the start of the next season.
+    SkipSeason,
     /// Place a building at a free position (mm); materials are spent immediately.
     Build { kind: BuildingKind, x: i64, y: i64 },
     /// Load inputs into a station; it works on its own and keeps the result.
@@ -92,6 +104,8 @@ pub enum CommandKind {
     Fish { tx: i32, ty: i32 },
     /// Move a building (with everything in it) to a new spot nearby.
     Relocate { building: u32, x: i64, y: i64 },
+    /// Turn a building a quarter turn clockwise.
+    Turn { building: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

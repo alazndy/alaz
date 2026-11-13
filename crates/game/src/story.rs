@@ -16,6 +16,9 @@ pub struct Story {
     page: Option<(&'static str, &'static str)>,
     /// The first-steps list, folded away by the player.
     folded: bool,
+    /// The perception level last seen, and a page about what the eye has just learned to tell apart.
+    sight: u8,
+    insight: Option<String>,
 }
 
 const INTRO: [(&str, &str); 4] = [
@@ -83,10 +86,13 @@ fn steps(w: &World, me: &alaz_sim::world::Agent, binds: &Keybinds) -> Vec<Step> 
 impl Story {
     /// A new world: start the telling from the top. Ages already reached (a loaded world) are not told again.
     pub fn begin(&mut self, w: &World) {
-        self.intro = Some(0);
+        // the sandbox is not told a story
+        self.intro = if w.settings.difficulty == alaz_sim::world::Difficulty::Creative { None } else { Some(0) };
         self.page = None;
         self.folded = false;
         self.told = w.milestone_bits();
+        self.sight = w.perception_level();
+        self.insight = None;
     }
 
     /// A world was loaded: no opening, and only ages reached from now on are told.
@@ -94,10 +100,15 @@ impl Story {
         self.intro = None;
         self.page = None;
         self.told = w.milestone_bits();
+        self.sight = w.perception_level();
+        self.insight = None;
     }
 
     /// `panel_open`: a building or worker panel holds the top right, where the first-steps list would go.
     pub fn draw(&mut self, ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, binds: &Keybinds, panel_open: bool) {
+        if w.settings.difficulty == alaz_sim::world::Difficulty::Creative {
+            return;
+        }
         // an age reached since last time: tell it once
         for m in Milestone::ALL {
             if w.milestone_done(m) && self.told & m.bit() == 0 {
@@ -112,6 +123,26 @@ impl Story {
             let last = i + 1 == INTRO.len();
             if let Some(next) = card(ctx, "story_intro", title, body, if last { "Başla" } else { "İleri" }, Some("Geç")) {
                 self.intro = if next && !last { Some(i + 1) } else { None };
+            }
+            return;
+        }
+        // the eye has sharpened: things that looked alike come apart
+        let lvl = w.perception_level();
+        while self.sight < lvl {
+            self.sight += 1;
+            let parts = crate::lang::blurred_at(self.sight);
+            let mine: Vec<_> = parts.iter().filter(|(r, _)| me.inventory.get(*r) > 0 || w.has_seen(*r)).collect();
+            if !mine.is_empty() {
+                let mut lines: Vec<String> = Vec::new();
+                for (real, seen) in &mine {
+                    lines.push(format!("Bazı {} aslında {}.", crate::hud::item_name(*seen).to_lowercase(), crate::hud::item_name(*real).to_lowercase()));
+                }
+                self.insight = Some(format!("Gözün keskinleşti. Hep aynı sandığın şeylerin hepsi aynı değilmiş.\n\n{}", lines.join("\n")));
+            }
+        }
+        if let Some(body) = self.insight.clone() {
+            if card(ctx, "story_insight", "Fark ettin", &body, "Anladım", None).is_some() {
+                self.insight = None;
             }
             return;
         }

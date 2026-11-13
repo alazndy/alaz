@@ -269,7 +269,7 @@ fn tuft(b: &mut Bmp, x: i32, y: i32, dark: Rgb, mid: Rgb, light: Rgb) {
 }
 
 fn tile_grass(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 7919 + 13);
+    let mut rng = Rng(seed.wrapping_mul(7919).wrapping_add(13));
     let r = ramp([88, 136, 62]);
     let mut b = Bmp::new(GT, GT);
     fill(&mut b, r.base);
@@ -304,7 +304,7 @@ fn tile_grass(seed: u32) -> Bmp {
 }
 
 fn tile_forest(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 104729 + 7);
+    let mut rng = Rng(seed.wrapping_mul(104729).wrapping_add(7));
     let r = ramp([56, 96, 50]);
     let mut b = Bmp::new(GT, GT);
     fill(&mut b, r.base);
@@ -339,7 +339,7 @@ fn tile_forest(seed: u32) -> Bmp {
 }
 
 fn tile_sand(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 15485863 + 3);
+    let mut rng = Rng(seed.wrapping_mul(15485863).wrapping_add(3));
     let r = ramp([210, 188, 134]);
     let mut b = Bmp::new(GT, GT);
     fill(&mut b, r.base);
@@ -372,7 +372,7 @@ fn tile_sand(seed: u32) -> Bmp {
 }
 
 fn tile_rock(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 32452843 + 11);
+    let mut rng = Rng(seed.wrapping_mul(32452843).wrapping_add(11));
     let r = ramp([128, 126, 122]);
     let mut b = Bmp::new(GT, GT);
     fill(&mut b, r.base);
@@ -409,7 +409,7 @@ fn tile_rock(seed: u32) -> Bmp {
 }
 
 fn tile_water(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 49979687 + 5);
+    let mut rng = Rng(seed.wrapping_mul(49979687).wrapping_add(5));
     let r = ramp([42, 98, 148]);
     let mut b = Bmp::new(GT, GT);
     fill(&mut b, r.base);
@@ -428,7 +428,7 @@ fn tile_water(seed: u32) -> Bmp {
 // ------------------------------------------------------------------ nature
 
 fn tree(seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 2246822519 + 1);
+    let mut rng = Rng(seed.wrapping_mul(2246822519).wrapping_add(1));
     let mut b = Bmp::new(44, 60);
     let bark = ramp([108, 76, 46]);
     // trunk with roots, drawn from the base (bottom centre) up
@@ -453,7 +453,7 @@ fn tree(seed: u32) -> Bmp {
 }
 
 fn stone_rock(seed: u32, ore: Option<Rgb>) -> Bmp {
-    let mut rng = Rng(seed * 3266489917 + 9);
+    let mut rng = Rng(seed.wrapping_mul(3266489917).wrapping_add(9));
     let mut b = Bmp::new(30, 24);
     let r = ramp([138, 136, 134]);
     b.blob(18.0, 15.0, 7.0, 5.5, &ramp([122, 120, 120]), seed + 3, 0.5);
@@ -1032,7 +1032,7 @@ pub fn halo(rx: f32, ry: f32) -> Bmp {
 
 
 fn mtile(f: impl Fn(&mut Rng, i32, i32) -> [f32; 3], seed: u32) -> Bmp {
-    let mut rng = Rng(seed * 2654435761 + 17);
+    let mut rng = Rng(seed.wrapping_mul(2654435761).wrapping_add(17));
     let mut b = Bmp::new(TILE, TILE);
     for y in 0..TILE {
         for x in 0..TILE {

@@ -206,6 +206,8 @@ impl Script {
                         crate::rules::MinigameKind::Knap => Some(CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 }),
                         crate::rules::MinigameKind::Fit => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
                         crate::rules::MinigameKind::Tension => Some(CommandKind::Tighten { power: v.power as u8 }),
+                        crate::rules::MinigameKind::Trim => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
+                        crate::rules::MinigameKind::Rub => Some(CommandKind::Rub { pace: v.power as u8, grip: true }),
                         crate::rules::MinigameKind::Timing => (v.pos.abs_diff(v.center) <= v.half / 3).then_some(CommandKind::Strike),
                         crate::rules::MinigameKind::Stack => Some(CommandKind::PlaceAt { x: 0, y: 0 }),
                     };

@@ -275,6 +275,9 @@ pub struct Agent {
     pub broken: i32,
     /// Running, and the breath left for it (0..=MAX_STAT).
     pub sprint: bool,
+    /// Sandbox flight: sprinting goes over everything, fast. Not saved; set again by the sprint key.
+    #[serde(skip)]
+    pub fly: bool,
     pub stamina: i32,
     pub sick: i32,
     /// Planned route around obstacles: remaining waypoint tiles (next one last) and the goal tile it is for.
@@ -321,7 +324,7 @@ impl Agent {
             return MAX_STAT;
         }
         let ok = self.nutrition.iter().filter(|&&n| n >= 300).count() as i32;
-        let pct = if settings.difficulty == Difficulty::Forgiving { 85 + 5 * ok } else { 70 + 10 * ok };
+        let pct = if settings.difficulty.gentle() { 85 + 5 * ok } else { 70 + 10 * ok };
         MAX_STAT * pct / 100
     }
 }
@@ -348,7 +351,7 @@ impl Agent {
 
 /// Uses a tool takes before it goes blunt in this world (forgiving doubles it); 0 = never.
 pub fn tool_life(t: &crate::rules::ToolDef, settings: &WorldSettings) -> u16 {
-    if settings.difficulty == Difficulty::Forgiving { t.durability.saturating_mul(2) } else { t.durability }
+    if settings.difficulty.gentle() { t.durability.saturating_mul(2) } else { t.durability }
 }
 
 #[derive(Clone, Debug)]
@@ -493,6 +496,8 @@ pub enum Event {
     Bitten(AgentId),
     /// One strike of a craft minigame landed (or missed).
     Struck { agent: AgentId, hit: bool },
+    /// The stone broke under a blow and is gone; the work stops.
+    Broke { agent: AgentId, item: ItemKind },
     /// A minigame craft finished. quality: 0 failed, 1 good, 2 fine.
     Crafted { agent: AgentId, recipe: u16, quality: u8 },
     /// A craft was dropped: nobody worked on it for a minute, or the worker walked away. The materials stay in the bag.
@@ -658,6 +663,19 @@ impl Milestone {
     }
 }
 
+/// The fitting target does not hold still: the piece being fitted sways in a slow loop (radius 14, ~4 s),
+/// so the hand has to follow it.
+fn fit_sway(tick: u64) -> (i32, i32) {
+    let a = (tick % 240) as f64 / 240.0 * std::f64::consts::TAU;
+    ((a.cos() * 14.0).round() as i32, (a.sin() * 9.0).round() as i32)
+}
+
+/// The timing marker quickens with every blow of a step: 12% faster each, up to half again as fast.
+fn timing_marker(tick: u64, period: u32, done: u8) -> u32 {
+    let speed = 100 + 12 * done.min(4) as u64;
+    marker_pos(tick * speed / 100, period)
+}
+
 /// Where the craft minigame's marker is at `tick`: a triangle wave over `0..=period/2`.
 fn marker_pos(tick: u64, period: u32) -> u32 {
     if period == 0 {
@@ -689,10 +707,11 @@ pub(crate) fn knap_needed(seed: u64, agent: AgentId, recipe: u16, step: u8, salt
     18 + (crate::rng::hash2(seed ^ 0x5A9E, agent.0 as i32 * 256 + step as i32 * 16 + sector as i32, recipe as i32 * 65_536 + salt as i32) % 23) as i32
 }
 
-fn craft_geometry(stage: u8, mg: &crate::rules::Minigame, inv: &Inventory, seed: u64, agent: AgentId, recipe: u16, step: u8, done: u8, salt: u16, stack: &[(i8, u8); 8]) -> Geometry {
+fn craft_geometry(stage: u8, mastery: u32, mg: &crate::rules::Minigame, inv: &Inventory, seed: u64, agent: AgentId, recipe: u16, step: u8, done: u8, salt: u16, stack: &[(i8, u8); 8]) -> Geometry {
     use crate::rules::MinigameKind;
     // clumsy hands at first, surer with every step the tribe has evolved: -2 at stage 0, +8 at stage 5
-    let bonus: u32 = (mg.tools.iter().filter(|t| inv.get(t.item) > 0).map(|t| t.bonus).sum::<u32>() + 2 * stage as u32).saturating_sub(2);
+    // and practised hands: a thing made many times is made more surely
+    let bonus: u32 = (mg.tools.iter().filter(|t| inv.get(t.item) > 0).map(|t| t.bonus).sum::<u32>() + 2 * stage as u32 + mastery).saturating_sub(2);
     let n = step as i32 * 16 + done as i32;
     let h = |tag: u64| crate::rng::hash2(seed ^ tag, agent.0 as i32 * 256 + n, recipe as i32 * 65_536 + salt as i32);
     let mut g = Geometry { span: 0, center: 0, half: 0, power: 0, power_half: 0, tx: 0, ty: 0 };
@@ -718,10 +737,16 @@ fn craft_geometry(stage: u8, mg: &crate::rules::Minigame, inv: &Inventory, seed:
             g.tx = (h(0xF17A) % 121) as i32 - 60;
             g.ty = (h(0xF17B) % 121) as i32 - 60;
         }
-        MinigameKind::Tension => {
+        MinigameKind::Tension | MinigameKind::Rub => {
             g.half = (mg.window + bonus).min(40);
             g.power = 30 + (h(0x7E45) % 46) as u32;
             g.power_half = g.half;
+        }
+        MinigameKind::Trim => {
+            // a knot sits somewhere along the branch (the branch lies across the middle, twigs stick out a little)
+            g.half = (mg.window + bonus).min(40);
+            g.tx = (h(0x7121) % 141) as i32 - 70;
+            g.ty = (h(0x7122) % 41) as i32 - 20;
         }
         MinigameKind::Stack => {
             // half-width of the ground the pile stands on; `span` is the width of the next piece
@@ -813,6 +838,8 @@ pub struct CraftView {
     /// (`half`); `span` is the width of the piece to drop next.
     pub stack: [(i8, u8); 8],
     pub stack_n: u8,
+    /// Practice with this recipe (0..=4): how much wider its targets are for it.
+    pub mastery: u8,
 }
 
 /// Ticks one unit of a gather takes for this inventory at this evolutionary stage (what `Task::Gather::progress`
@@ -899,6 +926,7 @@ impl Agent {
             injury: 0,
             broken: 0,
             sprint: false,
+            fly: false,
             stamina: MAX_STAT,
             sick: 0,
             path: Vec::new(),
@@ -1015,6 +1043,16 @@ pub enum Difficulty {
     Forgiving,
     /// TerraFirmaCraft-like: long jobs, failed crafts lose everything, fast wear and spoilage, hard winters.
     Realistic,
+    /// Sandbox: no needs and no death, every recipe and building known, hand-work done at once and free, building
+    /// costs nothing, items can be given, the clock and the sky can be moved, and sprinting flies.
+    Creative,
+}
+
+impl Difficulty {
+    /// The forgiving rules (kinder wear, spoilage and failures); the sandbox plays by them too.
+    pub fn gentle(self) -> bool {
+        matches!(self, Difficulty::Forgiving | Difficulty::Creative)
+    }
 }
 
 /// Settings a world is made with.
@@ -1450,6 +1488,17 @@ impl World {
         self.known & d.bit() != 0
     }
 
+    /// The sandbox starts with everything learned, seen and achieved.
+    pub fn unlock_everything(&mut self) {
+        self.known = u64::MAX;
+        for m in Milestone::ALL {
+            self.milestones |= m.bit();
+        }
+        for k in ItemKind::ALL {
+            self.seen |= 1u128 << k as u32;
+        }
+    }
+
     /// Developer aid (`--demo`): a tribe that has learned and seen nothing yet.
     pub fn forget_everything(&mut self) {
         self.known = 0;
@@ -1474,8 +1523,9 @@ impl World {
         let Task::Craft { recipe, step, done, hits, salt, stack, n, .. } = a.task else { return None };
         let def = (&*rules_now).recipes.get(recipe as usize)?;
         let mg = def.steps.get(step as usize)?;
-        let g = craft_geometry(self.perception_level(), mg, &a.inventory, self.seed, a.id, recipe, step, done, salt, &stack);
+        let g = craft_geometry(self.perception_level(), self.mastery(recipe as usize), mg, &a.inventory, self.seed, a.id, recipe, step, done, salt, &stack);
         Some(CraftView {
+            mastery: self.mastery(recipe as usize) as u8,
             recipe: recipe as usize,
             step,
             steps: def.steps.len() as u8,
@@ -1483,14 +1533,14 @@ impl World {
             strikes: mg.strikes,
             done,
             hits,
-            pos: marker_pos(self.tick, mg.period),
+            pos: timing_marker(self.tick, mg.period, done),
             center: g.center,
             half: g.half,
             span: g.span,
             power: g.power,
             power_half: g.power_half,
-            tx: g.tx,
-            ty: g.ty,
+            tx: g.tx + if mg.kind == crate::rules::MinigameKind::Fit { fit_sway(self.tick).0 } else { 0 },
+            ty: g.ty + if mg.kind == crate::rules::MinigameKind::Fit { fit_sway(self.tick).1 } else { 0 },
             stack: if mg.kind == crate::rules::MinigameKind::Knap {
                 std::array::from_fn(|i| (knap_needed(self.seed, a.id, recipe, step, salt, i) as i8, stack[i].1))
             } else {
@@ -1520,6 +1570,13 @@ impl World {
     pub fn perception_permille(&self) -> u32 {
         let score = self.known.count_ones() + 2 * self.milestones.count_ones() + self.seen.count_ones() / 2;
         (score * 1000 / PERCEPTION_FULL_SCORE).min(1000)
+    }
+
+    /// Practice with a recipe: +1 to its minigame targets for every 5 of its product the tribe has made, up to +4.
+    pub fn mastery(&self, recipe: usize) -> u32 {
+        let rules_now = self.rules_arc();
+        let Some(first) = (&*rules_now).recipes.get(recipe).and_then(|r| r.outputs.first()) else { return 0 };
+        (self.produced[first.item as usize] / 5).min(4)
     }
 
     /// Stages of perception 0..=5, from the animal view to the modern one.
@@ -1742,6 +1799,7 @@ impl World {
                 if human {
                     // winded people cannot start running until they have caught some breath
                     a.sprint = *on && a.stamina >= SPRINT_MIN_START && a.broken == 0;
+                    a.fly = *on && self.settings.difficulty == Difficulty::Creative;
                 }
             }
             CommandKind::CaveLeave => {
@@ -1884,6 +1942,20 @@ impl World {
                 if !self.knows(def.discovery) {
                     return self.reject(id, Reject::NotLearned);
                 }
+                if self.settings.difficulty == Difficulty::Creative {
+                    // the sandbox: no materials, no station, no hand-work; always the finest result
+                    let inv = &mut self.agents[idx].inventory;
+                    inv.give(&def.outputs);
+                    for o in &def.outputs {
+                        self.produced[o.item as usize] += o.n as u32;
+                    }
+                    if let Some(first) = def.outputs.first().filter(|_| def.fine_bonus > 0) {
+                        self.agents[idx].inventory.give(&[ItemCount { item: first.item, n: def.fine_bonus }]);
+                        self.produced[first.item as usize] += def.fine_bonus as u32;
+                    }
+                    self.events.push(Event::Crafted { agent: id, recipe: recipe.0, quality: 2 });
+                    return;
+                }
                 let inv = &mut self.agents[idx].inventory;
                 if !inv.has(&def.inputs) {
                     return self.reject(id, Reject::NoMaterials);
@@ -1909,7 +1981,7 @@ impl World {
                     self.produced[o.item as usize] += o.n as u32;
                 }
             }
-            CommandKind::Strike | CommandKind::StrikeAt { .. } | CommandKind::PlaceAt { .. } | CommandKind::Tighten { .. } => {
+            CommandKind::Strike | CommandKind::StrikeAt { .. } | CommandKind::StrikeLoose { .. } | CommandKind::PlaceAt { .. } | CommandKind::Tighten { .. } | CommandKind::Rub { .. } => {
                 if !human {
                     return;
                 }
@@ -1917,7 +1989,7 @@ impl World {
                 let (mut stack, mut n) = (stack, n);
                 let def = &(&*rules_now).recipes[recipe as usize];
                 let Some(mg) = def.steps.get(step as usize) else { return };
-                let g = craft_geometry(self.perception_level(), mg, &self.agents[idx].inventory, self.seed, id, recipe, step, done, salt, &stack);
+                let g = craft_geometry(self.perception_level(), self.mastery(recipe as usize), mg, &self.agents[idx].inventory, self.seed, id, recipe, step, done, salt, &stack);
                 use crate::rules::MinigameKind;
                 // how well the strike went: 100 dead on, 60 inside the zone, 25 just off, 0 miss
                 let band = |off: u32, half: u32| -> u16 {
@@ -1933,9 +2005,40 @@ impl World {
                 };
                 let points: u16 = match (&c.kind, mg.kind) {
                     (CommandKind::Strike, MinigameKind::Timing) => {
-                        if marker_pos(self.tick, mg.period).abs_diff(g.center) <= g.half { 100 } else { 0 }
+                        // dead centre is clean work; the edge of the zone does, but roughly; just off only dents it
+                        let off = timing_marker(self.tick, mg.period, done).abs_diff(g.center);
+                        if off * 3 <= g.half {
+                            100
+                        } else if off <= g.half {
+                            75
+                        } else if off * 2 <= g.half * 3 {
+                            25
+                        } else {
+                            0
+                        }
                     }
-                    (CommandKind::StrikeAt { angle, power }, MinigameKind::Knap) => {
+                    (CommandKind::StrikeAt { angle, power } | CommandKind::StrikeLoose { angle, power }, MinigameKind::Knap) => {
+                        // too hard a blow, or any blow at a stone that is not held fast, can break the stone itself
+                        let loose = matches!(c.kind, CommandKind::StrikeLoose { .. });
+                        let over = (*power as u32).min(100).saturating_sub(g.power + g.power_half);
+                        let mut pct = (over * 2).min(60) + if loose { 40 } else { 0 };
+                        if self.settings.difficulty.gentle() {
+                            pct /= 2;
+                        }
+                        let roll = crate::rng::hash2(self.seed ^ 0xB4EA4, id.0 as i32, (self.tick % 1_000_000) as i32) % 100;
+                        if (roll as u32) < pct {
+                            if let Some(first) = def.inputs.first() {
+                                self.agents[idx].inventory.take(&[ItemCount { item: first.item, n: 1 }]);
+                                self.events.push(Event::Broke { agent: id, item: first.item });
+                            }
+                            self.events.push(Event::Struck { agent: id, hit: false });
+                            self.agents[idx].task = Task::Idle;
+                            return;
+                        }
+                        if loose {
+                            // it slips out of the hand: the blow lands nowhere
+                            0
+                        } else {
                         // the flake comes off the sector that was aimed at; too deep a cut ruins it for good
                         // a strike close enough to the mark lands on the intended facet, a wild one on whatever it hit
                         let near = angle_diff(*angle as u32, g.center) * 10 <= g.half * 16;
@@ -1958,8 +2061,24 @@ impl World {
                         let taken = if p >= 60 { depth } else if p > 0 { depth / 2 } else { depth / 3 };
                         stack[sector].1 = (stack[sector].1 as i32 + taken).min(255) as u8;
                         p
+                        }
                     }
                     (CommandKind::PlaceAt { x, y }, MinigameKind::Fit) => {
+                        let (sx, sy) = fit_sway(self.tick);
+                        let (dx, dy) = ((*x).clamp(-100, 100) as i64 - (g.tx + sx) as i64, (*y).clamp(-100, 100) as i64 - (g.ty + sy) as i64);
+                        let d2 = dx * dx + dy * dy;
+                        let h = g.half as i64;
+                        if d2 * 4 <= h * h {
+                            100
+                        } else if d2 <= h * h {
+                            60
+                        } else if d2 * 100 <= h * h * 256 {
+                            25
+                        } else {
+                            0
+                        }
+                    }
+                    (CommandKind::PlaceAt { x, y }, MinigameKind::Trim) => {
                         let (dx, dy) = ((*x).clamp(-100, 100) as i64 - g.tx as i64, (*y).clamp(-100, 100) as i64 - g.ty as i64);
                         let d2 = dx * dx + dy * dy;
                         let h = g.half as i64;
@@ -1969,6 +2088,14 @@ impl World {
                             60
                         } else if d2 * 100 <= h * h * 256 {
                             25
+                        } else {
+                            0
+                        }
+                    }
+                    // rubbing: without the other hand holding the piece it only slides about
+                    (CommandKind::Rub { pace, grip }, MinigameKind::Rub) => {
+                        if *grip {
+                            band((*pace as u32).min(100).abs_diff(g.power), g.power_half)
                         } else {
                             0
                         }
@@ -2020,7 +2147,7 @@ impl World {
                 } else if quality == 0 && roll < LUCK_RESCUE_PERCENT {
                     quality = 1;
                 }
-                let forgiving = self.settings.difficulty == Difficulty::Forgiving;
+                let forgiving = self.settings.difficulty.gentle();
                 // a clay mould cracks now and then (one cast in three when forgiving), always when it is realistic
                 let cracks = crate::rng::hash2(self.seed ^ 0x3017D, id.0 as i32, (self.tick % 1_000_000) as i32) % 1000 < if forgiving { 333 } else { 1000 };
                 let inv = &mut self.agents[idx].inventory;
@@ -2063,20 +2190,77 @@ impl World {
                 if dist2(ax, ay, x, y) > BUILD_RADIUS_MM * BUILD_RADIUS_MM {
                     return self.reject(id, Reject::TooFar);
                 }
-                if !self.agents[idx].inventory.has(&def.cost) {
+                let free = self.settings.difficulty == Difficulty::Creative;
+                if !free && !self.agents[idx].inventory.has(&def.cost) {
                     return self.reject(id, Reject::NoMaterials);
                 }
-                if def.needs.iter().any(|&k| self.agents[idx].inventory.get(k) == 0) {
+                if !free && def.needs.iter().any(|&k| self.agents[idx].inventory.get(k) == 0) {
                     return self.reject(id, if def.needs.contains(&ItemKind::Flint) { Reject::NoFlint } else { Reject::NoMaterials });
                 }
                 if let Err(why) = self.can_place(kind, x, y) {
                     return self.reject(id, why);
                 }
-                self.agents[idx].inventory.take(&def.cost);
+                if !free {
+                    self.agents[idx].inventory.take(&def.cost);
+                }
                 let fuel = if kind.burns() { FIRE_FUEL_START } else { 0 };
                 self.buildings.push(Building { fuel, ..Building::new(kind, x, y) });
                 self.obstacles.block_footprint(&self.map, x, y, def.radius_mm);
                 self.obstacles.built_for = self.buildings.len();
+            }
+            CommandKind::Give { item, n } => {
+                if human && self.settings.difficulty == Difficulty::Creative {
+                    let inv = &mut self.agents[idx].inventory;
+                    inv.give(&[ItemCount { item: *item, n: (*n).min(999) as _ }]);
+                    self.seen |= 1u128 << *item as u32;
+                }
+            }
+            CommandKind::SetClock { minute } => {
+                if human && self.settings.difficulty == Difficulty::Creative {
+                    let day = self.tick / crate::time::TICKS_PER_DAY * crate::time::TICKS_PER_DAY;
+                    let mut t = day + crate::time::tick_of_minute(*minute as u32);
+                    if t <= self.tick {
+                        t += crate::time::TICKS_PER_DAY;
+                    }
+                    self.tick = t;
+                }
+            }
+            CommandKind::SkipToWeather { sky } => {
+                if human && self.settings.difficulty == Difficulty::Creative {
+                    use crate::time::Weather;
+                    let want = match sky {
+                        0 => Weather::Clear,
+                        1 => Weather::Rain,
+                        _ => Weather::Snow,
+                    };
+                    let days = self.settings.season_days as u64;
+                    // the sky changes in blocks of four hours; look ahead up to two years for the next one that fits
+                    let block = crate::time::TICKS_PER_DAY / 6;
+                    let mut t = (self.tick / block + 1) * block;
+                    let end = t + crate::time::TICKS_PER_DAY * days * 8;
+                    while t < end && crate::time::weather(self.seed, t, days) != want {
+                        t += block;
+                    }
+                    if t < end {
+                        self.tick = t;
+                    }
+                }
+            }
+            CommandKind::SkipSeason => {
+                if human && self.settings.difficulty == Difficulty::Creative {
+                    let span = crate::time::TICKS_PER_DAY * self.settings.season_days as u64;
+                    self.tick = (self.tick / span + 1) * span;
+                }
+            }
+            CommandKind::Turn { building } => {
+                let i = *building as usize;
+                if !human || i >= self.buildings.len() {
+                    return;
+                }
+                if dist2(ax, ay, self.buildings[i].x, self.buildings[i].y) > BUILD_RADIUS_MM * BUILD_RADIUS_MM {
+                    return self.reject(id, Reject::TooFar);
+                }
+                self.buildings[i].facing = (self.buildings[i].facing + 1) & 3;
             }
             CommandKind::Relocate { building, x, y } => {
                 let (i, x, y) = (*building as usize, *x, *y);
@@ -3258,6 +3442,20 @@ impl World {
     }
 
     fn run_needs(&mut self) {
+        if self.settings.difficulty == Difficulty::Creative {
+            // the sandbox: nothing wears a person down, and nothing kills them
+            let settings = self.settings;
+            for a in self.agents.iter_mut().filter(|a| a.kind == AgentKind::Human) {
+                a.health = a.health_cap(&settings).max(1);
+                a.hunger = MAX_STAT;
+                a.thirst = MAX_STAT;
+                a.warmth = MAX_STAT;
+                a.stamina = MAX_STAT;
+                a.injury = 0;
+                a.sick = 0;
+                a.broken = 0;
+            }
+        }
         let rules_now = self.rules_arc();
         let tick = self.tick;
         let settings_now = self.settings;

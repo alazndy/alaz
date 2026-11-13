@@ -307,9 +307,12 @@ inputs = [{ item = "sharp_stone", n = 1 }, { item = "branch", n = 1 }, { item = 
 outputs = [{ item = "stone_axe", n = 1 }]
 ticks = 0
 discovery = "stone_axe"
-# four jobs in a row; a clamp holds the parts while you work, so fitting and lashing get easier
+# six jobs in a row: trim the knots, rub the handle flat and to shape (hold it fast with the other hand), cut the
+# seat, fit the stone, lash; a clamp holds the parts while you work, so fitting and lashing get easier
 steps = [
-  { label = "Sapı düzelt", kind = "timing", strikes = 3, window = 10, period = 120, tools = [{ item = "stone_axe", bonus = 4 }, { item = "iron_axe", bonus = 6 }] },
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Sapa yuva aç", kind = "knap", strikes = 2, window = 24, period = 120, tools = [{ item = "stone_axe", bonus = 8 }, { item = "iron_axe", bonus = 10 }] },
   { label = "Taşı yuvaya yerleştir", kind = "fit", strikes = 2, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Lifle sıkıca bağla", kind = "tension", strikes = 3, window = 11, period = 120, tools = [{ item = "clamp", bonus = 8 }] },

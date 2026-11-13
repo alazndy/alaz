@@ -12,6 +12,11 @@ pub fn minute_of_day(tick: u64) -> u32 {
     (((tick % TICKS_PER_DAY) * 1440 / TICKS_PER_DAY + START_MINUTE) % 1440) as u32
 }
 
+/// Tick within a day-cycle at which the clock shows this minute of the day.
+pub fn tick_of_minute(minute: u32) -> u64 {
+    ((minute as u64 % 1440 + 1440 - START_MINUTE) % 1440) * TICKS_PER_DAY / 1440
+}
+
 /// Days in one season in worlds made before the season length became a world setting; they keep it.
 pub const SEASON_DAYS: u64 = 3;
 /// Days in one season in a new world (a world setting): the year is four of them, spring, summer, autumn, winter.

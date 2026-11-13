@@ -144,6 +144,9 @@ pub struct Building {
     /// Fields: how much the soil still gives, permille (tired by harvests, restored by rest and manure).
     #[serde(skip, default = "full_soil")]
     pub fertility: u16,
+    /// Which way it faces, in quarter turns (0..3). Saved in the extension block.
+    #[serde(skip)]
+    pub facing: u8,
 }
 
 fn full_soil() -> u16 {
@@ -153,7 +156,7 @@ fn full_soil() -> u16 {
 impl Building {
     /// A fresh building of this kind at (x, y) mm: no fuel, nothing inside, soil at full strength.
     pub fn new(kind: BuildingKind, x: i64, y: i64) -> Self {
-        Self { kind, x, y, fuel: 0, job: None, input: [0; ItemKind::COUNT], output: [0; ItemKind::COUNT], auto: None, temp: 0, fertility: full_soil() }
+        Self { kind, x, y, fuel: 0, job: None, input: [0; ItemKind::COUNT], output: [0; ItemKind::COUNT], auto: None, temp: 0, fertility: full_soil(), facing: 0 }
     }
 }
 

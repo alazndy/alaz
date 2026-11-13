@@ -1326,6 +1326,8 @@ fn craft_perfectly(w: &mut World, a: AgentId, id: &str) {
             }
             MinigameKind::Fit => w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })]),
             MinigameKind::Tension => w.step(&[cmd(a, CommandKind::Tighten { power: v.power as u8 })]),
+            MinigameKind::Trim => w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })]),
+            MinigameKind::Rub => w.step(&[cmd(a, CommandKind::Rub { pace: v.power as u8, grip: true })]),
             MinigameKind::Timing if v.pos.abs_diff(v.center) <= v.half / 3 => {
                 w.step(&[cmd(a, CommandKind::Strike)]);
             }
@@ -1345,6 +1347,8 @@ fn craft_badly(w: &mut World, a: AgentId, id: &str) {
             }
             MinigameKind::Fit => w.step(&[cmd(a, CommandKind::PlaceAt { x: if v.tx > 0 { -100 } else { 100 }, y: if v.ty > 0 { -100 } else { 100 } })]),
             MinigameKind::Tension => w.step(&[cmd(a, CommandKind::Tighten { power: if v.power > 50 { 0 } else { 100 } })]),
+            MinigameKind::Trim => w.step(&[cmd(a, CommandKind::PlaceAt { x: if v.tx > 0 { -100 } else { 100 }, y: if v.ty > 0 { -100 } else { 100 } })]),
+            MinigameKind::Rub => w.step(&[cmd(a, CommandKind::Rub { pace: if v.power > 50 { 0 } else { 100 }, grip: true })]),
             MinigameKind::Timing if v.pos.abs_diff(v.center) > v.half + 6 => {
                 w.step(&[cmd(a, CommandKind::Strike)]);
             }
@@ -1576,7 +1580,7 @@ fn an_axe_takes_four_steps_and_a_clamp_makes_it_easier() {
         if seen.last() != Some(&(v.step, v.kind)) {
             seen.push((v.step, v.kind));
         }
-        assert_eq!(v.steps, 4);
+        assert_eq!(v.steps, 6);
         match v.kind {
             MinigameKind::Timing if v.pos.abs_diff(v.center) <= v.half / 3 => w.step(&[cmd(a, CommandKind::Strike)]),
             MinigameKind::Timing => w.step(&[]),
@@ -1586,11 +1590,13 @@ fn an_axe_takes_four_steps_and_a_clamp_makes_it_easier() {
                 w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })])
             }
             MinigameKind::Tension => w.step(&[cmd(a, CommandKind::Tighten { power: v.power as u8 })]),
+            MinigameKind::Trim => w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })]),
+            MinigameKind::Rub => w.step(&[cmd(a, CommandKind::Rub { pace: v.power as u8, grip: true })]),
             MinigameKind::Stack => w.step(&[cmd(a, CommandKind::PlaceAt { x: 0, y: 0 })]),
         }
     }
     let kinds: Vec<_> = seen.iter().map(|s| s.1).collect();
-    assert_eq!(kinds, [MinigameKind::Timing, MinigameKind::Knap, MinigameKind::Fit, MinigameKind::Tension]);
+    assert_eq!(kinds, [MinigameKind::Trim, MinigameKind::Rub, MinigameKind::Rub, MinigameKind::Knap, MinigameKind::Fit, MinigameKind::Tension]);
     assert_eq!(count(&w, 0, ItemKind::StoneAxe), 1);
     assert_eq!(count(&w, 0, ItemKind::Branch) + count(&w, 0, ItemKind::Fiber) + count(&w, 0, ItemKind::SharpStone), 0, "everything was used");
     // a clamp holds the parts for you
@@ -1609,6 +1615,8 @@ fn an_axe_takes_four_steps_and_a_clamp_makes_it_easier() {
             MinigameKind::Timing if v.pos.abs_diff(v.center) <= v.half / 3 => w.step(&[cmd(a, CommandKind::Strike)]),
             MinigameKind::Timing => w.step(&[]),
             MinigameKind::Knap => w.step(&[cmd(a, CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 })]),
+            MinigameKind::Trim => w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })]),
+            MinigameKind::Rub => w.step(&[cmd(a, CommandKind::Rub { pace: v.power as u8, grip: true })]),
             _ => unreachable!(),
         }
     }
@@ -1731,6 +1739,8 @@ fn newbie_session(seed: u64, ticks: u64, log: &mut Vec<String>) -> World {
                 MinigameKind::Knap => Some(CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 }),
                 MinigameKind::Fit => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
                 MinigameKind::Tension => Some(CommandKind::Tighten { power: v.power as u8 }),
+                MinigameKind::Trim => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
+                MinigameKind::Rub => Some(CommandKind::Rub { pace: v.power as u8, grip: true }),
                 MinigameKind::Timing if v.pos.abs_diff(v.center) <= v.half / 3 => Some(CommandKind::Strike),
                 MinigameKind::Timing => None,
                 MinigameKind::Stack => Some(CommandKind::PlaceAt { x: 0, y: 0 }),
@@ -1852,6 +1862,8 @@ fn survival_session(seed: u64, days: u64) -> (u64, u32) {
                 MinigameKind::Knap => Some(CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 }),
                 MinigameKind::Fit => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
                 MinigameKind::Tension => Some(CommandKind::Tighten { power: v.power as u8 }),
+                MinigameKind::Trim => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
+                MinigameKind::Rub => Some(CommandKind::Rub { pace: v.power as u8, grip: true }),
                 MinigameKind::Timing if v.pos.abs_diff(v.center) <= v.half / 3 => Some(CommandKind::Strike),
                 MinigameKind::Timing => None,
                 MinigameKind::Stack => Some(CommandKind::PlaceAt { x: 0, y: 0 }),
@@ -2075,6 +2087,21 @@ fn human_craft(w: &mut World, a: AgentId, id: &str, noise: &mut Noise, sloppy: f
             MinigameKind::Tension => {
                 let p = (v.power as f32 + noise.bell() * v.power_half as f32 * 1.8 * sloppy).clamp(0.0, 100.0);
                 w.step(&[cmd(a, CommandKind::Tighten { power: p as u8 })]);
+                for _ in 0..30 {
+                    w.step(&[]);
+                }
+            }
+            MinigameKind::Trim => {
+                let x = v.tx as f32 + noise.bell() * v.half as f32 * 1.8 * sloppy;
+                let y = v.ty as f32 + noise.bell() * v.half as f32 * 1.8 * sloppy;
+                w.step(&[cmd(a, CommandKind::PlaceAt { x: x.clamp(-100.0, 100.0) as i16, y: y.clamp(-100.0, 100.0) as i16 })]);
+                for _ in 0..30 {
+                    w.step(&[]);
+                }
+            }
+            MinigameKind::Rub => {
+                let p = (v.power as f32 + noise.bell() * v.power_half as f32 * 1.8 * sloppy).clamp(0.0, 100.0);
+                w.step(&[cmd(a, CommandKind::Rub { pace: p as u8, grip: true })]);
                 for _ in 0..30 {
                     w.step(&[]);
                 }
@@ -2966,6 +2993,8 @@ fn play_craft_perfectly(w: &mut World, a: AgentId) {
             crate::MinigameKind::Knap => Some(CommandKind::StrikeAt { angle: v.center as u16, power: v.power as u8 }),
             crate::MinigameKind::Fit => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
             crate::MinigameKind::Tension => Some(CommandKind::Tighten { power: v.power as u8 }),
+            crate::MinigameKind::Trim => Some(CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 }),
+            crate::MinigameKind::Rub => Some(CommandKind::Rub { pace: v.power as u8, grip: true }),
             crate::MinigameKind::Timing => (v.pos.abs_diff(v.center) <= v.half / 3).then_some(CommandKind::Strike),
             crate::MinigameKind::Stack => Some(CommandKind::PlaceAt { x: 0, y: 0 }),
         };
@@ -4846,4 +4875,74 @@ fn fishing_with_a_rod_and_cooking_the_catch() {
     let protein = w.agents[0].nutrition[1];
     w.step(&[cmd(a, CommandKind::Eat { item: ItemKind::CookedFish })]);
     assert!(w.agents[0].hunger > 2_000 && w.agents[0].nutrition[1] > protein, "fed");
+}
+
+#[test]
+fn the_sandbox_has_no_needs_gives_items_moves_the_clock_and_flies() {
+    let (mut w, a) = with_agent(7);
+    w.settings.difficulty = crate::world::Difficulty::Creative;
+    w.unlock_everything();
+    // everything is known, and a hand-craft needs no materials
+    assert!(w.knows(crate::world::Discovery::SharpStone) && w.milestone_done(crate::world::Milestone::FirstFire));
+    w.step(&[cmd(a, CommandKind::Craft { recipe: recipe("stone_axe") })]);
+    assert_eq!(count(&w, 0, ItemKind::StoneAxe) >= 1, true, "crafted from nothing, without the minigame");
+    assert!(w.craft_view(a).is_none());
+    // items can be given
+    w.step(&[cmd(a, CommandKind::Give { item: ItemKind::Wood, n: 40 })]);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 40);
+    // nothing wears a person down, and a bite cannot kill
+    w.agents[0].hunger = 1;
+    w.agents[0].health = 1;
+    for _ in 0..120 {
+        w.step(&[]);
+    }
+    assert!(w.agents[0].hunger > 5000 && w.agents[0].health > 1);
+    // the clock goes forward to the asked minute
+    w.step(&[cmd(a, CommandKind::SetClock { minute: 720 })]);
+    assert_eq!(crate::time::minute_of_day(w.tick), 720);
+    // sprinting flies: straight over anything, faster than walking
+    let (x0, y0) = (w.agents[0].x, w.agents[0].y);
+    w.step(&[cmd(a, CommandKind::SetSprint { on: true })]);
+    assert!(w.agents[0].fly);
+    w.step(&[cmd(a, CommandKind::MoveTo { x: x0 + 20_000, y: y0 })]);
+    for _ in 0..30 {
+        w.step(&[]);
+    }
+    assert!(w.agents[0].x - x0 >= 30 * w.agents[0].kind.speed_mm() * 2, "flew {} mm", w.agents[0].x - x0);
+    // and none of it works in an ordinary world
+    let (mut w2, a2) = with_agent(7);
+    w2.step(&[cmd(a2, CommandKind::Give { item: ItemKind::Wood, n: 40 })]);
+    assert_eq!(count(&w2, 0, ItemKind::Wood), 0);
+    w2.step(&[cmd(a2, CommandKind::SetSprint { on: true })]);
+    assert!(!w2.agents[0].fly);
+}
+
+/// Headless sim speed: how long a tick takes with nothing drawn. Run with
+/// `cargo test -p alaz-sim --release bench_sim_ticks -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn bench_sim_ticks() {
+    let run = |label: &str, mut w: World, ticks: u64| {
+        let t0 = std::time::Instant::now();
+        let mut worst = 0f64;
+        for _ in 0..ticks {
+            let t = std::time::Instant::now();
+            w.step(&[]);
+            worst = worst.max(t.elapsed().as_secs_f64());
+        }
+        let total = t0.elapsed().as_secs_f64();
+        println!("[sim] {label}: {ticks} ticks in {:.2} s = {:.4} ms/tick avg, worst {:.3} ms, {:.0}x real time", total, total * 1000.0 / ticks as f64, worst * 1000.0, ticks as f64 / 60.0 / total);
+    };
+    let (w, _) = with_agent(7);
+    run("default world, one person", w, 36_000);
+    let mut w = World::with_size(crate::map::tag_seed_v3(7), 32_768, 32_768);
+    let (sx, sy) = w.spawn_mm;
+    w.spawn_agent(sx, sy);
+    run("32 km world, one person", w, 18_000);
+    let (mut w, _) = with_agent(7);
+    for i in 0..15 {
+        let (sx, sy) = w.spawn_mm;
+        w.spawn_agent(sx + (i % 5) * 1500, sy + (i / 5) * 1500);
+    }
+    run("default world, sixteen people", w, 18_000);
 }
