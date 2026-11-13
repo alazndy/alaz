@@ -1,21 +1,10 @@
 //! Low-poly building blocks. Every face is flat: the albedo goes in the vertex colour and one light level per face
 //! in `uv.x`; the shader cuts that level into a few bands (cel shading).
 
-use super::{vl, Vertex};
+use super::Mesh;
 
 /// One texel of the drawn picture, in metres (it has 16 * 4/3 texels to the metre).
 const TEXEL: f32 = 1.0 / 21.3;
-
-thread_local! {
-    /// While a chunk's fixed scenery is built: nothing in it ever leaves the ground, so an end standing on the ground
-    /// can be left open. (Bodies jump, swim and lean; theirs stay closed.)
-    static ROOTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Mark what is built from now on as fixed scenery (see `ROOTED`).
-pub fn rooted(on: bool) {
-    ROOTED.with(|r| r.set(on));
-}
 
 const LIGHT: [f32; 3] = [-0.45, 0.78, -0.42];
 
@@ -34,14 +23,14 @@ fn hash(seed: u32, a: u32, b: u32) -> f32 {
     (h % 2000) as f32 / 1000.0 - 1.0
 }
 
-fn tri(out: &mut Vec<Vertex>, p: [[f32; 3]; 3], light: f32, col: [f32; 3], glow: f32) {
+fn tri(out: &mut Mesh, p: [[f32; 3]; 3], light: f32, col: [f32; 3], glow: f32) {
     for q in p {
-        out.push(vl(q, col, glow, light));
+        out.push(out.vl(q, col, glow, light));
     }
 }
 
 /// A tapered, many-sided rod from `a` (radius `r0`) to `b` (radius `r1`) with flat ends.
-pub fn limb(out: &mut Vec<Vertex>, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, col: [f32; 3], segs: usize) {
+pub fn limb(out: &mut Mesh, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, col: [f32; 3], segs: usize) {
     let ax = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
     let len = (ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]).sqrt();
     if len < 1e-5 {
@@ -56,7 +45,7 @@ pub fn limb(out: &mut Vec<Vertex>, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, c
     let w = cross(ax, u);
     // an end is left open where it can never be seen: standing on the ground in fixed scenery (the ground covers it), or thinner than
     // a texel of the picture (21 to the metre), where its cap would be triangles smaller than a pixel
-    let rooted = ROOTED.with(|r| r.get());
+    let rooted = out.rooted;
     let open = |p: [f32; 3], r: f32, down: bool| r < TEXEL || (rooted && down && p[1] < 0.03);
     let (cap_a, cap_b) = (!open(a, r0, ax[1] > 0.5), !open(b, r1, ax[1] < -0.5));
     let ring = |k: usize, base: [f32; 3], r: f32| {
@@ -83,7 +72,7 @@ pub fn limb(out: &mut Vec<Vertex>, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, c
 
 /// A rough ellipsoid centred on `c` with radii `r`. `wob` pushes the surface in and out per vertex.
 #[allow(clippy::too_many_arguments)]
-pub fn sphere(out: &mut Vec<Vertex>, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu: usize, nv: usize, wob: f32, seed: u32) {
+pub fn sphere(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu: usize, nv: usize, wob: f32, seed: u32) {
     // a ball only a texel or two across (a berry, a petal, a seed head) shows no roundness at all: eight faces do
     let (nu, nv) = if r[0].max(r[1]).max(r[2]) < 2.5 * TEXEL { (nu.min(4), nv.min(2)) } else { (nu, nv) };
     let pt = |i: usize, j: usize| -> ([f32; 3], [f32; 3]) {
@@ -116,7 +105,7 @@ pub fn sphere(out: &mut Vec<Vertex>, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu
 
 /// An ellipsoid with its own axes (half-lengths included): `axes[1]` runs pole to pole. The axes must be
 /// perpendicular; this lets a body part turn with the creature instead of staying lined up with the world.
-pub fn ellipsoid(out: &mut Vec<Vertex>, c: [f32; 3], axes: [[f32; 3]; 3], col: [f32; 3], nu: usize, nv: usize) {
+pub fn ellipsoid(out: &mut Mesh, c: [f32; 3], axes: [[f32; 3]; 3], col: [f32; 3], nu: usize, nv: usize) {
     let l2 = axes.map(|a| (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).max(1e-9));
     let pt = |i: usize, j: usize| -> ([f32; 3], [f32; 3]) {
         let (th, ph) = (i as f32 * std::f32::consts::TAU / nu as f32, j as f32 * std::f32::consts::PI / nv as f32);
@@ -145,6 +134,6 @@ pub fn ellipsoid(out: &mut Vec<Vertex>, c: [f32; 3], axes: [[f32; 3]; 3], col: [
     }
 }
 
-pub fn rock(out: &mut Vec<Vertex>, c: [f32; 3], r: [f32; 3], col: [f32; 3], seed: u32) {
+pub fn rock(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], seed: u32) {
     sphere(out, c, r, col, 7, 4, 0.3, seed);
 }

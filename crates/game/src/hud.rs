@@ -644,10 +644,11 @@ pub fn era_name(w: &World) -> &'static str {
 }
 
 fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_ctx: &UiCtx) {
-    use crate::ui_art::{badge, chip, pips, stat_bar, Glyph};
+    use crate::pxpanel as pp;
     let level = w.perception_level();
+    let th = pp::Theme::era(level);
     egui::Area::new(egui::Id::NULL.with("status")).anchor(Align2::LEFT_TOP, [12.0, 12.0]).show(ctx, |ui| {
-        panel_frame().inner_margin(8).show(ui, |ui| {
+        pp::frame(ui, &th, None, |ui| {
             ui.set_width(250.0);
             if !ui_ctx.net_status.is_empty() {
                 ui.colored_label(Color32::from_rgb(120, 190, 240), ui_ctx.net_status);
@@ -656,14 +657,13 @@ fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_
             let sky = w.weather();
             let daytime = (360..1200).contains(&m);
             ui.horizontal(|ui| {
-                let (g, col) = match sky {
-                    alaz_sim::time::Weather::Rain => (Glyph::Rain, Color32::from_rgb(170, 190, 215)),
-                    alaz_sim::time::Weather::Snow => (Glyph::Snow, Color32::from_rgb(220, 232, 245)),
-                    _ if daytime => (Glyph::Sun, Color32::from_rgb(250, 200, 70)),
-                    _ => (Glyph::Moon, Color32::from_rgb(200, 210, 235)),
+                let (rows, col) = match sky {
+                    alaz_sim::time::Weather::Rain => (pp::RAIN, Color32::from_rgb(170, 190, 215)),
+                    alaz_sim::time::Weather::Snow => (pp::SNOW, Color32::from_rgb(220, 232, 245)),
+                    _ if daytime => (pp::SUN, Color32::from_rgb(250, 200, 70)),
+                    _ => (pp::MOON, Color32::from_rgb(200, 210, 235)),
                 };
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                badge(ui.painter(), rect.center(), 14.0, g, col);
+                pp::icon(ui, rows, col, 14.0);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let mut head = format!("{} {}", crate::lang::day_word(w), w.day() + 1);
@@ -693,10 +693,10 @@ fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_
             ui.add_space(3.0);
             let stage = level.min(5);
             ui.horizontal(|ui| {
-                chip(ui, era_name(w), Color32::from_rgb(78, 60, 22), Color32::from_rgb(248, 218, 120));
-                pips(ui, stage as usize + 1, 6, Color32::from_rgb(160, 214, 130)).on_hover_text(format!("Evrim: {} — {}", STAGES[stage as usize], stage_gift(stage)));
+                pp::chip(ui, &th, era_name(w), Color32::from_rgb(78, 60, 22), Color32::from_rgb(248, 218, 120));
+                pp::pips(ui, &th, stage as usize + 1, 6, Color32::from_rgb(160, 214, 130)).on_hover_text(format!("Evrim: {} — {}", STAGES[stage as usize], stage_gift(stage)));
             });
-            stat_bar(ui, Glyph::Eye, crate::lang::perception_word(level), w.perception_permille() as f32 / 1000.0, Color32::from_rgb(110, 146, 214), 250.0)
+            pp::bar(ui, &th, pp::EYE, crate::lang::perception_word(level), w.perception_permille() as f32 / 1000.0, Color32::from_rgb(110, 146, 214), 250.0, false)
                 .on_hover_text(format!("Evrim: {}", STAGES[stage as usize]));
         });
     });

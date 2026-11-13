@@ -8,6 +8,56 @@ struct P {
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> p: P;
 
+fn hash2(a: f32, b: f32) -> f32 {
+    return fract(sin(a * 12.9898 + b * 78.233) * 43758.5453);
+}
+
+// Rain, drawn over the picture on its own texel grid.
+// The sky is overcast: colours drain toward a cool grey and the far (upper) part of the view sinks into a veil of
+// rain. The drops fall in three layers: far ones short, faint and slow, near ones long, bright and fast, so the
+// rain has depth. Each is a slanted pixel line (the wind sets the slant), and showers come and go.
+fn rain(g0: vec3<f32>, q: vec2<i32>, wa: f32, up_down: f32) -> vec3<f32> {
+    var g = g0;
+    let t = p.c.z;
+    let night = p.b.z;
+    // showers: the rain swells and eases over tens of seconds
+    let shower = wa * (0.6 + 0.4 * (0.5 + 0.5 * sin(t * 0.071) * sin(t * 0.029 + 1.3)));
+    // overcast: less colour, cooler, darker
+    let l = dot(g, vec3<f32>(0.30, 0.59, 0.11));
+    g = mix(g, vec3<f32>(l) * vec3<f32>(0.93, 0.98, 1.05), 0.38 * wa);
+    g = g * (1.0 - 0.12 * wa);
+    // the veil: further away (up the screen) the rain hides more of the land
+    let far = 1.0 - up_down;
+    let veil = vec3<f32>(0.58, 0.63, 0.69) * (1.0 - 0.75 * night);
+    g = mix(g, veil, 0.22 * shower * far * far);
+    // drops: (length in texels, speed in texels a second, how many, brightness, how much the wind slants it)
+    let lens = array<f32, 3>(2.0, 4.0, 7.0);
+    let speeds = array<f32, 3>(55.0, 95.0, 150.0);
+    let counts = array<f32, 3>(0.10, 0.055, 0.03);
+    let bright = array<f32, 3>(0.22, 0.38, 0.6);
+    let slants = array<f32, 3>(0.55, 0.8, 1.0);
+    let drop_col = vec3<f32>(0.80, 0.87, 0.96) * (1.0 - 0.6 * night);
+    for (var k = 0; k < 3; k = k + 1) {
+        let sl = p.c.w * 0.7 * slants[k] + 0.12;
+        let fk = f32(k);
+        // shear the grid so a column runs along the slant: a drop is a clean pixel diagonal
+        let x = floor(f32(q.x) - f32(q.y) * sl);
+        let hx = hash2(x, fk * 17.0 + 3.0);
+        let speed = speeds[k] * (0.85 + 0.3 * hx);
+        // (screen y grows downward: subtracting time moves the pattern down, so the drops fall)
+        let y = f32(q.y) - t * speed + hx * 977.0;
+        let span = lens[k] * 6.0;
+        let cell = floor(y / span);
+        let inside = y - cell * span;
+        if (inside < lens[k] && hash2(x * 1.31 + fk * 7.7, cell) < counts[k] * shower) {
+            // the head (lower end) of the streak is the brightest
+            let head = select(0.7, 1.0, inside >= lens[k] - 1.0);
+            g = mix(g, drop_col, bright[k] * head);
+        }
+    }
+    return g;
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     let x = f32((i << 1u) & 2u);
     let y = f32(i & 2u);
@@ -51,26 +101,18 @@ struct P {
         // the wind slants it: each row is shifted sideways by how far down it is, and the shift creeps on with time
         let q0 = q;
         let q = vec2<i32>(q0.x + i32(floor((f32(q0.y) + p.c.z * 40.0) * p.c.w * 0.7)), q0.y);
-        let hsh = fract(sin(vec2<f32>(f32(q.x), f32(q.x / 3)) * vec2<f32>(12.9898, 78.233)) * 43758.5453);
         if (p.c.x < 1.5) {
-            // each column has its own speed; along it, short streaks fall in separate cells, so the rain reads
-            // as scattered drops instead of long dashed lines down the whole screen
-            let sp = 38.0 + 30.0 * hsh.x;
-            let y = (f32(q.y) + p.c.z * sp + hsh.y * 200.0) / 9.0;
-            let cell = floor(y);
-            let pick = fract(sin(f32(q.x) * 91.17 + cell * 47.31) * 43758.5453);
-            if (fract(y) < 0.45 && pick < 0.035 * wa) {
-                g = mix(g, vec3<f32>(0.72, 0.82, 0.95), 0.5);
-            }
-            g = g * (1.0 - 0.12 * wa);
+            g = rain(g, q0, wa, frag.y / p.b.y);
         } else {
             let cell = vec2<i32>(q.x / 5, q.y / 5);
             let fall = i32(floor(p.c.z * (6.0 + 5.0 * fract(f32(cell.x) * 0.37))));
-            let c2 = vec2<i32>(cell.x, (q.y + fall) / 5);
+            // (screen y grows downward: the flakes' grid moves down with time; the offset keeps it positive)
+            let yy = q.y - fall + 100000;
+            let c2 = vec2<i32>(cell.x, yy / 5);
             let r = fract(sin(vec2<f32>(c2) * vec2<f32>(12.9898, 78.233)) * 43758.5453);
             let ix = i32(fract(r.y * 17.0) * 5.0);
             let iy = i32(r.y * 5.0);
-            if (r.x < 0.12 + 0.3 * wa && (q.x % 5) == ix && ((q.y + fall) % 5) == iy) {
+            if (r.x < 0.12 + 0.3 * wa && (q.x % 5) == ix && (yy % 5) == iy) {
                 g = vec3<f32>(0.95, 0.97, 1.0);
             }
             g = mix(g, vec3<f32>(0.88, 0.92, 1.0), 0.06 * wa);

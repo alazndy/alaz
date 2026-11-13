@@ -13,6 +13,7 @@ mod icons;
 mod keys;
 mod lang;
 mod menu;
+mod pxpanel;
 mod pxui;
 mod fx;
 mod saveio;
@@ -357,9 +358,13 @@ fn demo_setup(w: &mut World) -> Selection {
         let days = w.settings.season_days as u64;
         // winter is the fourth season
         let start = if v == "snow" { TICKS_PER_DAY * days * 3 } else { TICKS_PER_DAY };
+        // with ALAZ_DEMO_HOUR too, the first such weather at that hour
+        let hour = std::env::var("ALAZ_DEMO_HOUR").ok().and_then(|v| v.parse::<u32>().ok());
+        let at_hour = |t: u64| hour.is_none_or(|h| alaz_sim::time::minute_of_day(t) / 60 == h % 24);
         let mut t = start;
-        while t < start + TICKS_PER_DAY * 30 && weather(w.seed, t, days) != want {
-            t += TICKS_PER_DAY / 6;
+        let step = if hour.is_some() { TICKS_PER_DAY / 96 } else { TICKS_PER_DAY / 6 };
+        while t < start + TICKS_PER_DAY * 30 && (weather(w.seed, t, days) != want || !at_hour(t)) {
+            t += step;
         }
         w.tick = t + 120;
     }

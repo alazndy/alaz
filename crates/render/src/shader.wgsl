@@ -13,16 +13,27 @@ struct Globals {
     cam_r: vec4<f32>,   // camera right
     cam_u: vec4<f32>,   // camera up (on screen)
     fires: array<vec4<f32>, 8>, // burning fires: xyz position, w reach in metres (0 = none)
-    occ: array<vec4<f32>, 16>,  // [0].x: how many of `fires` burn; the rest unused
+    occ: vec4<f32>,     // x: how many of `fires` burn
+    sun_vp_static: mat4x4<f32>, // the static shadow map's own box (trees and rocks; the shadow map starts as a copy of a window of it)
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 // ground height in metres at tile corners, a 256x256 window around the camera
 @group(0) @binding(2) var hmap: texture_2d<f32>;
-// depth seen from the sun (only bound in the main pass)
+// depth seen from the sun: a copy of the static map's window, with what moves drawn over it (only bound in the main pass)
 @group(0) @binding(3) var shadow_map: texture_depth_2d;
+// the static shadow map (only bound in the copy that starts the dynamic shadow map)
+@group(0) @binding(7) var shadow_static: texture_depth_2d;
 // per tile of the height window: (atlas x, atlas y, ground kind, shade) (main pass only)
 @group(0) @binding(4) var tilemap: texture_2d<f32>;
+// the ground's time-independent colour, baked per ground texel into a ring of chunk-sized squares (main pass only):
+// rgb: colour / 2, a: state / 3 (see GStatic); and the height gradient (gx, gz) there
+@group(0) @binding(5) var bake_col: texture_2d<f32>;
+@group(0) @binding(6) var bake_nrm: texture_2d<f32>;
+// the bake pass only: per drawn block, (world texel - ring texel) of its first texel
+@group(0) @binding(8) var<uniform> bake_params: array<vec4<f32>, 32>;
+// side of the bake ring in ground texels (4 chunks of 32 tiles of 21 texels; bake.rs keeps the same number)
+const RING_TEXELS: i32 = 2688;
 
 fn corner(i: vec2<i32>) -> vec4<f32> {
     return textureLoad(hmap, clamp(i, vec2<i32>(0), vec2<i32>(255)), 0);
@@ -81,9 +92,13 @@ struct VOut {
     @location(4) @interpolate(flat, first) kind: f32,
     @location(5) p3: vec3<f32>,
     @location(6) @interpolate(flat, first) mat: f32,
-    @location(7) @interpolate(flat, first) water: f32,
-    @location(8) world: vec3<f32>,
-    @location(9) @interpolate(flat, first) anchor: vec2<f32>,
+    @location(7) world: vec3<f32>,
+};
+// what the ground needs from its vertices: where it is (the colour comes from the tile window and the bake)
+struct GIn {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) wpos: vec2<f32>,
+    @location(1) world: vec3<f32>,
 };
 
 fn hash21(p: vec2<f32>) -> f32 {
@@ -215,6 +230,31 @@ struct SOut {
     return o;
 }
 
+// the same for the static map: its own box; the plants are caught as they sway at the moment of the draw and then hold still
+@vertex fn vs_shadow_static(v0: VIn) -> SOut {
+    let v = unpack(v0);
+    var o: SOut;
+    let casts = v.kind == 4.0 && v.glow < 0.5;
+    o.clip = select(vec4<f32>(0.0, 0.0, -1.0, 1.0), globals.sun_vp_static * vec4<f32>(place(v0), 1.0), casts);
+    o.p3 = vec3<f32>(v.pos.x - v.off.x, v.pos.y, v.pos.z - v.off.y);
+    o.mat = v.uv.y;
+    return o;
+}
+
+// the dynamic shadow map starts as a window of the static one: its texels are the same size, the window starts at
+// globals.occ.yz texels in
+struct DepthOut {
+    @builtin(frag_depth) d: f32,
+};
+@vertex fn vs_copy(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs_copy(@builtin(position) p: vec4<f32>) -> DepthOut {
+    let q = vec2<i32>(p.xy) + vec2<i32>(globals.occ.yz);
+    return DepthOut(textureLoad(shadow_static, q, 0));
+}
+
 @fragment fn fs_shadow(o: SOut) {
     // light falls through the same gaps in the crowns that the eye sees through
     if (o.mat > 1.5 && o.mat < 2.5 && o.p3.y > 1.15 && leaf_gap(o.p3)) { discard; }
@@ -250,8 +290,6 @@ fn vs_body(v0: VIn) -> VOut {
     let wp = place(v0);
     o.clip = globals.view_proj * vec4<f32>(wp, 1.0);
     o.world = wp;
-    o.anchor = select(vec2<f32>(-1.0e6), v.off, v.kind == 4.0 && (v.off.x != 0.0 || v.off.y != 0.0));
-    o.water = select(0.0, 1.0, v.kind == 1.0 && v.off.x > 0.5);
     o.color = v.color;
     o.glow = v.glow;
     o.wpos = v.pos.xz;
@@ -289,10 +327,12 @@ fn ground_n(w: vec2<f32>) -> vec3<f32> {
     return normalize(vec3<f32>(-gx, 1.0, -gz));
 }
 
-// light from the sky and the sun on a surface facing `n`: a cool sky above and warm bounce from the ground below,
-// plus the sun (warm and low in the morning and evening, white at noon, blue moonlight at night), which the
-// shadows and clouds hold back. About 1.0 on flat ground in full sun.
-fn env_light(n: vec3<f32>, sh: f32, cs: f32) -> vec3<f32> {
+// light from the sky and the sun on a surface facing `n` at `wp`: a cool sky above and warm bounce from the ground
+// below, plus the sun (warm and low in the morning and evening, white at noon, blue moonlight at night), which the
+// shadows and clouds hold back. About 1.0 on flat ground in full sun. `shade_k` scales the shadow (the player keeps
+// most of its colour in the shade). The shadow map and the clouds are only looked up where the sun could add light:
+// a face turned from the sun, or one already in full shadow, gets the same result without them.
+fn env_light(n: vec3<f32>, wp: vec3<f32>, shade_k: f32) -> vec3<f32> {
     let s = clamp(globals.sun.w / 0.8, 0.0, 1.0);
     let sd = normalize(globals.sun.xyz);
     let night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
@@ -300,9 +340,16 @@ fn env_light(n: vec3<f32>, sh: f32, cs: f32) -> vec3<f32> {
     let sun_col = mix(low, vec3<f32>(0.62, 0.72, 1.0), night);
     let sky = mix(vec3<f32>(0.54, 0.47, 0.40), vec3<f32>(0.66, 0.74, 0.90), n.y * 0.5 + 0.5);
     let amb = sky * (0.62 + 0.4 * (1.0 - s));
-    // a low sun is weaker on flat ground, but not as much as it really would be: mornings stay bright and golden
-    let lift = 0.91 / max(sd.y, 0.6);
-    let direct = sun_col * 0.66 * s * lift * max(dot(n, sd), 0.0) * (1.0 - sh) * (1.0 - 0.5 * cs);
+    var direct = vec3<f32>(0.0);
+    let ndl = dot(n, sd);
+    if (ndl > 0.0) {
+        let sh = sun_shadow(wp) * shade_k;
+        var cs = 0.0;
+        if (sh < 1.0) { cs = cloud_shade(wp.xz); }
+        // a low sun is weaker on flat ground, but not as much as it really would be: mornings stay bright and golden
+        let lift = 0.91 / max(sd.y, 0.6);
+        direct = sun_col * 0.66 * s * lift * ndl * (1.0 - sh) * (1.0 - 0.5 * cs);
+    }
     return amb + direct;
 }
 
@@ -312,7 +359,7 @@ fn fire_light(n: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
     // by day the sun drowns it out
     let night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
     let k = 0.25 + 0.75 * night;
-    let count = i32(globals.occ[0].x);
+    let count = i32(globals.occ.x);
     for (var i = 0; i < count; i = i + 1) {
         let fl = globals.fires[i];
         if (fl.w < 0.5) { continue; }
@@ -327,6 +374,12 @@ fn fire_light(n: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
     return f;
 }
 
+// the fires' light in whole steps (quantize is defined below); none at all, the usual case, costs one test
+fn fires_at(n: vec3<f32>, wp: vec3<f32>) -> vec3<f32> {
+    if (globals.occ.x < 0.5) { return vec3<f32>(0.0); }
+    return quantize(fire_light(n, wp), 0.12);
+}
+
 // cut a light level into whole steps so faces read as flat colour bands, as painted pixel art would
 fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
     let lum = max(dot(l, vec3<f32>(0.30, 0.59, 0.11)), 0.001);
@@ -334,8 +387,358 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
     return l * (q / lum);
 }
 
-@fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
+// perception, distance haze and the final gamma: the same for everything drawn in the scene
+fn finish(lit0: vec3<f32>, wpos: vec2<f32>, glow: f32) -> vec3<f32> {
     let p = globals.light.w;
+    // low perception: colours run together
+    let lum = dot(lit0, vec3<f32>(0.30, 0.59, 0.11));
+    let lit = mix(vec3<f32>(lum), lit0, 0.28 + 0.72 * p);
+    // ... and the world fades into haze not far from where you stand
+    let d = distance(wpos, globals.cam.xy);
+    // (rain closes the distance in: the haze starts nearer and is greyer)
+    let r0 = mix(9.0, 95.0, p * p) * (1.0 - 0.45 * globals.env.z);
+    let f = smoothstep(r0, r0 + mix(7.0, 35.0, p), d) * (1.0 - glow) * (1.0 - 0.5 * p * (1.0 - 0.6 * globals.env.z));
+    let haze = mix(vec3<f32>(0.50, 0.54, 0.56), vec3<f32>(0.50, 0.55, 0.60), globals.env.z) * globals.light.rgb;
+    return pow(max(mix(lit, haze, f), vec3<f32>(0.0)), vec3<f32>(2.2));
+}
+
+// ---- the ground ------------------------------------------------------------------------------------------------
+// Ground is drawn on a texel grid of 21 per metre. Everything about a land texel that does not change with time or
+// weather (its painted picture, ragged tile borders, wet shore sand, biomes, deserts, swamps, mountain and snow cap,
+// and which way it faces) is worked out by `ground_static`, either live (fs_ground_live) or ahead of time into the bake
+// (fs_bake -> fs_ground). Wind, rain, puddles, snow fall, sparkle, the sea, light and shadow stay per frame.
+
+struct GStatic {
+    col: vec3<f32>,
+    // 0 plain land, 1 land where puddles can form, 2 water (drawn live), 3 swamp pool (its sparkle is live)
+    state: f32,
+    // height gradient (d height / dx, d height / dz) of the land there
+    g: vec2<f32>,
+};
+
+// integer division of ground texels into tiles that rounds down
+fn tile_of(t: vec2<i32>) -> vec2<i32> {
+    let d = t / vec2<i32>(21);
+    return select(d, d - vec2<i32>(1), (t - d * 21) < vec2<i32>(0));
+}
+
+// the tile window's entry for a tile: (atlas x, atlas y, ground kind, shade)
+fn tile_at(t: vec2<i32>) -> vec4<f32> {
+    return textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0);
+}
+
+// the painted picture of a land texel, with the ragged borders between kinds of ground (and the wet sand that is the
+// land edge of a water tile)
+fn land_base(tx: vec2<i32>, tile: vec2<i32>, tl: vec2<i32>, mine: vec4<f32>) -> vec3<f32> {
+    var col = textureLoad(atlas, vec2<i32>(floor(mine.xy)) + tl, 0).rgb * mine.w;
+    if (mine.z > 0.5) {
+        // ground boundaries wander: each texel looks a little way off along a slow noise and, if that falls on a
+        // tile of another kind of land, wears that tile's ground; edges become ragged lines, not tile staircases
+        let q = vec2<f32>(tx) / 21.0;
+        let jit = vec2<f32>(vnoise(q * 1.7 + vec2<f32>(17.3, 4.1)), vnoise(q * 1.7 + vec2<f32>(3.7, 91.2))) - vec2<f32>(0.5);
+        let fine = vec2<f32>(vnoise(q * 6.0 + vec2<f32>(51.0, 7.0)), vnoise(q * 6.0 + vec2<f32>(9.0, 33.0))) - vec2<f32>(0.5);
+        let wl = q + jit * 0.9 + fine * 0.25;
+        let own = vec2<f32>(tile);
+        let other = floor(wl);
+        if (other.x != own.x || other.y != own.y) {
+            let them = tile_at(vec2<i32>(other));
+            // land over land only (the water's edge has its own smooth line)
+            if (them.z > 0.5 && them.z != mine.z) {
+                col = textureLoad(atlas, vec2<i32>(floor(them.xy)) + tl, 0).rgb * vec3<f32>(them.w);
+            }
+        }
+    } else {
+        // the land edge of a water tile: its own picture is water, so it is drawn as wet sand
+        col = vec3<f32>(0.80, 0.70, 0.48) * (0.93 + 0.07 * hash21(vec2<f32>(tx)));
+    }
+    return col;
+}
+
+fn ground_static(tx: vec2<i32>) -> GStatic {
+    var r: GStatic;
+    r.col = vec3<f32>(0.0);
+    r.state = 2.0;
+    r.g = vec2<f32>(0.0);
+    let tile = tile_of(tx);
+    let tl = tx - tile * 21;
+    let mine = tile_at(tile);
+    let q = vec2<f32>(tx) / 21.0;
+    // near the shore, water or land is decided by the smooth shore field, not by whole tiles: a coast that runs
+    // across the grid is a curve, not a staircase of tile corners
+    let sh0 = shore_at(q);
+    if (select((mine.z < 0.5), (sh0 > 0.0), (abs(sh0) < 1.2))) { return r; }
+    var col = land_base(tx, tile, tl, mine);
+    // the ground right by the water is wet and dark, in a band that the waves keep washing
+    if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }
+    // the middle of the texel stands for the smooth fields below
+    let w = (vec2<f32>(tx) + 0.5) / 21.0;
+    // the shape of the land: which way it faces
+    let e = 0.5;
+    let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
+    let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
+    let alt = ground_h(w);
+    let steep = clamp(length(vec2<f32>(gx, gz)) * 2.5, 0.0, 1.0);
+    let lum0 = dot(col, vec3<f32>(0.30, 0.59, 0.11));
+    let green = clamp((col.g - max(col.r, col.b) * 0.95) * 6.0, 0.0, 1.0);
+    // biomes: warmth and wetness pick the country: tundra, steppe, jungle, autumn wood, rich meadow
+    let cl = climate_at(w);
+    let cold = smoothstep(0.40, 0.18, cl.x);
+    let hot = smoothstep(0.58, 0.80, cl.x);
+    let wet = smoothstep(0.48, 0.72, cl.y);
+    let dry = smoothstep(0.52, 0.28, cl.y);
+    let steppe = clamp(hot * dry * 1.6 + dry * 0.35, 0.0, 1.0) * green * (1.0 - cold);
+    let jungle = hot * wet * green;
+    let autumn = smoothstep(0.30, 0.45, cl.x) * smoothstep(0.62, 0.50, cl.x) * smoothstep(0.35, 0.55, cl.y) * green;
+    let meadow = wet * (1.0 - hot) * (1.0 - cold) * green;
+    col = mix(col, vec3<f32>(lum0 * 1.75, lum0 * 1.5, lum0 * 0.62), steppe * 0.75);
+    col = mix(col, vec3<f32>(lum0 * 0.62, lum0 * 1.55, lum0 * 0.55), jungle * 0.6);
+    col = mix(col, vec3<f32>(lum0 * 1.8, lum0 * 1.05, lum0 * 0.45), autumn * 0.7);
+    col = mix(col, vec3<f32>(lum0 * 0.82, lum0 * 1.72, lum0 * 0.62), meadow * 0.35);
+    // desert: hot and dry enough that the grass gives way to bare sand and cracked earth
+    let desert = smoothstep(0.62, 0.70, cl.x) * smoothstep(0.38, 0.30, cl.y);
+    if (desert > 0.0) {
+        let dune = vnoise(q * vec2<f32>(0.9, 2.6) + vec2<f32>(3.1, 0.7));
+        col = mix(col, vec3<f32>(0.80, 0.66, 0.42) * (0.92 + 0.16 * dune), desert * (0.35 + 0.6 * green));
+        if (desert > 0.5 && vnoise(q * 3.1) > 0.78 && vnoise(q * 7.3 + vec2<f32>(1.3, 4.1)) > 0.55) { col = col * 0.82; }
+    }
+    // swamp: wet, mild and low; dark olive moss with pools of standing water
+    let swamp = smoothstep(0.66, 0.74, cl.y) * smoothstep(0.36, 0.44, cl.x) * smoothstep(0.64, 0.56, cl.x) * smoothstep(3.0, 1.5, alt) * green;
+    var pooled = false;
+    if (swamp > 0.0) {
+        col = mix(col, vec3<f32>(lum0 * 0.85, lum0 * 1.05, lum0 * 0.55), swamp * 0.75);
+        let pool = vnoise(q * 0.85 + vec2<f32>(11.0, 5.0)) * 0.7 + vnoise(q * 2.4) * 0.3;
+        if (swamp > 0.45 && pool > 0.66) {
+            col = select(vec3<f32>(0.26, 0.40, 0.42), vec3<f32>(0.48, 0.56, 0.42), pool < 0.675);
+            pooled = true;
+        }
+    }
+    col = mix(col, vec3<f32>(lum0 * 1.18, lum0 * 1.28, lum0 * 1.25), cold * green * 0.7);
+    col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cold * green * 0.25 * vnoise(w * 0.5));
+    // mountain: pale meadow, bare scree on steep ground, snow on the high flat parts
+    let alpine = smoothstep(3.5, 7.5, alt);
+    col = mix(col, vec3<f32>(lum0 * 1.15, lum0 * 1.18, lum0 * 0.95), alpine * green * 0.6);
+    col = mix(col, vec3<f32>(lum0 * 0.95), steep * smoothstep(5.0, 9.0, alt) * 0.5);
+    let cap = smoothstep(11.5, 14.5, alt - steep * 3.0 + 1.2 * vnoise(w * 0.4));
+    col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cap * 0.92);
+    r.col = col;
+    r.g = vec2<f32>(gx, gz);
+    // puddles form on flat ground away from the shore, below the snow line; never on the sand of a water tile
+    let puddles = steep < 0.25 && sh0 < -0.7 && cap < 0.5 && mine.z > 0.5;
+    r.state = select(select(0.0, 1.0, puddles), 3.0, pooled);
+    return r;
+}
+
+// can a puddle form here? (the same test ground_static makes, for the few texels the bake marks as pools)
+fn puddle_allowed(tx: vec2<i32>, g: vec2<f32>) -> bool {
+    let q = vec2<f32>(tx) / 21.0;
+    let w = (vec2<f32>(tx) + 0.5) / 21.0;
+    let steep = clamp(length(g) * 2.5, 0.0, 1.0);
+    let cap = smoothstep(11.5, 14.5, ground_h(w) - steep * 3.0 + 1.2 * vnoise(w * 0.4));
+    return steep < 0.25 && shore_at(q) < -0.7 && cap < 0.5;
+}
+
+struct GDyn {
+    col: vec3<f32>,
+    n: vec3<f32>,
+};
+
+// what a texel of the ground looks like this moment: `g` is its time-independent part
+fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
+    let clock = globals.env.x;
+    let wnd = globals.env.y;
+    let rain = globals.env.z;
+    let snow = globals.env.w;
+    var r: GDyn;
+    var col = g.col;
+    var n = vec3<f32>(0.0, 1.0, 0.0);
+    if (g.state > 1.5 && g.state < 2.5) {
+        // water, drawn on the ground's own texel grid: deep blue r in the open, turquoise in the shallows,
+        // wave bands drifting with the wind, foam lapping at the shore and the sun sparkling on the ripples
+        let q = vec2<f32>(tx) / 21.0;
+        let depth = shore_at(q);
+        let deep = smoothstep(0.0, 3.5, depth);
+        col = mix(vec3<f32>(0.22, 0.58, 0.62), vec3<f32>(0.13, 0.36, 0.56), smoothstep(0.0, 1.2, depth));
+        col = mix(col, vec3<f32>(0.08, 0.22, 0.42), smoothstep(1.2, 4.0, depth));
+        // drifting swell: two moving noise fields; where they cross, a lighter band, where they part, a darker one
+        // the surface ripples are carried downwind by how far the air has moved
+        let drift = globals.cloud.yz * 4.0;
+        let n1 = vnoise(q * vec2<f32>(0.9, 1.7) + drift);
+        let n2 = vnoise(q * vec2<f32>(1.6, 0.8) - drift * 1.3 + vec2<f32>(5.2, 1.3));
+        // the swell: lit by its own slope, the crests whitening where the wind is up
+        let sw6 = sea_swell(w, clock);
+        let sw = vec3<f32>(sw6[0], sw6[1], sw6[2]);
+        n = normalize(vec3<f32>(-sw.y, 1.0, -sw.z));
+        // how near this point is to the highest the waves here can reach (0..1)
+        let crest = sw.x / max(sw6[5], 0.01);
+        // surf: breakers rolling in toward the beach, each a foam band that runs up the sand and drains back
+        let surf_ph = fract(depth * 0.55 + clock * 0.12 + vnoise(q * 0.3) * 0.5);
+        if (depth < 2.2 && depth > 0.15 && surf_ph < 0.06 + 0.05 * wnd) {
+            col = mix(col, vec3<f32>(0.9, 0.96, 0.97), 0.75 * (1.0 - depth / 2.2));
+        }
+        // the side of each wave facing the sun lighter, the far side darker: shows its shape
+        col = col * (1.0 + 0.9 * clamp(globals.sun.w / 0.8, 0.2, 1.0) * dot(vec2<f32>(sw.y, sw.z), normalize(globals.sun.xz + vec2<f32>(0.001))));
+        // at night open water drinks the light: it faces straight up into the (blue, moonlit) sky, so without this
+        // it would read brighter than the land around it
+        let sea_night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
+        col = col * mix(1.0, 0.55, sea_night * sea_night);
+        // whitecaps only on the highest crests, and only once the wind is fresh
+        if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(vec2<f32>(tx) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
+            col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);
+        }
+        let band = abs(n1 - n2);
+        if (band < 0.05) { col = col * 1.16 + vec3<f32>(0.03, 0.05, 0.05); }
+        else if (band > 0.42) { col = col * 0.86; }
+        // the sea floor shows through the shallows
+        if (depth < 0.9 && vnoise(q * 3.0) > 0.62) { col = mix(col, vec3<f32>(0.46, 0.62, 0.52), 0.35 * (1.0 - depth / 0.9)); }
+        // foam: a line that runs up the shore and back, and a fainter one further r
+        let wave = sin(clock * 1.1 + vnoise(q * 0.6) * 6.0) * 0.5 + 0.5;
+        let line1 = 0.06 + 0.32 * wave;
+        if (abs(depth - line1) < 0.07 || depth < line1 - 0.07) {
+            if (depth < line1 + 0.07) { col = mix(col, vec3<f32>(0.86, 0.94, 0.95), select(0.85, 0.55, depth < line1 - 0.07)); }
+        }
+        let line2 = 0.55 + 0.35 * fract(clock * 0.16 + vnoise(q * 0.4) * 2.0);
+        if (abs(depth - line2) < 0.045 && hash21(vec2<f32>(tx)) > 0.35) { col = mix(col, vec3<f32>(0.75, 0.88, 0.92), 0.45 * (1.0 - deep)); }
+        // sun glitter: a ripple surface reflecting the sun toward the eye, cut to single bright texels
+        let sd = normalize(globals.sun.xyz);
+        let e = 0.12;
+        let nx = vnoise((q + vec2<f32>(e, 0.0)) * 2.7 + drift * 2.0) - vnoise((q - vec2<f32>(e, 0.0)) * 2.7 + drift * 2.0);
+        let nz = vnoise((q + vec2<f32>(0.0, e)) * 2.7 - drift * 1.7) - vnoise((q - vec2<f32>(0.0, e)) * 2.7 - drift * 1.7);
+        let rn = normalize(vec3<f32>(-nx * 2.2 - sw.y * 3.0, 1.0, -nz * 2.2 - sw.z * 3.0));
+        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
+        let spec = pow(max(dot(reflect(-sd, rn), to_eye), 0.0), 40.0) * clamp(globals.sun.w / 0.8, 0.0, 1.0);
+        if (spec > 0.35) { col = col + vec3<f32>(0.55, 0.52, 0.42) * select(0.5, 1.0, spec > 0.7); }
+        // raindrops: rings that widen and fade
+        if (rain > 0.05) {
+            let cell = floor(w * 1.5);
+            let hh = fract(sin(dot(cell, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+            let hy = fract(hh * 91.7);
+            let phase = fract(clock * 0.8 + hh * 7.0);
+            let c0 = (cell + vec2<f32>(0.2 + 0.6 * hh, 0.2 + 0.6 * hy)) / 1.5;
+            if (hh < rain * 0.7) {
+                let dd = abs(length(q - c0) - phase * 0.33);
+                if (dd < 0.035) { col = col + vec3<f32>(0.35, 0.40, 0.45) * (1.0 - phase); }
+            }
+        }
+    } else {
+        n = normalize(vec3<f32>(-g.g.x, 1.0, -g.g.y));
+        // the sparkle on a swamp pool
+        if (g.state > 2.5 && sin(w.x * 9.0 + clock * 1.3) * sin(w.y * 8.0 - clock) > 0.92) { col = col + vec3<f32>(0.18, 0.2, 0.16); }
+        // wind runs over the grass in light and dark waves
+        // ... running downwind
+        let wave = (vnoise(w * 0.12 + globals.cloud.yz * 5.45) - 0.5) * 3.0 + (vnoise(w * 0.37 + globals.cloud.yz * 16.8) - 0.5) * 1.5;
+        col = col * (1.0 + 0.035 * (0.3 + wnd) * wave);
+        // wet earth is darker
+        col = col * (1.0 - 0.22 * rain);
+        if (rain > 0.05) {
+            let tq = vec2<f32>(tx) / 21.0;
+            // puddles: still water in the flat hollows, growing as the rain goes on; they hold the grey sky,
+            // deeper toward the middle, with a muddy lip, and the drops ring them
+            let pn = vnoise(tq * 0.45 + vec2<f32>(31.7, 12.9)) * 0.65 + vnoise(tq * 1.4 + vec2<f32>(4.2, 77.1)) * 0.35;
+            let fill = 0.86 - 0.12 * rain;
+            var puddle = false;
+            if (pn > fill) { puddle = (g.state > 0.5 && g.state < 1.5) || (g.state > 2.5 && puddle_allowed(tx, g.g)); }
+            if (puddle) {
+                let deep_p = pn - fill;
+                // (a warm grey: the sky light it is lit by is already blue) with a little of the ground showing
+                var pc = mix(vec3<f32>(0.40, 0.40, 0.40), vec3<f32>(0.29, 0.29, 0.30), smoothstep(0.0, 0.06, deep_p));
+                pc = mix(pc, col * 0.6, 0.3);
+                if (deep_p < 0.01) { pc = col * 0.7; }
+                let cell = floor(w * 2.2);
+                let hh = hash21(cell + vec2<f32>(5.3, 1.7));
+                let phase = fract(clock * 1.4 + hh * 7.0);
+                let c0 = (cell + vec2<f32>(0.2 + 0.6 * hh, 0.2 + 0.6 * fract(hh * 91.7))) / 2.2;
+                if (abs(length(tq - c0) - phase * 0.3) < 0.04 && deep_p > 0.01) { pc = pc + vec3<f32>(0.26, 0.27, 0.28) * (1.0 - phase); }
+                col = pc;
+            } else {
+                // drops landing: a bright point, then a little crown of four texels around it, then gone
+                let sc = floor(w * 1.7);
+                let hs = hash21(sc + vec2<f32>(3.1, 9.7));
+                let ph = fract(clock * (1.1 + 0.6 * hs) + hs * 13.0);
+                // (the sand edge of a water tile gets no drops)
+                if (hs < rain * 0.55 && ph < 0.13 && tile_at(tile_of(tx)).z > 0.5) {
+                    let ctr = floor((sc + vec2<f32>(0.25 + 0.5 * fract(hs * 31.0), 0.25 + 0.5 * fract(hs * 57.0))) / 1.7 * 21.0);
+                    let a = abs(floor(w * 21.0) - ctr);
+                    let first = ph < 0.045 && a.x + a.y < 0.5;
+                    let crown = ph >= 0.045 && a.x + a.y > 0.5 && a.x + a.y < 1.5;
+                    if (first || crown) { col = mix(col, vec3<f32>(0.80, 0.86, 0.93), select(0.45, 0.65, first)); }
+                }
+            }
+        }
+        // snow settles in patches
+        if (snow > 0.02) {
+            let tx2 = floor(w * 21.0);
+            let nt = fract(sin(dot(tx2, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+            let lo = floor(w * 1.7);
+            let nl = fract(sin(dot(lo, vec2<f32>(39.3468, 11.135))) * 24634.6345);
+            if (nt < snow * (0.55 + 0.9 * nl) - 0.05) { col = mix(col, vec3<f32>(0.90, 0.94, 1.0), 0.88); }
+        }
+    }
+    r.col = col;
+    r.n = n;
+    return r;
+}
+
+// light, haze and gamma on a ground texel
+fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
+    // light: sky, sun (held back by shadows and clouds) and fires
+    let l = quantize(env_light(d.n, world, 1.0), 0.06);
+    let lit = d.col * (l * globals.light.rgb + fires_at(d.n, world));
+    return vec4<f32>(finish(lit, wpos, 0.0), 1.0);
+}
+
+@vertex fn vs_ground(v0: VIn) -> GIn {
+    var o: GIn;
+    let wp = place(v0);
+    o.clip = globals.view_proj * vec4<f32>(wp, 1.0);
+    o.world = wp;
+    o.wpos = v0.pos.xz;
+    return o;
+}
+
+// The ground of a chunk whose bake is complete: one lookup stands in for the whole static colour.
+@fragment fn fs_ground(v: GIn) -> @location(0) vec4<f32> {
+    let tx = vec2<i32>(floor(v.wpos * 21.0));
+    let rt = ((tx % vec2<i32>(RING_TEXELS)) + vec2<i32>(RING_TEXELS)) % vec2<i32>(RING_TEXELS);
+    let c = textureLoad(bake_col, rt, 0);
+    var g: GStatic;
+    g.col = c.rgb * 2.0;
+    g.state = round(c.a * 3.0);
+    g.g = textureLoad(bake_nrm, rt, 0).xy;
+    return ground_finish(ground_dyn(v.wpos, tx, g), v.wpos, v.world);
+}
+
+// The ground of a chunk the bake has not reached yet (or lies beyond the ring): the same, worked out on the spot.
+@fragment fn fs_ground_live(v: GIn) -> @location(0) vec4<f32> {
+    let tx = vec2<i32>(floor(v.wpos * 21.0));
+    return ground_finish(ground_dyn(v.wpos, tx, ground_static(tx)), v.wpos, v.world);
+}
+
+// ---- the ground bake: one block of texels at a time, drawn into the ring with the viewport on the block ------------
+struct BakeV {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) @interpolate(flat) job: u32,
+};
+@vertex fn vs_bake(@builtin(vertex_index) i: u32, @builtin(instance_index) job: u32) -> BakeV {
+    var o: BakeV;
+    o.clip = vec4<f32>(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
+    o.job = job;
+    return o;
+}
+struct BakeOut {
+    @location(0) col: vec4<f32>,
+    @location(1) g: vec2<f32>,
+};
+@fragment fn fs_bake(v: BakeV) -> BakeOut {
+    let tx = vec2<i32>(floor(v.clip.xy)) + vec2<i32>(bake_params[v.job].xy);
+    let s = ground_static(tx);
+    var o: BakeOut;
+    o.col = vec4<f32>(clamp(s.col * 0.5, vec3<f32>(0.0), vec3<f32>(1.0)), s.state / 3.0);
+    o.g = s.g;
+    return o;
+}
+
+// ---- models and decals --------------------------------------------------------------------------------------------
+@fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
     if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && (v.glow < 0.5 || v.glow > 1.5) && v.p3.y > 1.15 && leaf_gap(v.p3)) { discard; }
     // a crown standing between the eye and the player opens up around them: leaves near the player on screen, and
     // nearer the camera than the player, are thinned out in a pixel pattern (more toward the middle), so the
@@ -368,174 +771,7 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
     var n = vec3<f32>(0.0, 1.0, 0.0);
     var col = v.color;
     var alpha = 1.0;
-    if (v.kind == 1.0) {
-        let clock = globals.env.x;
-        let wnd = globals.env.y;
-        let rain = globals.env.z;
-        let snow = globals.env.w;
-        let w = v.wpos;
-        let tl = min(floor(fract(w) * 21.0), vec2<f32>(20.0));
-        // near the shore, water or land is decided by the smooth shore field, not by whole tiles: a coast that runs
-        // across the grid is a curve, not a staircase of tile corners
-        let sh_here = shore_at(floor(w * 21.0) / 21.0);
-        let wet_here = select(v.water > 0.5, sh_here > 0.0, abs(sh_here) < 1.2);
-        if (wet_here) {
-            // water, drawn on the ground's own texel grid: deep blue out in the open, turquoise in the shallows,
-            // wave bands drifting with the wind, foam lapping at the shore and the sun sparkling on the ripples
-            let q = floor(w * 21.0) / 21.0;
-            let depth = shore_at(q);
-            let deep = smoothstep(0.0, 3.5, depth);
-            col = mix(vec3<f32>(0.22, 0.58, 0.62), vec3<f32>(0.13, 0.36, 0.56), smoothstep(0.0, 1.2, depth));
-            col = mix(col, vec3<f32>(0.08, 0.22, 0.42), smoothstep(1.2, 4.0, depth));
-            // drifting swell: two moving noise fields; where they cross, a lighter band, where they part, a darker one
-            // the surface ripples are carried downwind by how far the air has moved
-            let drift = globals.cloud.yz * 4.0;
-            let n1 = vnoise(q * vec2<f32>(0.9, 1.7) + drift);
-            let n2 = vnoise(q * vec2<f32>(1.6, 0.8) - drift * 1.3 + vec2<f32>(5.2, 1.3));
-            // the swell: lit by its own slope, the crests whitening where the wind is up
-            let sw6 = sea_swell(w, clock);
-            let sw = vec3<f32>(sw6[0], sw6[1], sw6[2]);
-            n = normalize(vec3<f32>(-sw.y, 1.0, -sw.z));
-            // how near this point is to the highest the waves here can reach (0..1)
-            let crest = sw.x / max(sw6[5], 0.01);
-            // surf: breakers rolling in toward the beach, each a foam band that runs up the sand and drains back
-            let surf_ph = fract(depth * 0.55 + clock * 0.12 + vnoise(q * 0.3) * 0.5);
-            if (depth < 2.2 && depth > 0.15 && surf_ph < 0.06 + 0.05 * wnd) {
-                col = mix(col, vec3<f32>(0.9, 0.96, 0.97), 0.75 * (1.0 - depth / 2.2));
-            }
-            // the side of each wave facing the sun lighter, the far side darker: shows its shape
-            col = col * (1.0 + 0.9 * clamp(globals.sun.w / 0.8, 0.2, 1.0) * dot(vec2<f32>(sw.y, sw.z), normalize(globals.sun.xz + vec2<f32>(0.001))));
-            // at night open water drinks the light: it faces straight up into the (blue, moonlit) sky, so without this
-            // it would read brighter than the land around it
-            let sea_night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
-            col = col * mix(1.0, 0.55, sea_night * sea_night);
-            // whitecaps only on the highest crests, and only once the wind is fresh
-            if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(floor(w * 21.0) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
-                col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);
-            }
-            let band = abs(n1 - n2);
-            if (band < 0.05) { col = col * 1.16 + vec3<f32>(0.03, 0.05, 0.05); }
-            else if (band > 0.42) { col = col * 0.86; }
-            // the sea floor shows through the shallows
-            if (depth < 0.9 && vnoise(q * 3.0) > 0.62) { col = mix(col, vec3<f32>(0.46, 0.62, 0.52), 0.35 * (1.0 - depth / 0.9)); }
-            // foam: a line that runs up the shore and back, and a fainter one further out
-            let wave = sin(clock * 1.1 + vnoise(q * 0.6) * 6.0) * 0.5 + 0.5;
-            let line1 = 0.06 + 0.32 * wave;
-            if (abs(depth - line1) < 0.07 || depth < line1 - 0.07) {
-                if (depth < line1 + 0.07) { col = mix(col, vec3<f32>(0.86, 0.94, 0.95), select(0.85, 0.55, depth < line1 - 0.07)); }
-            }
-            let line2 = 0.55 + 0.35 * fract(clock * 0.16 + vnoise(q * 0.4) * 2.0);
-            if (abs(depth - line2) < 0.045 && hash21(floor(w * 21.0)) > 0.35) { col = mix(col, vec3<f32>(0.75, 0.88, 0.92), 0.45 * (1.0 - deep)); }
-            // sun glitter: a ripple surface reflecting the sun toward the eye, cut to single bright texels
-            let sd = normalize(globals.sun.xyz);
-            let e = 0.12;
-            let nx = vnoise((q + vec2<f32>(e, 0.0)) * 2.7 + drift * 2.0) - vnoise((q - vec2<f32>(e, 0.0)) * 2.7 + drift * 2.0);
-            let nz = vnoise((q + vec2<f32>(0.0, e)) * 2.7 - drift * 1.7) - vnoise((q - vec2<f32>(0.0, e)) * 2.7 - drift * 1.7);
-            let rn = normalize(vec3<f32>(-nx * 2.2 - sw.y * 3.0, 1.0, -nz * 2.2 - sw.z * 3.0));
-            let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
-            let spec = pow(max(dot(reflect(-sd, rn), to_eye), 0.0), 40.0) * clamp(globals.sun.w / 0.8, 0.0, 1.0);
-            if (spec > 0.35) { col = col + vec3<f32>(0.55, 0.52, 0.42) * select(0.5, 1.0, spec > 0.7); }
-            // raindrops: rings that widen and fade
-            if (rain > 0.05) {
-                let cell = floor(w * 1.5);
-                let hh = fract(sin(dot(cell, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-                let hy = fract(hh * 91.7);
-                let phase = fract(clock * 0.8 + hh * 7.0);
-                let c0 = (cell + vec2<f32>(0.2 + 0.6 * hh, 0.2 + 0.6 * hy)) / 1.5;
-                if (hh < rain * 0.7) {
-                    let dd = abs(length(q - c0) - phase * 0.33);
-                    if (dd < 0.035) { col = col + vec3<f32>(0.35, 0.40, 0.45) * (1.0 - phase); }
-                }
-            }
-        } else {
-            col = textureLoad(atlas, vec2<i32>(floor(v.uv + tl)), 0).rgb * v.color;
-            // ground boundaries wander: each texel looks a little way off along a slow noise and, if that falls on a
-            // tile of another kind of land, wears that tile's ground; edges become ragged lines, not tile staircases
-            if (v.water < 0.5) {
-                let q = floor(w * 21.0) / 21.0;
-                let jit = vec2<f32>(vnoise(q * 1.7 + vec2<f32>(17.3, 4.1)), vnoise(q * 1.7 + vec2<f32>(3.7, 91.2))) - vec2<f32>(0.5);
-                let fine = vec2<f32>(vnoise(q * 6.0 + vec2<f32>(51.0, 7.0)), vnoise(q * 6.0 + vec2<f32>(9.0, 33.0))) - vec2<f32>(0.5);
-                let wl = q + jit * 0.9 + fine * 0.25;
-                let own = floor(w);
-                let other = floor(wl);
-                if (other.x != own.x || other.y != own.y) {
-                    let lim = vec2<i32>(255);
-                    let mine = textureLoad(tilemap, clamp(vec2<i32>(own - globals.hwin.xy), vec2<i32>(0), lim), 0);
-                    let them = textureLoad(tilemap, clamp(vec2<i32>(other - globals.hwin.xy), vec2<i32>(0), lim), 0);
-                    // land over land only (the water's edge has its own smooth line)
-                    if (them.z > 0.5 && them.z != mine.z) {
-                        col = textureLoad(atlas, vec2<i32>(floor(them.xy + tl)), 0).rgb * vec3<f32>(them.w);
-                    }
-                }
-            }
-            // the land edge of a water tile: its own picture is water, so it is drawn as wet sand
-            if (v.water > 0.5) {
-                col = vec3<f32>(0.80, 0.70, 0.48) * (0.93 + 0.07 * hash21(floor(w * 21.0)));
-            }
-            // the ground right by the water is wet and dark, in a band that the waves keep washing
-            let sh0 = shore_at(floor(w * 21.0) / 21.0);
-            if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }
-            // the shape of the land: which way it faces
-            let e = 0.5;
-            let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
-            let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
-            n = normalize(vec3<f32>(-gx, 1.0, -gz));
-            let alt = ground_h(w);
-            let steep = clamp(length(vec2<f32>(gx, gz)) * 2.5, 0.0, 1.0);
-            let lum0 = dot(col, vec3<f32>(0.30, 0.59, 0.11));
-            let green = clamp((col.g - max(col.r, col.b) * 0.95) * 6.0, 0.0, 1.0);
-            // biomes: warmth and wetness pick the country: tundra, steppe, jungle, autumn wood, rich meadow
-            let cl = climate_at(w);
-            let cold = smoothstep(0.40, 0.18, cl.x);
-            let hot = smoothstep(0.58, 0.80, cl.x);
-            let wet = smoothstep(0.48, 0.72, cl.y);
-            let dry = smoothstep(0.52, 0.28, cl.y);
-            let steppe = clamp(hot * dry * 1.6 + dry * 0.35, 0.0, 1.0) * green * (1.0 - cold);
-            let jungle = hot * wet * green;
-            let autumn = smoothstep(0.30, 0.45, cl.x) * smoothstep(0.62, 0.50, cl.x) * smoothstep(0.35, 0.55, cl.y) * green;
-            let meadow = wet * (1.0 - hot) * (1.0 - cold) * green;
-            col = mix(col, vec3<f32>(lum0 * 1.75, lum0 * 1.5, lum0 * 0.62), steppe * 0.75);
-            col = mix(col, vec3<f32>(lum0 * 0.62, lum0 * 1.55, lum0 * 0.55), jungle * 0.6);
-            col = mix(col, vec3<f32>(lum0 * 1.8, lum0 * 1.05, lum0 * 0.45), autumn * 0.7);
-            col = mix(col, vec3<f32>(lum0 * 0.82, lum0 * 1.72, lum0 * 0.62), meadow * 0.35);
-            // desert: hot and dry enough that the grass gives way to bare sand and cracked earth
-            let tx0 = floor(w * 21.0) / 21.0;
-            let desert = smoothstep(0.62, 0.70, cl.x) * smoothstep(0.38, 0.30, cl.y);
-            let dune = vnoise(tx0 * vec2<f32>(0.9, 2.6) + vec2<f32>(3.1, 0.7));
-            col = mix(col, vec3<f32>(0.80, 0.66, 0.42) * (0.92 + 0.16 * dune), desert * (0.35 + 0.6 * green));
-            if (desert > 0.5 && vnoise(tx0 * 3.1) > 0.78 && vnoise(tx0 * 7.3 + vec2<f32>(1.3, 4.1)) > 0.55) { col = col * 0.82; }
-            // swamp: wet, mild and low; dark olive moss with pools of standing water
-            let swamp = smoothstep(0.66, 0.74, cl.y) * smoothstep(0.36, 0.44, cl.x) * smoothstep(0.64, 0.56, cl.x) * smoothstep(3.0, 1.5, ground_h(w)) * green;
-            col = mix(col, vec3<f32>(lum0 * 0.85, lum0 * 1.05, lum0 * 0.55), swamp * 0.75);
-            let pool = vnoise(tx0 * 0.85 + vec2<f32>(11.0, 5.0)) * 0.7 + vnoise(tx0 * 2.4) * 0.3;
-            if (swamp > 0.45 && pool > 0.66) {
-                col = select(vec3<f32>(0.26, 0.40, 0.42), vec3<f32>(0.48, 0.56, 0.42), pool < 0.675);
-                if (sin(w.x * 9.0 + clock * 1.3) * sin(w.y * 8.0 - clock) > 0.92) { col = col + vec3<f32>(0.18, 0.2, 0.16); }
-            }
-            col = mix(col, vec3<f32>(lum0 * 1.18, lum0 * 1.28, lum0 * 1.25), cold * green * 0.7);
-            col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cold * green * 0.25 * vnoise(w * 0.5));
-            // mountain: pale meadow, bare scree on steep ground, snow on the high flat parts
-            let alpine = smoothstep(3.5, 7.5, alt);
-            col = mix(col, vec3<f32>(lum0 * 1.15, lum0 * 1.18, lum0 * 0.95), alpine * green * 0.6);
-            col = mix(col, vec3<f32>(lum0 * 0.95), steep * smoothstep(5.0, 9.0, alt) * 0.5);
-            let cap = smoothstep(11.5, 14.5, alt - steep * 3.0 + 1.2 * vnoise(w * 0.4));
-            col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cap * 0.92);
-            // wind runs over the grass in light and dark waves
-            // ... running downwind
-            let wave = (vnoise(w * 0.12 + globals.cloud.yz * 5.45) - 0.5) * 3.0 + (vnoise(w * 0.37 + globals.cloud.yz * 16.8) - 0.5) * 1.5;
-            col = col * (1.0 + 0.035 * (0.3 + wnd) * wave);
-            // wet earth is darker
-            col = col * (1.0 - 0.2 * rain);
-            // snow settles in patches
-            if (snow > 0.02) {
-                let tx = floor(w * 21.0);
-                let nt = fract(sin(dot(tx, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-                let lo = floor(w * 1.7);
-                let nl = fract(sin(dot(lo, vec2<f32>(39.3468, 11.135))) * 24634.6345);
-                if (nt < snow * (0.55 + 0.9 * nl) - 0.05) { col = mix(col, vec3<f32>(0.90, 0.94, 1.0), 0.88); }
-            }
-        }
-    } else if (v.kind == 5.0) {
+    if (v.kind == 5.0) {
         let t = textureLoad(atlas, vec2<i32>(floor(v.uv)), 0);
         alpha = t.a;
         if (alpha < 0.02) { discard; }
@@ -546,41 +782,34 @@ fn quantize(l: vec3<f32>, step: f32) -> vec3<f32> {
     } else {
         col = v.color * tex;
         n = nm;
-        // snow on the upper faces of leaves, a wet sheen darkening of everything outdoors
+        // snow on the upper faces of leaves
         if (v.mat > 1.5 && v.mat < 2.5 && v.glow < 0.5) {
             col = mix(col, vec3<f32>(0.9, 0.94, 1.0), globals.env.w * 0.45 * smoothstep(0.45, 0.8, nm.y));
-            col = col * (1.0 - 0.12 * globals.env.z);
+        }
+        // in the rain everything outdoors is wet: darker, and its upper faces catch a cool sheen of the sky
+        if (v.glow < 0.5) {
+            col = col * (1.0 - 0.16 * globals.env.z) + vec3<f32>(0.04, 0.05, 0.06) * globals.env.z * smoothstep(0.6, 0.9, nm.y);
         }
     }
     // light: sky, sun (held back by shadows and clouds) and fires; things that glow light themselves
     var lit: vec3<f32>;
     if (v.glow < 0.5) {
-        var sh = sun_shadow(v.world);
         // the player keeps most of its colour in the shade, so it can always be picked out
+        var shade_k = 1.0;
         let pd = v.world - globals.peek.xyz;
-        if (v.kind == 4.0 && globals.peek.w > 0.5 && abs(pd.x) < 0.45 && abs(pd.z) < 0.45 && abs(pd.y) < 1.1) { sh = sh * 0.4; }
-        let cs = cloud_shade(v.world.xz);
-        var l = env_light(n, sh, cs);
+        if (v.kind == 4.0 && globals.peek.w > 0.5 && abs(pd.x) < 0.45 && abs(pd.z) < 0.45 && abs(pd.y) < 1.1) { shade_k = 0.4; }
+        var l = env_light(n, v.world, shade_k);
         if (v.kind == 4.0) {
             // models: a touch brighter than the ground so they stand out, in clear bands
             l = quantize(l * 1.12, 0.13);
         } else {
             l = quantize(l, 0.06);
         }
-        let fire = quantize(fire_light(n, v.world), 0.12);
-        lit = col * (l * globals.light.rgb + fire);
+        lit = col * (l * globals.light.rgb + fires_at(n, v.world));
     } else {
         lit = col * mix(globals.light.rgb, vec3<f32>(1.0), v.glow);
     }
-    // low perception: colours run together
-    let lum = dot(lit, vec3<f32>(0.30, 0.59, 0.11));
-    lit = mix(vec3<f32>(lum), lit, 0.28 + 0.72 * p);
-    // ... and the world fades into haze not far from where you stand
-    let d = distance(v.wpos, globals.cam.xy);
-    let r0 = mix(9.0, 95.0, p * p);
-    let f = smoothstep(r0, r0 + mix(7.0, 35.0, p), d) * (1.0 - v.glow) * (1.0 - 0.5 * p);
-    let haze = vec3<f32>(0.50, 0.54, 0.56) * globals.light.rgb;
-    return vec4<f32>(pow(max(mix(lit, haze, f), vec3<f32>(0.0)), vec3<f32>(2.2)), alpha);
+    return vec4<f32>(finish(lit, v.wpos, v.glow), alpha);
 }
 
 // Never lose the player behind a tree or a wall: its body is drawn once more into the picture's alpha alone,
