@@ -1053,7 +1053,10 @@ impl App {
             }
         }
         if self.follow && bench_pose.is_none() {
-            if let Some((x, y)) = self.me_agent().map(|a| (a.x as f32 / 1000.0, a.y as f32 / 1000.0)) {
+            // follow where the body was drawn (between ticks), not the tick's position: at 144 Hz the tick's 60 Hz
+            // steps would shake the whole picture against the body
+            let drawn = self.gfx.as_ref().and_then(|g| g.renderer.drawn_pos(self.me)).filter(|_| self.menu.is_none());
+            if let Some((x, y)) = drawn.or_else(|| self.me_agent().map(|a| (a.x as f32 / 1000.0, a.y as f32 / 1000.0))) {
                 let k = 1.0 - (-7.0 * dt).exp();
                 self.cam.target.x += (x - self.cam.target.x) * k;
                 self.cam.target.z += (y - self.cam.target.z) * k;

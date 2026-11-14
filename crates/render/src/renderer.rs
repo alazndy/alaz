@@ -17,8 +17,8 @@ pub(crate) const CHUNK_TILES: i32 = 32;
 
 pub(crate) const MAX_CACHED_CHUNKS: usize = 600;
 
-/// Milliseconds per frame spent building chunk meshes (at least one chunk is always built).
-pub(crate) const BUILD_BUDGET_MS: f64 = 2.5;
+/// Most chunks whose meshes are built at the same time (each on a thread of its own, while the frame goes on).
+pub(crate) const MAX_BUILDS_PER_FRAME: usize = 4;
 
 pub(crate) struct Chunk {
     pub(crate) terrain: Option<(wgpu::Buffer, u32)>,
@@ -32,6 +32,40 @@ pub(crate) struct Chunk {
     pub(crate) used: u64,
     /// Which build of the meshes this is (unique per build): the static shadow map is redrawn when it differs.
     pub(crate) build: u64,
+}
+
+/// The meshes of one chunk, uploaded, as a worker thread leaves them.
+pub(crate) struct BuiltChunk {
+    pub(crate) key: (i32, i32),
+    /// None where the chunk already had its ground (that mesh does not change).
+    pub(crate) terrain: Option<(wgpu::Buffer, u32)>,
+    pub(crate) nodes: Option<(wgpu::Buffer, u32)>,
+    pub(crate) decor: Option<(wgpu::Buffer, u32)>,
+    pub(crate) nodes_version: (u64, u64),
+    pub(crate) seen: u128,
+    pub(crate) level: u8,
+}
+
+/// Build one chunk's meshes and put them on the GPU. Reads the world only, so it can run beside the frame.
+pub(crate) fn build_chunk(device: &wgpu::Device, art: &Art, world: &World, key: (i32, i32), with_terrain: bool) -> BuiltChunk {
+    let buffer = |v: &Mesh| (device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&v[..]), usage: wgpu::BufferUsages::VERTEX }), v.len() as u32);
+    let upload = |v: &Mesh| (!v.is_empty()).then(|| buffer(v));
+    let (x0, y0) = (key.0 * CHUNK_TILES, key.1 * CHUNK_TILES);
+    let (x1, y1) = ((x0 + CHUNK_TILES).min(world.map.w), (y0 + CHUNK_TILES).min(world.map.h));
+    let terrain = with_terrain.then(|| {
+        let mut v = Mesh::new();
+        build_terrain(&mut v, art, world, (x0, y0, x1, y1));
+        buffer(&v)
+    });
+    let mut v = Mesh::fixed();
+    build_decor(&mut v, world, (x0, y0, x1, y1));
+    pre_lift(world, &mut v);
+    let decor = upload(&v);
+    let mut v = Mesh::fixed();
+    build_nodes(&mut v, world, (x0, y0, x1, y1), world.perception_level());
+    pre_lift(world, &mut v);
+    let nodes = upload(&v);
+    BuiltChunk { key, terrain, nodes, decor, nodes_version: world.node_stamp(x0, y0), seen: world.seen_bits(), level: world.perception_level() }
 }
 
 /// The sun's shadow of what stands still (chunk models), kept between frames. It is drawn into a box 1.5 times as
@@ -154,7 +188,7 @@ pub struct Renderer {
     pub(crate) shadow_copy_group: wgpu::BindGroup,
     pub(crate) shadow_static: StaticShadow,
     pub(crate) chunk_gen: u64,
-    pub(crate) art: Art,
+    pub(crate) art: Arc<Art>,
     pub(crate) egui_ctx: egui::Context,
     pub(crate) egui_state: egui_winit::State,
     pub(crate) egui_renderer: egui_wgpu::Renderer,
@@ -550,7 +584,7 @@ impl Renderer {
             shadow_copy_group,
             shadow_static: StaticShadow { every_frame: std::env::var_os("ALAZ_SHADOW_EVERY").is_some(), ..Default::default() },
             chunk_gen: 0,
-            art,
+            art: Arc::new(art),
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -658,6 +692,12 @@ impl Renderer {
     /// Drop cached scene buffers (call when the world is replaced).
     pub fn reset_scene(&mut self) {
         self.chunks.clear();
+    }
+
+    /// Where the last frame drew this person (metres): between ticks, not at the tick. The camera follows this, so
+    /// it moves as evenly as the body does at any frame rate.
+    pub fn drawn_pos(&self, id: alaz_sim::AgentId) -> Option<(f32, f32)> {
+        self.anim.get(&id.0).map(|w| (w.x, w.z))
     }
 
     pub fn stats(&self) -> RenderStats {
