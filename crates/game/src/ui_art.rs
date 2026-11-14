@@ -193,7 +193,7 @@ pub fn stat_bar(ui: &mut Ui, g: Glyph, label: &str, frac: f32, col: Color32, wid
         p.line_segment([egui::pos2(x, track.top() + 3.0), egui::pos2(x, track.bottom() - 3.0)], Stroke::new(1.0, Color32::from_black_alpha(70)));
     }
     let edge = if low { mix(Color32::from_rgb(90, 70, 50), Color32::from_rgb(240, 70, 60), pulse) } else { Color32::from_rgb(96, 78, 54) };
-    p.rect_stroke(track, 0.0, Stroke::new(1.2, edge), StrokeKind::Inside);
+    p.rect_stroke(crate::pxui::snap_rect(track), 0.0, Stroke::new(crate::pxui::unit(), edge), StrokeKind::Inside);
     if !label.is_empty() {
         let at = egui::pos2(track.left() + 20.0, track.center().y);
         p.text(at + egui::vec2(1.0, 1.0), Align2::LEFT_CENTER, label, FontId::proportional(22.0), Color32::from_black_alpha(190));
@@ -247,7 +247,7 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
     // a bright top lip and a dark base: the button reads as a raised key
     p.rect_filled(Rect::from_min_size(r.min + egui::vec2(3.0, 1.0), egui::vec2(r.width() - 6.0, 2.0)), 0.0, Color32::from_white_alpha(if selected { 70 } else { 34 }));
     let stroke = if selected { Color32::from_rgb(244, 208, 120) } else if hovered { Color32::from_rgb(170, 138, 90) } else { Color32::from_rgb(98, 80, 56) };
-    p.rect_stroke(r, 0.0, Stroke::new(if selected { 1.8 } else { 1.2 }, stroke.gamma_multiply(alpha)), StrokeKind::Inside);
+    p.rect_stroke(crate::pxui::snap_rect(r), 0.0, Stroke::new(crate::pxui::unit() * if selected { 2.0 } else { 1.0 }, stroke.gamma_multiply(alpha)), StrokeKind::Inside);
     let icon_c = egui::pos2(r.left() + 12.0 + 10.0, r.center().y + if held { 1.0 } else { 0.0 });
     glyph(p, icon_c, 19.0, g, tint.gamma_multiply(alpha));
     let tx = icon_c.x + 16.0;
@@ -255,7 +255,7 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
     if let Some(kg) = key_galley {
         let kr = Rect::from_min_size(egui::pos2(tx + galley.size().x + 8.0, r.center().y - 9.0), egui::vec2(kg.size().x + 10.0, 18.0));
         p.rect_filled(kr, 0.0, Color32::from_black_alpha(120));
-        p.rect_stroke(kr, 0.0, Stroke::new(1.0, Color32::from_rgb(120, 100, 72).gamma_multiply(alpha)), StrokeKind::Inside);
+        p.rect_stroke(crate::pxui::snap_rect(kr), 0.0, Stroke::new(crate::pxui::unit(), Color32::from_rgb(120, 100, 72).gamma_multiply(alpha)), StrokeKind::Inside);
         p.galley(kr.center() - kg.size() / 2.0, kg, Color32::from_rgb(214, 198, 168).gamma_multiply(alpha));
     }
     resp
@@ -267,28 +267,8 @@ pub fn chip(ui: &mut Ui, text: &str, fill: Color32, ink: Color32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(galley.size() + egui::vec2(14.0, 6.0), Sense::hover());
     let p = ui.painter();
     p.rect_filled(rect, 0.0, fill);
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0, ink.gamma_multiply(0.45)), StrokeKind::Inside);
+    p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), ink.gamma_multiply(0.45)), StrokeKind::Inside);
     p.galley(rect.center() - galley.size() / 2.0, galley, ink);
-    resp
-}
-
-/// A row of dots, `on` of `total` lit, for steps like the stages of evolution.
-pub fn pips(ui: &mut Ui, on: usize, total: usize, col: Color32) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(total as f32 * 16.0, 14.0), Sense::hover());
-    let p = ui.painter();
-    for i in 0..total {
-        let c = egui::pos2(rect.left() + 8.0 + i as f32 * 16.0, rect.center().y);
-        if i < on {
-            p.circle_filled(c, 5.0, col);
-            p.circle_filled(c - egui::vec2(1.5, 1.5), 1.6, Color32::from_white_alpha(110));
-        } else {
-            p.circle_filled(c, 5.0, Color32::from_rgb(24, 20, 16));
-        }
-        p.circle_stroke(c, 5.0, Stroke::new(1.0, if i < on { col.gamma_multiply(0.6) } else { Color32::from_rgb(86, 72, 54) }));
-        if i + 1 < total {
-            p.line_segment([c + egui::vec2(6.0, 0.0), c + egui::vec2(10.0, 0.0)], Stroke::new(1.0, Color32::from_rgb(86, 72, 54)));
-        }
-    }
     resp
 }
 

@@ -512,7 +512,7 @@ fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::w
 }
 
 /// Perception level of the tribe, mirrored here so panels can dress themselves for the era.
-static ERA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+pub(crate) static ERA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
 pub const DISCOVERIES: [Discovery; 34] = [
     Discovery::SharpStone,
@@ -713,7 +713,7 @@ fn vital(ui: &mut egui::Ui, w: &World, g: crate::ui_art::Glyph, name: &str, v: i
 fn draw_body(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent) {
     use crate::ui_art::{chip, Glyph};
     egui::Area::new(egui::Id::NULL.with("body")).anchor(Align2::LEFT_BOTTOM, [12.0, -12.0]).show(ctx, |ui| {
-        panel_frame().inner_margin(8).show(ui, |ui| {
+        panel(ui, 4.0, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             let cap = me.health_cap(&w.settings);
             vital(ui, w, Glyph::Heart, crate::lang::stat_word(w, "Sağlık"), me.health, Color32::from_rgb(214, 70, 70), 180.0);
@@ -753,7 +753,7 @@ fn draw_body(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent) {
 fn draw_needs(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent) {
     use crate::ui_art::Glyph;
     egui::Area::new(egui::Id::NULL.with("needs")).anchor(Align2::RIGHT_BOTTOM, [-12.0, -12.0]).show(ctx, |ui| {
-        panel_frame().inner_margin(8).show(ui, |ui| {
+        panel(ui, 4.0, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             vital(ui, w, Glyph::Food, crate::lang::stat_word(w, "Tokluk"), me.hunger, Color32::from_rgb(214, 156, 56), 180.0);
             vital(ui, w, Glyph::Drop, crate::lang::stat_word(w, "Su"), me.thirst, Color32::from_rgb(64, 140, 224), 180.0);
@@ -915,13 +915,8 @@ fn draw_goal_banner(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent)
     }
     let text = guide_text(w, me);
     egui::Area::new(egui::Id::NULL.with("goal")).anchor(Align2::CENTER_TOP, [0.0, 12.0]).show(ctx, |ui| {
-        egui::Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(34, 26, 16, 214))
-            .stroke(Stroke::new(1.4, Color32::from_rgb(190, 150, 70)))
-            .inner_margin(egui::Margin::symmetric(12, 6))
-            .corner_radius(0)
-            .shadow(egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) })
-            .show(ui, |ui| {
+        let th = crate::pxpanel::Theme::era(ERA.load(std::sync::atomic::Ordering::Relaxed)).goal();
+        crate::pxpanel::frame_with(ui, &th, None, 5.0, |ui| {
                 // never wider than the room between the corner panels; long goals wrap
                 ui.set_max_width((ctx.content_rect().width() - 760.0).clamp(280.0, 620.0));
                 ui.horizontal_top(|ui| {
@@ -960,7 +955,7 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
     let has_routes = w.agents.iter().any(|a| a.kind.is_worker()) || w.knows(Discovery::Depot);
     // left edge, middle: the menus (things to look at and plan with)
     egui::Area::new(egui::Id::NULL.with("menus")).anchor(Align2::LEFT_CENTER, [12.0, 0.0]).show(ctx, |ui| {
-        panel_frame().inner_margin(6).show(ui, |ui| {
+        panel(ui, 3.0, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             let gold = Color32::from_rgb(244, 208, 120);
             let mut tab_btn = |ui: &mut egui::Ui, g: Glyph, label: &str, tab: Tab, action: Action, enabled: bool| {
@@ -987,7 +982,7 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
     });
     // bottom middle, between the body and the needs: what can be done for them right now
     egui::Area::new(egui::Id::NULL.with("bar")).anchor(Align2::CENTER_BOTTOM, [0.0, -12.0]).show(ctx, |ui| {
-        panel_frame().inner_margin(8).show(ui, |ui| {
+        panel(ui, 4.0, |ui| {
             ui.horizontal(|ui| {
                 let btn = |ui: &mut egui::Ui, g: Glyph, text: String, on: bool| {
                     let tint = match g {
@@ -1140,7 +1135,7 @@ fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &
                 Some(&k) => crate::icons::draw_slot(ui.painter(), rect, crate::lang::looks_like(w, k), w.has_seen(k)),
                 None => {
                     ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(26, 21, 17));
-                    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(70, 56, 40)), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), Color32::from_rgb(70, 56, 40)), egui::StrokeKind::Inside);
                 }
             }
             let held_name = ItemKind::ALL.get(hands[slot] as usize).map(|&k| crate::lang::item_word(w, crate::lang::looks_like(w, k))).unwrap_or_else(|| "boş el".to_string());
@@ -1244,7 +1239,7 @@ fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &
             let hover = resp.hovered() && can;
             p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
             let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
-            p.rect_stroke(rect, 0.0, Stroke::new(if hover { 3.0 } else { 2.0 }, edge), egui::StrokeKind::Inside);
+            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit() * if hover { 2.0 } else { 1.0 }, edge), egui::StrokeKind::Inside);
             // the product
             if let Some(o) = r.outputs.first() {
                 let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 28.0), egui::vec2(44.0, 44.0));
@@ -1348,7 +1343,7 @@ fn tab_goals(ui: &mut egui::Ui, w: &World) {
         let p = ui.painter();
         if next {
             p.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(150, 110, 50, 70));
-            p.rect_stroke(rect, 0.0, Stroke::new(1.0, Color32::from_rgb(190, 150, 70)), egui::StrokeKind::Inside);
+            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), Color32::from_rgb(190, 150, 70)), egui::StrokeKind::Inside);
         }
         let c = egui::pos2(rect.left() + 15.0, rect.center().y);
         if ok {
@@ -1503,19 +1498,11 @@ fn tab_help(ui: &mut egui::Ui, binds: &Keybinds) {
     });
 }
 
-fn panel_frame() -> egui::Frame {
+/// Every HUD panel: the era's pixel panel (`pxpanel`), with `margin` pixels of room inside.
+fn panel<R>(ui: &mut egui::Ui, margin: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
     // the look of every panel follows the era: rough and earthy at first, plainer and cooler as the tribe learns
-    let (fill, line, width, round) = match ERA.load(std::sync::atomic::Ordering::Relaxed) {
-        0 | 1 => (Color32::from_rgba_unmultiplied(44, 32, 21, 238), Color32::from_rgb(128, 90, 52), 3.0, 3),
-        2 | 3 => (Color32::from_rgba_unmultiplied(30, 24, 19, 238), Color32::from_rgb(104, 84, 56), 1.5, 10),
-        _ => (Color32::from_rgba_unmultiplied(24, 27, 33, 240), Color32::from_rgb(92, 112, 136), 1.0, 6),
-    };
-    egui::Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(width, line))
-        .inner_margin(12)
-        .corner_radius(round)
-        .shadow(egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) })
+    let th = crate::pxpanel::Theme::era(ERA.load(std::sync::atomic::Ordering::Relaxed));
+    crate::pxpanel::frame_with(ui, &th, None, margin, add)
 }
 
 /// The interface font follows the age: soft and hand-made while the tribe is in the stone age, a forged gothic hand
@@ -1528,7 +1515,7 @@ const FONT_METAL: &[u8] = include_bytes!("../assets/jacquard-12.ttf");
 const FONT_MACHINE: &[u8] = include_bytes!("../assets/jersey-10.ttf");
 static FONT_GROUP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
 
-/// Which of the three hands an age (the perception level) writes in; matches the three looks of `panel_frame`.
+/// Which of the three hands an age (the perception level) writes in; matches the three looks of `Theme::era`.
 fn font_group(era: u8) -> u8 {
     // dev aid for screenshots: ALAZ_FONT_GROUP=0|1|2 forces one
     if let Some(g) = std::env::var("ALAZ_FONT_GROUP").ok().and_then(|v| v.parse::<u8>().ok()) {
@@ -1571,26 +1558,10 @@ fn set_era_font(ctx: &egui::Context, era: u8) {
 
 pub fn apply_style(ctx: &egui::Context) {
     set_era_font(ctx, ERA.load(std::sync::atomic::Ordering::Relaxed));
-    let mut v = egui::Visuals::dark();
-    v.override_text_color = Some(Color32::from_rgb(238, 228, 208));
-    v.window_fill = Color32::from_rgb(30, 24, 19);
-    v.panel_fill = Color32::from_rgb(30, 24, 19);
-    v.selection.bg_fill = Color32::from_rgb(150, 110, 50);
-    let r = egui::CornerRadius::ZERO;
-    let edge = Stroke::new(2.0, Color32::from_rgb(20, 14, 10));
-    for (w, fill) in [
-        (&mut v.widgets.inactive, Color32::from_rgb(64, 52, 40)),
-        (&mut v.widgets.hovered, Color32::from_rgb(98, 76, 50)),
-        (&mut v.widgets.active, Color32::from_rgb(134, 104, 62)),
-    ] {
-        w.corner_radius = r;
-        w.bg_fill = fill;
-        w.weak_bg_fill = fill;
-        w.bg_stroke = edge;
-    }
-    v.widgets.noninteractive.corner_radius = r;
-    v.widgets.open.corner_radius = r;
-    ctx.set_visuals(v);
+    let px = crate::pxpanel::Px::of(ctx);
+    crate::pxui::set_unit(px.u);
+    let th = crate::pxpanel::Theme::era(ERA.load(std::sync::atomic::Ordering::Relaxed));
+    ctx.set_visuals(crate::pxpanel::visuals(&th, px));
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(11.0, 5.0);
@@ -1600,10 +1571,6 @@ pub fn apply_style(ctx: &egui::Context) {
         s.text_styles.insert(TextStyle::Small, FontId::new(22.0, Proportional));
         s.text_styles.insert(TextStyle::Heading, FontId::new(33.0, Proportional));
         s.text_styles.insert(TextStyle::Monospace, FontId::new(22.0, egui::FontFamily::Monospace));
-        s.visuals.window_shadow = egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) };
-        s.visuals.popup_shadow = egui::epaint::Shadow { offset: [4, 4], blur: 0, spread: 0, color: Color32::from_black_alpha(150) };
-        s.visuals.window_corner_radius = egui::CornerRadius::ZERO;
-        s.visuals.menu_corner_radius = egui::CornerRadius::ZERO;
     });
 }
 
@@ -1624,7 +1591,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
     // while a workpiece is on the bench the bench panel steps aside instead of lying under it
     if let Some(tab) = ui_ctx.tab.filter(|_| w.craft_view(ui_ctx.me).is_none()) {
         egui::Area::new(egui::Id::NULL.with("tab")).anchor(Align2::CENTER_BOTTOM, [0.0, -70.0]).show(ctx, |ui| {
-            panel_frame().show(ui, |ui| {
+            panel(ui, 6.0, |ui| {
                 ui.set_width(600.0_f32.min(ctx.content_rect().width() - 40.0));
                 // leave room for the action bar below and the status line above, whatever the window size
                 let max_h = (ctx.content_rect().height() - 62.0 - 130.0).clamp(120.0, 520.0);
@@ -1774,14 +1741,6 @@ fn rim_point(center: egui::Pos2, radius: f32, deg: f32) -> egui::Pos2 {
     egui::pos2(center.x + radius * r.sin(), center.y - radius * r.cos())
 }
 
-/// The frame of every minigame panel: the era's panel, but square-cornered with a pixel-wide border.
-fn craft_frame() -> egui::Frame {
-    let mut f = panel_frame();
-    f.corner_radius = 0.into();
-    f.stroke.width = ((f.stroke.width / crate::pxui::PX).round().max(1.0)) * crate::pxui::PX;
-    f
-}
-
 /// The note under a work area: a green line when tools help, otherwise a quiet reminder.
 fn tool_note(ui: &mut egui::Ui, bonus: bool, good: String, plain: &str) {
     if bonus {
@@ -1802,7 +1761,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
     st.seen_done = v.done;
     craft_area(ctx, "knap").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             step_header(ui, def, v);
             ui.horizontal(|ui| {
                 let (resp, painter) = ui.allocate_painter(egui::vec2(KNAP_SIZE, KNAP_SIZE), egui::Sense::click_and_drag());
@@ -1823,7 +1782,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     let lost = v.stack[i0].1 as f32 * (1.0 - t) + v.stack[(i0 + 1) % 8].1 as f32 * t;
                     r0 * bump * (1.0 - 0.009 * lost).max(0.3)
                 };
-                let (cxi, cyi) = ((c.x / px::PX) as i32, (c.y / px::PX) as i32);
+                let (cxi, cyi) = ((c.x / px::unit()) as i32, (c.y / px::unit()) as i32);
                 // the stone only changes when a flake comes off, so it is drawn once and kept
                 let key = v.stack.iter().fold((c.x as u64) << 20 ^ (c.y as u64), |h, s| h.wrapping_mul(1_000_003).wrapping_add(s.1 as u64 + 1)) ^ (v.step as u64) << 50;
                 px::cells_cached(ctx, egui::Id::new("knap_stone"), key, &painter, Rect::from_center_size(c, egui::Vec2::splat(r0 * 2.0 + 24.0)), |q| {
@@ -1833,14 +1792,14 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     if d > r {
                         return None;
                     }
-                    if d > r - px::PX {
+                    if d > r - px::unit() {
                         return Some(px::INK);
                     }
-                    if d > r - 3.0 * px::PX {
+                    if d > r - 3.0 * px::unit() {
                         return Some(px::STONE_D);
                     }
-                    let h = px::hash((q.x / px::PX) as i32 - cxi, (q.y / px::PX) as i32 - cyi, 11);
-                    if d > r - 9.0 * px::PX && dx + dy < -r * 0.45 && h % 4 != 0 {
+                    let h = px::hash((q.x / px::unit()) as i32 - cxi, (q.y / px::unit()) as i32 - cyi, 11);
+                    if d > r - 9.0 * px::unit() && dx + dy < -r * 0.45 && h % 4 != 0 {
                         return Some(px::STONE_L);
                     }
                     Some(match h % 17 {
@@ -1854,7 +1813,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     let (p0, p1) = (rim_point(c, r0 * 0.8, a), rim_point(c, r0 * 0.98, a));
                     px::dotted(&painter, p0, p1, px::INK);
                     if good {
-                        px::fill(&painter, Rect::from_center_size(rim_point(c, r0 * 0.68, a), egui::Vec2::splat(px::PX * 4.0)), Color32::from_rgb(226, 222, 212));
+                        px::fill(&painter, Rect::from_center_size(rim_point(c, r0 * 0.68, a), egui::Vec2::splat(px::unit() * 4.0)), Color32::from_rgb(226, 222, 212));
                     }
                 }
                 // per sector: what is still to be taken off (a strike deeper than this plus 8 ruins the sector)
@@ -1862,7 +1821,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     let (need, gone) = (v.stack[i].0.max(0) as i32, v.stack[i].1 as i32);
                     let at = rim_point(c, r0 + 30.0, 22.5 + 45.0 * i as f32);
                     if gone >= need {
-                        px::sprite_at(&painter, at, px::CHECK, &[('G', px::GOOD)], px::PX);
+                        px::sprite_at(&painter, at, px::CHECK, &[('G', px::GOOD)], px::unit());
                     } else {
                         px::text(&painter, at, Align2::CENTER_CENTER, &format!("{}", need - gone), 22.0, Color32::from_rgb(240, 200, 110));
                     }
@@ -1872,7 +1831,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                 let steps = (v.half as usize * 2).max(12);
                 for i in 0..=steps {
                     let deg = v.center as f32 - v.half as f32 + 2.0 * v.half as f32 * i as f32 / steps as f32;
-                    px::fill(&painter, Rect::from_center_size(rim_point(c, r0 + 9.0, deg), egui::Vec2::splat(px::PX * 4.0)), zc);
+                    px::fill(&painter, Rect::from_center_size(rim_point(c, r0 + 9.0, deg), egui::Vec2::splat(px::unit() * 4.0)), zc);
                 }
                 // aim: the hammerstone follows the mouse; the strike lands where it points at the rim
                 let mouse = ctx.input(|i| i.pointer.hover_pos());
@@ -1883,8 +1842,8 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                         let deg = dx.atan2(-dy).to_degrees().rem_euclid(360.0);
                         aim = Some(deg);
                         px::dotted(&painter, c, rim_point(c, r0, deg), Color32::from_white_alpha(90));
-                        px::fill(&painter, Rect::from_center_size(rim_point(c, r0 + 4.0, deg), egui::Vec2::splat(px::PX * 3.0)), px::GOLD);
-                        px::sprite_at(&painter, m, px::HAMMERSTONE, &px::stone_pal(), px::PX);
+                        px::fill(&painter, Rect::from_center_size(rim_point(c, r0 + 4.0, deg), egui::Vec2::splat(px::unit() * 3.0)), px::GOLD);
+                        px::sprite_at(&painter, m, px::HAMMERSTONE, &px::stone_pal(), px::unit());
                     }
                 }
                 // swing force: hold to charge, it swings up and back
@@ -1951,7 +1910,7 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "craft").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(380.0);
             step_header(ui, def, v);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(380.0, 124.0), egui::Sense::hover());
@@ -1972,7 +1931,7 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
             for k in 0..14 {
                 let x = body.left() + 12.0 + k as f32 * 26.0 + if k % 2 == 0 { 0.0 } else { 10.0 };
                 let y = cy - 8.0 + ((k * 5) % 4) as f32 * 4.0;
-                px::fill(p, Rect::from_min_size(egui::pos2(x, y), egui::vec2(10.0 + (k % 3) as f32 * 4.0, px::PX)), px::WOOD_D);
+                px::fill(p, Rect::from_min_size(egui::pos2(x, y), egui::vec2(10.0 + (k % 3) as f32 * 4.0, px::unit())), px::WOOD_D);
             }
             for kx in [0.23_f32, 0.61, 0.87] {
                 let c = egui::pos2(body.left() + body.width() * kx, cy + 2.0);
@@ -1990,7 +1949,7 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
             // a marker close to the zone sparks, so the moment can be felt coming
             let near = 1.0 - ((v.pos as f32 - v.center as f32).abs() / (v.half as f32 * 3.0)).clamp(0.0, 1.0);
             let mx = px::snap(x_of(v.pos as f32));
-            let sz = px::sprite_size(px::SCRAPER, px::PX * 2.0);
+            let sz = px::sprite_size(px::SCRAPER, px::unit() * 2.0);
             let top_left = egui::pos2(mx - sz.x / 2.0, cy - 14.0 - sz.y);
             if near > 0.25 {
                 let a = (near * 200.0) as u8;
@@ -1999,7 +1958,7 @@ fn draw_craft_gauge(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(
                     px::fill(p, Rect::from_center_size(egui::pos2(mx + dx, cy + dy), egui::Vec2::splat(if near > 0.6 { 6.0 } else { 4.0 })), col);
                 }
             }
-            px::sprite(p, top_left, px::SCRAPER, &px::stone_pal(), px::PX * 2.0);
+            px::sprite(p, top_left, px::SCRAPER, &px::stone_pal(), px::unit() * 2.0);
             if let Some((true, _)) = last {
                 px::chips(p, egui::pos2(x_of(v.center as f32), cy - 6.0), 1.0 - left, left, 10);
                 px::text(p, egui::pos2(x_of(v.center as f32), rect.top() + 6.0), Align2::CENTER_TOP, "İsabet!", 22.0, Color32::from_rgba_unmultiplied(150, 250, 150, (left * 255.0) as u8));
@@ -2100,7 +2059,7 @@ fn draw_stack(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, 
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "stack").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(340.0);
             step_header(ui, def, v);
             let (w, h) = (330.0, 190.0);
@@ -2159,7 +2118,7 @@ fn draw_fit(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "fit").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(300.0);
             step_header(ui, def, v);
             let (resp, painter) = ui.allocate_painter(egui::vec2(FIT_SIZE, FIT_SIZE), egui::Sense::click());
@@ -2176,7 +2135,7 @@ fn draw_fit(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             px::bevel(&painter, handle, px::WOOD, px::WOOD_L, px::WOOD_D);
             for n in 0..8 {
                 let x = handle.left() + 14.0 + n as f32 * 24.0;
-                px::fill(&painter, Rect::from_min_size(egui::pos2(x, hy - 8.0 + (n % 3) as f32 * 6.0), egui::vec2(10.0, px::PX)), px::WOOD_D);
+                px::fill(&painter, Rect::from_min_size(egui::pos2(x, hy - 8.0 + (n % 3) as f32 * 6.0), egui::vec2(10.0, px::unit())), px::WOOD_D);
             }
             let tp = to_px(v.tx as f32, v.ty as f32);
             // the notch, as stepped rows narrowing downward
@@ -2189,7 +2148,7 @@ fn draw_fit(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let mouse = ctx.input(|i| i.pointer.hover_pos()).filter(|m| rect.contains(*m));
             if let Some(m) = mouse {
                 // the stone head you are carrying
-                px::sprite_at(&painter, m, px::STONE_HEAD, &px::stone_pal(), px::PX);
+                px::sprite_at(&painter, m, px::STONE_HEAD, &px::stone_pal(), px::unit());
                 if resp.clicked() {
                     let (x, y) = (((m.x - c.x) / k).round() as i32, ((m.y - c.y) / k).round() as i32);
                     acts.push(UiAction::Cmd(CommandKind::PlaceAt { x: x.clamp(-100, 100) as i16, y: y.clamp(-100, 100) as i16 }));
@@ -2212,7 +2171,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "trim").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(340.0);
             step_header(ui, def, v);
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 150.0), egui::Sense::click());
@@ -2228,7 +2187,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
             px::bevel(&painter, branch, px::WOOD, px::WOOD_L, px::WOOD_D);
             for n in 0..14 {
                 let x = branch.left() + 10.0 + n as f32 * 20.0 + (n % 3) as f32 * 4.0;
-                px::fill(&painter, Rect::from_min_size(egui::pos2(x, c.y - 6.0 + (n % 4) as f32 * 4.0), egui::vec2(8.0, px::PX)), px::WOOD_D);
+                px::fill(&painter, Rect::from_min_size(egui::pos2(x, c.y - 6.0 + (n % 4) as f32 * 4.0), egui::vec2(8.0, px::unit())), px::WOOD_D);
             }
             // knots already knocked off leave stubs; the ones still to come wait, dimmer, along the branch
             let spot = |i: u8| -> (f32, f32) {
@@ -2257,7 +2216,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
             let col = px::verdict(last, px::GOOD);
             px::ring(&painter, t, v.half as f32 * k, 2.0, col);
             if let Some(m) = ctx.input(|i| i.pointer.hover_pos()).filter(|m| rect.contains(*m)) {
-                px::sprite_at(&painter, m, px::STONE_HEAD, &px::stone_pal(), px::PX);
+                px::sprite_at(&painter, m, px::STONE_HEAD, &px::stone_pal(), px::unit());
                 if resp.clicked() {
                     let (x, y) = (((m.x - c.x) / k).round() as i32, ((m.y - c.y) / k).round() as i32);
                     acts.push(UiAction::Cmd(CommandKind::PlaceAt { x: x.clamp(-100, 100) as i16, y: y.clamp(-100, 100) as i16 }));
@@ -2275,7 +2234,7 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "rub").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(340.0);
             step_header(ui, def, v);
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
@@ -2333,7 +2292,7 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             px::dotted(&painter, egui::pos2(x1, cy - 24.0), egui::pos2(x1, cy + 24.0), Color32::from_white_alpha(90));
             if let Some(m) = mouse.filter(|m| rect.contains(*m)) {
                 let at = egui::pos2(m.x.clamp(x0, x1), cy - 26.0);
-                px::sprite_at(&painter, at, px::STONE_HEAD, &px::stone_pal(), px::PX);
+                px::sprite_at(&painter, at, px::STONE_HEAD, &px::stone_pal(), px::unit());
             }
             if last.is_some_and(|(hit, t)| !hit && t > 0.0) && !grip {
                 px::text(&painter, rect.center_bottom() - egui::vec2(0.0, 6.0), Align2::CENTER_BOTTOM, "Sap kaydı", 22.0, px::BAD);
@@ -2361,7 +2320,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
     let def = &rules().recipes[v.recipe];
     craft_area(ctx, "tension").show(ctx, |ui| {
         ui.set_max_width(CRAFT_PANEL_W);
-        craft_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(340.0);
             step_header(ui, def, v);
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
@@ -2372,7 +2331,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
             // the handle with the stone set in its notch, and the fibre wound around both
             let mid = px::snap_pos(rect.center());
             px::bevel(&painter, Rect::from_center_size(mid, egui::vec2(250.0, 26.0)), px::WOOD, px::WOOD_L, px::WOOD_D);
-            px::sprite_at(&painter, mid + egui::vec2(58.0, -2.0), px::STONE_HEAD, &px::stone_pal(), px::PX * 2.0);
+            px::sprite_at(&painter, mid + egui::vec2(58.0, -2.0), px::STONE_HEAD, &px::stone_pal(), px::unit() * 2.0);
             let turns = 2 + (st.charge * 10.0).round() as i32;
             for i in 0..turns {
                 let x = mid.x + 16.0 + i as f32 * 4.0;
@@ -2428,7 +2387,7 @@ fn draw_building(
     let def = defs.building(b.kind);
     let inv = &me.inventory;
     egui::Area::new(egui::Id::NULL.with("building")).anchor(Align2::RIGHT_TOP, [-12.0, 12.0]).show(ctx, |ui| {
-        panel_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(280.0);
             // a right-aligned button would otherwise stretch the panel across half the screen
             ui.set_max_width(330.0);
@@ -2778,7 +2737,7 @@ fn draw_worker(
     acts: &mut Vec<UiAction>,
 ) {
     egui::Area::new(egui::Id::NULL.with("worker")).anchor(Align2::RIGHT_TOP, [-12.0, 12.0]).show(ctx, |ui| {
-        panel_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(280.0);
             // a right-aligned button would otherwise stretch the panel across half the screen
             ui.set_max_width(330.0);
@@ -3280,7 +3239,7 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, acts: &mut Vec<UiActio
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("cave")).fixed_pos(egui::pos2(screen.center().x - 230.0, (screen.center().y - 230.0).max(70.0))).order(egui::Order::Foreground).show(ctx, |ui| {
         ui.set_max_width(460.0);
-        panel_frame().show(ui, |ui| {
+        panel(ui, 6.0, |ui| {
             ui.set_min_width(440.0);
             ui.label(RichText::new("Mağara").strong().size(22.0));
             let names = ["Girişteki oda", "İkinci oda: hava ağırlaşıyor", "Derin galeri: damarlar zengin", "En dip: tavan çatırdıyor"];

@@ -4,12 +4,13 @@
 //!
 //! One pixel is 2 points, but never a fractional number of screen pixels: `Px` rounds the pixel to a whole number
 //! of physical pixels for the current `pixels_per_point`, so edges stay crisp at any interface scale.
-// the kit is ahead of its users: only one panel has moved over so far
-#![allow(dead_code)]
 
-use alaz_render::egui::{self, Align2, Color32, FontId, InnerResponse, Pos2, Rect, Response, Sense, Shape, Ui, Vec2};
+use alaz_render::egui::{self, Align2, Color32, FontId, InnerResponse, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::pxui::{INK, PAPER};
+
+/// One pixel at interface scale 1, in points.
+const BASE: f32 = 2.0;
 
 /// What a pixel is for the current scale: a whole number of physical pixels, expressed in points.
 #[derive(Clone, Copy)]
@@ -20,7 +21,7 @@ pub struct Px {
 impl Px {
     pub fn of(ctx: &egui::Context) -> Self {
         let ppp = ctx.pixels_per_point();
-        Px { u: (crate::pxui::PX * ppp).round().max(1.0) / ppp }
+        Px { u: (BASE * ppp).round().max(1.0) / ppp }
     }
 
     /// Nearest grid line.
@@ -86,13 +87,79 @@ impl Theme {
             _ => Theme {
                 fill: Color32::from_rgba_unmultiplied(24, 27, 33, 240),
                 edge: Color32::from_rgb(10, 12, 16),
-                light: Color32::from_rgb(112, 134, 160),
-                dark: Color32::from_rgb(48, 58, 72),
+                light: Color32::from_rgb(82, 100, 122),
+                dark: Color32::from_rgb(36, 44, 56),
                 shadow,
                 track: Color32::from_rgb(12, 14, 18),
-                title_fill: Color32::from_rgb(52, 64, 82),
+                title_fill: Color32::from_rgb(46, 58, 76),
                 title_ink: Color32::from_rgb(214, 226, 240),
             },
+        }
+    }
+}
+
+/// The look of egui's own widgets (buttons, sliders, scroll bars, windows, tooltips) in the era's colours: square,
+/// hard-edged, one pixel of ink, no soft shadow. Panels and parts drawn by this module do not depend on it; this is
+/// for everything that has not been moved over yet and for menus.
+pub fn visuals(th: &Theme, px: Px) -> egui::Visuals {
+    let mut v = egui::Visuals::dark();
+    let u = px.u;
+    let zero = egui::CornerRadius::ZERO;
+    let hard = egui::epaint::Shadow { offset: [(2.0 * u).round() as i8, (2.0 * u).round() as i8], blur: 0, spread: 0, color: th.shadow };
+    v.override_text_color = Some(Color32::from_rgb(238, 228, 208));
+    v.window_fill = opaque(th.fill);
+    v.panel_fill = opaque(th.fill);
+    v.extreme_bg_color = th.track;
+    v.faint_bg_color = shade(th.fill, 1.25);
+    v.code_bg_color = th.track;
+    v.selection.bg_fill = th.title_fill;
+    v.selection.stroke = Stroke::new(u, th.title_ink);
+    v.hyperlink_color = Color32::from_rgb(150, 190, 240);
+    v.window_corner_radius = zero;
+    v.menu_corner_radius = zero;
+    v.window_shadow = hard;
+    v.popup_shadow = hard;
+    v.window_stroke = Stroke::new(u, th.edge);
+    v.window_highlight_topmost = false;
+    v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.5 };
+    v.slider_trailing_fill = true;
+    v.striped = false;
+    let edge = Stroke::new(u, th.edge);
+    let w = &mut v.widgets;
+    w.noninteractive.bg_fill = th.fill;
+    w.noninteractive.weak_bg_fill = th.fill;
+    w.noninteractive.bg_stroke = Stroke::new(u, th.dark);
+    w.noninteractive.fg_stroke = Stroke::new(u, Color32::from_rgb(220, 210, 190));
+    for (wv, fill, fg) in [
+        (&mut w.inactive, th.title_fill, th.title_ink),
+        (&mut w.hovered, lighten(th.title_fill, 0.14), Color32::WHITE),
+        (&mut w.active, th.dark, Color32::WHITE),
+        (&mut w.open, th.dark, th.title_ink),
+    ] {
+        wv.bg_fill = fill;
+        wv.weak_bg_fill = fill;
+        wv.bg_stroke = edge;
+        wv.fg_stroke = Stroke::new(u, fg);
+        wv.expansion = 0.0;
+    }
+    for wv in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+        wv.corner_radius = zero;
+    }
+    v
+}
+
+fn opaque(c: Color32) -> Color32 {
+    Color32::from_rgb(c.r(), c.g(), c.b())
+}
+
+impl Theme {
+    /// The same panel in the gold of a goal: what the player is asked to do next stands out from the plain panels.
+    pub fn goal(self) -> Self {
+        Theme {
+            fill: Color32::from_rgba_unmultiplied(40, 30, 16, 232),
+            light: Color32::from_rgb(176, 138, 64),
+            dark: Color32::from_rgb(96, 72, 32),
+            ..self
         }
     }
 }
@@ -130,9 +197,14 @@ fn chrome(out: &mut Vec<Shape>, r: Rect, th: &Theme, px: Px) {
 
 /// A panel: chrome behind, ordinary egui widgets inside. With a `title` a strip across the top carries it.
 pub fn frame<R>(ui: &mut Ui, th: &Theme, title: Option<&str>, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+    frame_with(ui, th, title, 4.0, add)
+}
+
+/// As `frame`, with `margin` pixels between the outline and the contents.
+pub fn frame_with<R>(ui: &mut Ui, th: &Theme, title: Option<&str>, margin: f32, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     let px = Px::of(ui.ctx());
     let back = ui.painter().add(Shape::Noop);
-    let margin = (px.n(4.0).round() as i8).max(2);
+    let margin = (px.n(margin).round() as i8).max(2);
     let mut strip: Option<Rect> = None;
     let inner = egui::Frame::new().inner_margin(margin).show(ui, |ui| {
         if let Some(t) = title {
@@ -153,18 +225,6 @@ pub fn frame<R>(ui: &mut Ui, th: &Theme, title: Option<&str>, add: impl FnOnce(&
     }
     ui.painter().set(back, Shape::Vec(shapes));
     inner
-}
-
-/// A one-pixel rule across the panel.
-pub fn rule(ui: &mut Ui, th: &Theme) {
-    let px = Px::of(ui.ctx());
-    let w = ui.available_width();
-    let (r, _) = ui.allocate_exact_size(Vec2::new(w, px.n(3.0)), Sense::hover());
-    let y = px.snap(r.center().y);
-    let mut v = Vec::new();
-    block(&mut v, rect(r.left(), y, r.right(), y + px.u), th.edge);
-    block(&mut v, rect(r.left(), y + px.u, r.right(), y + 2.0 * px.u), shade(th.light, 0.5));
-    ui.painter().extend(v);
 }
 
 /// Text on the grid with a one-pixel ink shadow.
@@ -285,7 +345,7 @@ fn shade(c: Color32, f: f32) -> Color32 {
     Color32::from_rgb((c.r() as f32 * f) as u8, (c.g() as f32 * f) as u8, (c.b() as f32 * f) as u8)
 }
 
-fn lighten(c: Color32, t: f32) -> Color32 {
+pub fn lighten(c: Color32, t: f32) -> Color32 {
     let m = |x: u8| (x as f32 + (255.0 - x as f32) * t) as u8;
     Color32::from_rgb(m(c.r()), m(c.g()), m(c.b()))
 }
@@ -382,43 +442,4 @@ pub fn chip(ui: &mut Ui, th: &Theme, label: &str, fill: Color32, ink: Color32) -
     ui.painter().extend(v);
     ui.painter().galley(px.pos(r.center() - galley.size() / 2.0), galley, ink);
     resp
-}
-
-/// A beveled button or tab. `selected` shows it pressed in; it sits a pixel lower while held.
-pub fn button(ui: &mut Ui, th: &Theme, label: &str, selected: bool, enabled: bool) -> Response {
-    let px = Px::of(ui.ctx());
-    let u = px.u;
-    let galley = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(22.0), Color32::WHITE);
-    let want = Vec2::new(px.snap(galley.size().x + px.n(10.0)), px.snap(galley.size().y + px.n(6.0)));
-    let (r, resp) = ui.allocate_exact_size(want, if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
-    let down = enabled && (selected || resp.is_pointer_button_down_on());
-    let (face, light, dark) = if !enabled {
-        (Color32::from_rgb(70, 62, 54), Color32::from_rgb(90, 80, 70), Color32::from_rgb(50, 44, 38))
-    } else if down {
-        (th.dark, shade(th.dark, 0.7), th.light)
-    } else if resp.hovered() {
-        (lighten(th.title_fill, 0.12), lighten(th.light, 0.2), th.dark)
-    } else {
-        (th.title_fill, th.light, th.dark)
-    };
-    let mut v = Vec::new();
-    chrome_flat(&mut v, r, th.edge, face, light, dark, px);
-    ui.painter().extend(v);
-    let c = r.center() + if down { Vec2::splat(u) } else { Vec2::ZERO };
-    text(ui, c, Align2::CENTER_CENTER, label, 22.0, if enabled { th.title_ink } else { Color32::from_gray(140) });
-    resp
-}
-
-/// Ink outline with stepped corners, bevel edges and a flat face, all opaque.
-fn chrome_flat(out: &mut Vec<Shape>, r: Rect, edge: Color32, face: Color32, light: Color32, dark: Color32, px: Px) {
-    let u = px.u;
-    block(out, rect(r.left() + u, r.top(), r.right() - u, r.bottom()), edge);
-    block(out, rect(r.left(), r.top() + u, r.right(), r.bottom() - u), edge);
-    let i = r.shrink(u);
-    block(out, i, face);
-    block(out, rect(i.left(), i.top(), i.right(), i.top() + u), light);
-    block(out, rect(i.left(), i.top(), i.left() + u, i.bottom()), light);
-    block(out, rect(i.left(), i.bottom() - u, i.right(), i.bottom()), dark);
-    block(out, rect(i.right() - u, i.top(), i.right(), i.bottom()), dark);
 }
