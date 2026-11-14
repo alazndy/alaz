@@ -13,6 +13,7 @@ mod icons;
 mod keys;
 mod lang;
 mod menu;
+mod portrait;
 mod pxpanel;
 mod pxui;
 mod fx;
@@ -378,6 +379,20 @@ fn demo_setup(w: &mut World) -> Selection {
             b.output = [0; ItemKind::COUNT];
         }
         w.forget_everything();
+    }
+    // Dev aids for looking at the character: ALAZ_DEMO_STAGE=0..5 sets the perception stage (and so the body, the
+    // interface theme and the font); ALAZ_DEMO_OUTFIT=<mask> puts clothes in the player's hands: 1 fibre wrap, 2 cloak,
+    // 4 boots, 8 tunic, 16 hood, 32 bronze plate, 64 steel helm, 128 apron (ALAZ_DEMO_DRESSED is mask 7).
+    if let Some(st) = std::env::var("ALAZ_DEMO_STAGE").ok().and_then(|v| v.parse::<usize>().ok()) {
+        w.learn_first([0, 4, 11, 21, 32, 43][st.min(5)]);
+    }
+    if let Some(mask) = std::env::var("ALAZ_DEMO_OUTFIT").ok().and_then(|v| v.parse::<u32>().ok()) {
+        const WEAR: [ItemKind; 8] = [ItemKind::FiberWrap, ItemKind::HideCloak, ItemKind::HideBoots, ItemKind::Tunic, ItemKind::LinenHood, ItemKind::BronzePlate, ItemKind::SteelHelm, ItemKind::WorkApron];
+        for (i, k) in WEAR.iter().enumerate() {
+            if mask & (1 << i) != 0 {
+                w.agents[0].inventory.counts[*k as usize] = 1;
+            }
+        }
     }
     if std::env::var_os("ALAZ_PLAYLOG").is_none() {
         w.take_events();
@@ -1656,7 +1671,8 @@ impl App {
     fn pointer_text(&self) -> Option<String> {
         use alaz_sim::physics::{BodyKind, Q};
         let g = self.gfx.as_ref()?;
-        if g.renderer.pointer_over_ui() || self.build_mode.is_some() {
+        // dev aid for close-up screenshots of the character: no tip beside the pointer
+        if g.renderer.pointer_over_ui() || self.build_mode.is_some() || std::env::var_os("ALAZ_DEMO_NOTIP").is_some() {
             return None;
         }
         let w = &self.world;

@@ -1511,6 +1511,12 @@ impl World {
         self.discover(d);
     }
 
+    /// Developer aid (`--demo`): only the first `n` discoveries known, which sets the perception stage
+    /// (`ALAZ_DEMO_STAGE`: 1 needs 4, 2 needs 11, 3 needs 21, 4 needs 32, 5 needs 43).
+    pub fn learn_first(&mut self, n: u32) {
+        self.known = if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+    }
+
     /// Developer aid (`--demo`): mark every discovery as known.
     pub fn learn_everything(&mut self) {
         self.known = u64::MAX;

@@ -3253,6 +3253,29 @@ fn a_trunk_can_be_broken_up_by_someone_else_and_pieces_picked_by_hand() {
 /// Weaving: an armful of fibre among farmers who dress teaches the loom; the loom turns fibre into cloth;
 /// cloth is sewn into a tunic (warmer than a fibre wrap) and a bag (a person carries more).
 #[test]
+fn later_ages_dress_the_wearer_and_old_saves_keep_their_items() {
+    // each new garment has a recipe, is carried and worn like the first ones, and keeps the cold off
+    for (k, id) in [(ItemKind::LinenHood, "linen_hood"), (ItemKind::BronzePlate, "bronze_plate"), (ItemKind::SteelHelm, "steel_helm"), (ItemKind::WorkApron, "work_apron")] {
+        assert!(k.is_tool() && k.warmth_bonus() > 0, "{id} is worn");
+        let r = crate::rules::rules().recipes.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("{id} has a recipe"));
+        assert_eq!(r.outputs[0].item, k);
+        assert!(!r.steps.is_empty(), "{id} is a hand-craft");
+        assert_eq!(ItemKind::ALL[k as usize], k, "{id} sits at its own slot");
+    }
+    // a hood sewn at the bench
+    let (mut w, a) = with_agent(3);
+    w.forget_everything();
+    w.learn(Discovery::Weaving);
+    give(&mut w, ItemKind::Cloth, 1);
+    give(&mut w, ItemKind::Fiber, 1);
+    w.step(&[cmd(a, CommandKind::Combine { items: [ItemKind::Cloth as u8, ItemKind::Fiber as u8, 255, 255] })]);
+    play_craft_perfectly(&mut w, a);
+    assert_eq!(count(&w, 0, ItemKind::LinenHood), 1);
+    // the items are named in saves, so the new ones appended at the end change no old name
+    assert_eq!(ItemKind::ALL[ItemKind::FishingRod as usize + 1], ItemKind::LinenHood);
+}
+
+#[test]
 fn the_loom_weaves_cloth_for_a_tunic_and_a_bag() {
     let (mut w, a) = with_agent(3);
     w.forget_everything();

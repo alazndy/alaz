@@ -40,6 +40,58 @@ pub(crate) fn push_chips(out: &mut Mesh, work: Work, target: (f32, f32), me: (f3
     }
 }
 
+/// Clothes worn, as bits of `Pose::outfit`.
+pub const OUT_WRAP: u16 = 1;
+pub const OUT_CLOAK: u16 = 2;
+pub const OUT_BOOTS: u16 = 4;
+pub const OUT_TUNIC: u16 = 8;
+pub const OUT_HOOD: u16 = 16;
+pub const OUT_PLATE: u16 = 32;
+pub const OUT_HELM: u16 = 64;
+pub const OUT_APRON: u16 = 128;
+
+/// A person's looks, fixed by the id: skin, hair, dye, build.
+pub struct Look {
+    pub skin: [f32; 3],
+    pub hair: [f32; 3],
+    /// Hair cut 0..6 (3 shaggy, 4 braid, 5 cropped).
+    pub style: usize,
+    pub dye: [f32; 3],
+    /// Shoulder and hip width factors.
+    pub frame: (f32, f32),
+    pub beard: bool,
+    pub braid_side: f32,
+}
+
+/// The looks of the person with this id; the body and the portrait both read them.
+pub fn look(id: u32) -> Look {
+    // every trait draws on its own hash of the id, so neighbours in the tribe do not share a look
+    let pick = |k: i32, n: usize| (alaz_sim::rng::hash2(0xA11CE, id as i32, k) % n as u64) as usize;
+    let tones = [[0.90, 0.69, 0.53], [0.78, 0.55, 0.39], [0.60, 0.42, 0.30], [0.94, 0.77, 0.64], [0.47, 0.32, 0.23], [0.84, 0.62, 0.44]];
+    let hairs = [[0.17, 0.11, 0.06], [0.33, 0.19, 0.08], [0.08, 0.07, 0.07], [0.54, 0.35, 0.15], [0.46, 0.17, 0.08], [0.66, 0.62, 0.56], [0.24, 0.17, 0.12]];
+    let dyes = [[0.72, 0.28, 0.2], [0.26, 0.36, 0.6], [0.86, 0.64, 0.2], [0.38, 0.52, 0.3], [0.52, 0.3, 0.46]];
+    let tint = 0.95 + 0.03 * pick(1, 4) as f32;
+    let frame = [(0.93, 1.07), (1.0, 1.0), (1.08, 0.97)][pick(6, 3)];
+    Look {
+        skin: tones[pick(0, tones.len())].map(|c| c * tint),
+        hair: hairs[pick(2, hairs.len())],
+        style: pick(3, 6),
+        dye: dyes[pick(8, dyes.len())],
+        frame,
+        beard: frame.0 > 0.95 && pick(5, 3) == 0,
+        braid_side: if pick(4, 2) == 0 { 1.0 } else { -1.0 },
+    }
+}
+
+/// What a person wears, from what they carry. A tunic replaces the fibre wrap; the rest layer over each other.
+pub fn outfit_bits(inv: &alaz_sim::world::Inventory) -> u16 {
+    use alaz_sim::ItemKind as I;
+    [(I::FiberWrap, OUT_WRAP), (I::HideCloak, OUT_CLOAK), (I::HideBoots, OUT_BOOTS), (I::Tunic, OUT_TUNIC), (I::LinenHood, OUT_HOOD), (I::BronzePlate, OUT_PLATE), (I::SteelHelm, OUT_HELM), (I::WorkApron, OUT_APRON)]
+        .iter()
+        .filter(|(k, _)| inv.counts[*k as usize] > 0)
+        .fold(0, |m, (_, b)| m | b)
+}
+
 /// A person built from tapered limbs and round parts: legs and arms bend, walking swings them,
 /// and every kind of work gets its own motion.
 pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
@@ -48,22 +100,36 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let (s, c) = pose.heading.sin_cos();
     let (fx, fz, rx, rz) = (s, c, c, -s);
     let id = pose.id as usize;
-    let tones = [[0.88, 0.67, 0.50], [0.76, 0.53, 0.37], [0.58, 0.40, 0.28], [0.93, 0.75, 0.61]];
-    let hairs = [[0.17, 0.11, 0.06], [0.33, 0.19, 0.08], [0.09, 0.07, 0.07], [0.52, 0.33, 0.14]];
+    // every trait draws on its own hash of the id, so neighbours in the tribe do not share a look
+    let lk = look(pose.id);
     // the further from the ape, the straighter, taller and smoother: hunched and furry at stage 0
     let stoop = (5 - pose.stage.min(5)) as f32 / 5.0;
     let ape = stoop > 0.55;
     let fur = [0.33, 0.23, 0.15];
-    let base_skin = tones[id % 4];
+    let base_skin = lk.skin;
     let skin = [0, 1, 2].map(|i| base_skin[i] + (fur[i] - base_skin[i]) * stoop * 0.5);
     let skin_dk = [skin[0] * 0.86, skin[1] * 0.8, skin[2] * 0.78];
-    let hair = hairs[(id / 4) % 4];
+    let hair = lk.hair;
+    let brow = hair.map(|c| c * 0.55);
     let hide = [0.56, 0.37, 0.21];
     let hide_dk = [0.40, 0.26, 0.15];
     let fluff = [0.86, 0.80, 0.66];
     let fibre = [0.66, 0.70, 0.36];
     let fibre_dk = [0.47, 0.52, 0.24];
-    let (wrap, cloak, boots) = (pose.outfit & 1 != 0, pose.outfit & 2 != 0, pose.outfit & 4 != 0);
+    let o = pose.outfit;
+    let (wrap, cloak, boots) = (o & OUT_WRAP != 0, o & OUT_CLOAK != 0, o & OUT_BOOTS != 0);
+    let (tunic, hood, plate, helm, apron) = (o & OUT_TUNIC != 0, o & OUT_HOOD != 0, o & OUT_PLATE != 0, o & OUT_HELM != 0, o & OUT_APRON != 0);
+    // cloth is natural linen or dyed one of five ways; metal is bronze or steel
+    let linen = [0.84, 0.78, 0.62];
+    let dye = lk.dye;
+    let bronze = [0.78, 0.56, 0.24];
+    let bronze_dk = [0.58, 0.4, 0.17];
+    let steel = [0.7, 0.74, 0.8];
+    let steel_dk = [0.46, 0.5, 0.58];
+    let denim = [0.3, 0.35, 0.45];
+    let canvas = [0.43, 0.36, 0.27];
+    // a frame per person: slight, even or broad in the shoulder, with hips the other way
+    let (sh_k, hip_k) = lk.frame;
     // build and height differ a little from person to person, so a tribe is not a row of copies
     let build = 0.94 + 0.04 * ((id * 7) % 4) as f32;
     let body_k = (0.86 + 0.14 * (1.0 - stoop)) * (0.97 + 0.02 * ((id * 5) % 3) as f32);
@@ -166,8 +232,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             let knee = at((off + planted) * 0.5 + bend, 0.47 + lift * 0.5 - crouch * 0.35, side * 0.11);
             (ankle, knee, at(off + planted + 0.06, lift + 0.045, side * 0.11))
         };
-        limb(out, hip, knee, 0.09, 0.07, if ape { fur } else { skin_dk }, 6);
-        limb(out, knee, ankle, 0.07, 0.05, if boots { hide } else { skin_dk }, 6);
+        let trousers = apron;
+        limb(out, hip, knee, 0.09, 0.07, if trousers { denim } else if ape { fur } else { skin_dk }, 6);
+        limb(out, knee, ankle, 0.07, 0.05, if boots { hide } else if trousers { denim } else { skin_dk }, 6);
         part(out, foot, 0.06, 0.045, 0.11, 0.0, if boots { hide_dk } else { skin_dk }, 6);
         if boots {
             // a fur cuff where the boot ends
@@ -178,15 +245,21 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
 
     // torso: hips, a waist and a chest wider than it is deep, rounded shoulders
     let torso_col = if ape { fur } else { skin };
-    part(out, pelvis, 0.17, 0.12, 0.12, 0.0, if ape { fur } else { skin_dk }, 8);
+    part(out, pelvis, 0.17 * hip_k, 0.12, 0.12, 0.0, if ape { fur } else { skin_dk }, 8);
     limb(out, pelvis, chest, 0.15, 0.17, torso_col, 8);
-    upart(out, chest, 0.22, 0.17, 0.14, tilt, torso_col, 9);
+    upart(out, chest, 0.22 * sh_k, 0.17, 0.14, tilt, torso_col, 9);
     if ape {
         // shaggy shoulders and back
         sphere(out, ub(-0.06, 1.4, 0.0), [0.2, 0.12, 0.2], fur, 8, 4, 0.18, id as u32);
     }
     // a loincloth until the tribe learns to make clothes; then a fibre skirt and a band across the chest
-    if wrap {
+    if tunic {
+        // a woven tunic in dyed cloth: a skirt to the knee with an undyed hem, a corded waist and a collar
+        limb(out, at(0.0, y(1.14), 0.0), at(0.01, y(0.6), 0.0), 0.168, 0.25 * hip_k, dye, 9);
+        limb(out, at(0.0, y(0.63), 0.0), at(0.0, y(0.58), 0.0), 0.252 * hip_k, 0.258 * hip_k, linen, 9);
+        upart(out, ub(0.0, 1.3, 0.0), 0.228 * sh_k, 0.185, 0.152, tilt, dye, 9);
+        sphere(out, ub(0.02, 1.47, 0.0), [0.1, 0.03, 0.1], linen, 7, 3, 0.0, 1);
+    } else if wrap {
         limb(out, at(0.0, y(0.94), 0.0), at(0.0, y(0.55), 0.0), 0.18, 0.26, fibre, 9);
         limb(out, at(0.0, y(0.7), 0.0), at(0.0, y(0.54), 0.0), 0.24, 0.27, fibre_dk, 9);
         upart(out, ub(0.0, 1.32, 0.0), 0.225, 0.07, 0.145, tilt, fibre, 9);
@@ -195,8 +268,25 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
     if pose.stage >= 2 {
         // a belt with a pouch on the hip for what the hands do not hold
-        limb(out, at(0.0, y(0.97), 0.0), at(0.0, y(0.91), 0.0), 0.175, 0.175, hide_dk, 9);
+        let belt_r = if tunic || apron || plate { 0.2 } else { 0.175 };
+        limb(out, at(0.0, y(0.97), 0.0), at(0.0, y(0.91), 0.0), belt_r * hip_k.max(1.0), belt_r * hip_k.max(1.0), hide_dk, 9);
         part(out, at(-0.02, y(0.86), 0.19), 0.05, 0.065, 0.06, 0.0, hide, 6);
+    }
+    if apron {
+        // a canvas bib and skirt with a brass buckle, held by straps over the shoulders
+        part(out, at(0.13, y(0.8), 0.0), 0.15, 0.3, 0.035, 0.0, canvas, 8);
+        upart(out, ub(0.14, 1.27, 0.0), 0.13, 0.16, 0.03, tilt, canvas, 8);
+        for side in [-1.0f32, 1.0] {
+            limb(out, ub(0.13, 1.4, side * 0.09), ub(-0.02, 1.47, side * 0.15), 0.02, 0.02, canvas, 5);
+        }
+        sphere(out, ub(0.16, 1.3, 0.0), [0.03; 3], [0.85, 0.7, 0.3], 5, 3, 0.0, 1);
+        part(out, at(0.16, y(0.78), 0.07), 0.05, 0.045, 0.02, 0.0, [0.34, 0.28, 0.2], 6);
+    }
+    if plate {
+        // a bronze breastplate with a studded kilt band
+        upart(out, ub(0.0, 1.31, 0.0), 0.236 * sh_k, 0.2, 0.16, tilt, bronze, 9);
+        limb(out, at(0.0, y(0.99), 0.0), at(0.0, y(0.84), 0.0), 0.205 * hip_k, 0.235 * hip_k, bronze_dk, 9);
+        sphere(out, ub(0.15, 1.34, 0.0), [0.045, 0.06, 0.03], bronze_dk, 6, 4, 0.0, 2);
     }
     if cloak {
         // a hide mantle over the shoulders with a fur collar, hanging down the back
@@ -225,19 +315,38 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         // an early skull: a heavy brow ridge
         hpart(out, hd(0.1, 0.055, 0.0), 0.13, 0.035, 0.05, skin_dk);
     }
-    // eyes, brows and a nose
+    // eyes, brows and a nose; at 27 texels to the metre a face is a few texels, so the eyes sit in a dark band
+    // (brows dark, a touch of shadow beside the nose) and the mouth is a single line
     for side in [-1.0f32, 1.0] {
-        sphere(out, hd(0.128, 0.015, side * 0.05), [0.02; 3], [0.06, 0.05, 0.05], 4, 3, 0.0, 1);
+        sphere(out, hd(0.127, 0.012, side * 0.052), [0.024, 0.02, 0.02], [0.05, 0.04, 0.04], 4, 3, 0.0, 1);
         if stoop <= 0.35 {
-            hpart(out, hd(0.122, 0.055, side * 0.05), 0.03, 0.012, 0.018, hair);
+            hpart(out, hd(0.12, 0.052, side * 0.052), 0.034, 0.014, 0.02, brow);
+        } else {
+            // under the heavy ridge the eyes are deep in shadow
+            hpart(out, hd(0.118, 0.026, side * 0.052), 0.036, 0.022, 0.02, skin_dk);
         }
     }
+    let nose_dk = [skin[0] * 0.8, skin[1] * 0.68, skin[2] * 0.62];
     hpart(out, hd(0.15, -0.025, 0.0), 0.026, 0.035, 0.03, [skin[0] * 0.95, skin[1] * 0.84, skin[2] * 0.78]);
-    // hair: one of four cuts per person (the ape is always shaggy), and a beard on some
-    let style = if ape { 3 } else { (id / 16 + id) % 4 };
-    hpart(out, hd(-0.02, 0.055, 0.0), 0.148, 0.12, 0.15, hair);
-    hpart(out, hd(0.075, 0.1, 0.0), 0.12, 0.045, 0.07, hair);
+    hpart(out, hd(0.14, -0.06, 0.0), 0.03, 0.01, 0.026, nose_dk);
+    hpart(out, hd(0.122, -0.088, 0.0), 0.034, 0.007, 0.016, [skin[0] * 0.6, skin[1] * 0.4, skin[2] * 0.38]);
+    // hair: one of six cuts per person (the ape is always shaggy), and a beard on some
+    let style = if ape { 3 } else { lk.style };
+    let crop = if style == 5 { 0.94 } else { 1.0 };
+    hpart(out, hd(-0.02, 0.055, 0.0), 0.148 * crop, 0.12 * crop, 0.15 * crop, hair);
+    if style != 5 {
+        hpart(out, hd(0.075, 0.1, 0.0), 0.12, 0.045, 0.07, hair);
+    }
     match style {
+        // a braid over one shoulder, tied off with a bit of hide
+        4 => {
+            let side = lk.braid_side;
+            let top = hd(-0.07, -0.02, side * 0.09);
+            let end = [neck[0] + urx * side * 0.17 - ufx * 0.08, neck[1] - 0.3 * body_k, neck[2] + urz * side * 0.17 - ufz * 0.08];
+            limb(out, top, end, 0.045, 0.028, hair, 6);
+            sphere(out, end, [0.03; 3], hide, 5, 3, 0.0, 1);
+        }
+        5 => {}
         // long hair down the back
         1 => limb(out, hd(-0.08, 0.02, 0.0), [neck[0] - fx * 0.14, neck[1] - 0.16 * body_k, neck[2] - fz * 0.14], 0.12, 0.08, hair, 7),
         // a knot on top
@@ -247,18 +356,36 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         // short, with a tuft down the neck
         _ => hpart(out, hd(-0.1, -0.05, 0.0), 0.09, 0.09, 0.06, hair),
     }
-    if !ape && id % 3 == 1 {
+    if !ape && lk.beard {
         hpart(out, hd(0.09, -0.1, 0.0), 0.1, 0.07, 0.07, hair);
+    }
+    if hood {
+        // a linen hood: over the crown and ears, a cowl at the neck and a soft point behind
+        hpart(out, hd(-0.035, 0.08, 0.0), 0.158, 0.115, 0.155, linen);
+        limb(out, hd(-0.1, 0.02, 0.0), ub(-0.04, 1.44, 0.0), 0.11, 0.17, linen, 7);
+        sphere(out, hd(-0.15, 0.09, 0.0), [0.04, 0.05, 0.04], linen, 5, 3, 0.0, 1);
+        hpart(out, hd(0.1, 0.1, 0.0), 0.12, 0.012, 0.03, dye);
+    }
+    if helm {
+        // a steel cap with a rim above the brows, a nose guard and a plume along the crest
+        hpart(out, hd(-0.01, 0.085, 0.0), 0.158, 0.115, 0.162, steel);
+        hpart(out, hd(0.0, 0.098, 0.0), 0.164, 0.026, 0.168, steel_dk);
+        hpart(out, hd(0.152, -0.01, 0.0), 0.012, 0.07, 0.012, steel);
+        hpart(out, hd(-0.01, 0.2, 0.0), 0.012, 0.03, 0.12, [0.66, 0.16, 0.12]);
     }
 
     // arms: shoulder, elbow, hand; an ape's hang lower
     let reach = 0.12 * stoop;
     let arm = |out: &mut Mesh, side: f32, hand: [f32; 3]| {
-        let sh = ub(0.0, 1.42, side * 0.235);
+        let sh = ub(0.0, 1.42, side * 0.235 * sh_k);
         let mid = [(sh[0] + hand[0]) * 0.5, (sh[1] + hand[1]) * 0.5, (sh[2] + hand[2]) * 0.5];
         let elbow = [mid[0] + urx * side * 0.07 - ufx * 0.03, mid[1] - 0.06, mid[2] + urz * side * 0.07 - ufz * 0.03];
-        let upper = if cloak { hide } else if ape { fur } else { skin };
-        sphere(out, sh, [0.075; 3], upper, 6, 4, 0.0, 1);
+        let upper = if cloak { hide } else if tunic { dye } else if apron { linen } else if ape { fur } else { skin };
+        if plate {
+            sphere(out, sh, [0.098, 0.07, 0.098], bronze, 6, 4, 0.0, 1);
+        } else {
+            sphere(out, sh, [0.075; 3], upper, 6, 4, 0.0, 1);
+        }
         limb(out, sh, elbow, 0.065, 0.052, upper, 6);
         limb(out, elbow, hand, 0.052, 0.042, skin, 6);
         sphere(out, hand, [0.055; 3], skin, 6, 4, 0.0, 1);

@@ -321,7 +321,7 @@ fn material(v: VOut) -> vec3<f32> {
 
 // surface direction of the ground at a point, from the height map
 fn ground_n(w: vec2<f32>) -> vec3<f32> {
-    let e = 0.5;
+    let e = 1.0;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
     let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
     return normalize(vec3<f32>(-gx, 1.0, -gz));
@@ -430,7 +430,14 @@ fn tile_at(t: vec2<i32>) -> vec4<f32> {
 // the painted picture of a land texel, with the ragged borders between kinds of ground (and the wet sand that is the
 // land edge of a water tile)
 fn land_base(tx: vec2<i32>, tile: vec2<i32>, tl: vec2<i32>, mine: vec4<f32>) -> vec3<f32> {
-    var col = textureLoad(atlas, vec2<i32>(floor(mine.xy)) + tl, 0).rgb * mine.w;
+    // each tile has its own shade; read flat, the tiles show as a grid of lighter and darker squares, so it is blended
+    // across from tile centre to tile centre instead
+    let qs = vec2<f32>(tx) / 27.0 - vec2<f32>(0.5);
+    let t0 = vec2<i32>(floor(qs));
+    let fr = qs - floor(qs);
+    let shade = mix(mix(tile_at(t0).w, tile_at(t0 + vec2<i32>(1, 0)).w, fr.x),
+                    mix(tile_at(t0 + vec2<i32>(0, 1)).w, tile_at(t0 + vec2<i32>(1, 1)).w, fr.x), fr.y);
+    var col = textureLoad(atlas, vec2<i32>(floor(mine.xy)) + tl, 0).rgb * shade;
     if (mine.z > 0.5) {
         // ground boundaries wander: each texel looks a little way off along a slow noise and, if that falls on a
         // tile of another kind of land, wears that tile's ground; edges become ragged lines, not tile staircases
@@ -444,7 +451,7 @@ fn land_base(tx: vec2<i32>, tile: vec2<i32>, tl: vec2<i32>, mine: vec4<f32>) -> 
             let them = tile_at(vec2<i32>(other));
             // land over land only (the water's edge has its own smooth line)
             if (them.z > 0.5 && them.z != mine.z) {
-                col = textureLoad(atlas, vec2<i32>(floor(them.xy)) + tl, 0).rgb * vec3<f32>(them.w);
+                col = textureLoad(atlas, vec2<i32>(floor(them.xy)) + tl, 0).rgb * shade;
             }
         }
     } else {
@@ -472,8 +479,8 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }
     // the middle of the texel stands for the smooth fields below
     let w = (vec2<f32>(tx) + 0.5) / 27.0;
-    // the shape of the land: which way it faces
-    let e = 0.5;
+    // the shape of the land: which way it faces, over two tiles so the light does not break at every tile edge
+    let e = 1.0;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
     let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
     let alt = ground_h(w);

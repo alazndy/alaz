@@ -646,6 +646,19 @@ steps = [
 ]
 
 [[recipe]]
+id = "linen_hood"
+name = "Keten başlık"
+inputs = [{ item = "cloth", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "linen_hood", n = 1 }]
+ticks = 0
+discovery = "weaving"
+fine_bonus = 0
+steps = [
+  { label = "Kumaşı başa göre kes", kind = "fit", strikes = 2, window = 24, period = 0, tools = [{ item = "sharp_stone", bonus = 6 }] },
+  { label = "Dikişi sık at", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
 id = "bag"
 name = "Dokuma torba"
 inputs = [{ item = "cloth", n = 1 }, { item = "fiber", n = 2 }]
@@ -656,6 +669,48 @@ fine_bonus = 0
 steps = [
   { label = "Kumaşı katla ve dik", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
   { label = "Ağzını büzen ipi geçir", kind = "timing", strikes = 2, window = 12, period = 120, tools = [] },
+]
+
+# --- Metal and engine age clothes: worn while carried. ---
+[[recipe]]
+id = "bronze_plate"
+name = "Bronz göğüslük"
+inputs = [{ item = "bronze", n = 3 }, { item = "hide", n = 1 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "bronze_plate", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Levhayı göğse göre döv", kind = "timing", strikes = 4, window = 11, period = 110, tools = [{ item = "hammer", bonus = 4 }] },
+  { label = "Levhayı postun üstüne oturt", kind = "fit", strikes = 2, window = 22, period = 0, tools = [] },
+  { label = "Lifle sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "steel_helm"
+name = "Çelik miğfer"
+inputs = [{ item = "steel", n = 2 }, { item = "hide", n = 1 }]
+outputs = [{ item = "steel_helm", n = 1 }]
+ticks = 0
+discovery = "steelmaking"
+fine_bonus = 0
+steps = [
+  { label = "Çeliği kubbe yapacak şekilde döv", kind = "timing", strikes = 4, window = 10, period = 100, tools = [{ item = "hammer", bonus = 4 }] },
+  { label = "Burun korumasını oturt", kind = "fit", strikes = 2, window = 20, period = 0, tools = [] },
+]
+
+[[recipe]]
+id = "work_apron"
+name = "İş önlüğü"
+inputs = [{ item = "cloth", n = 3 }, { item = "gear", n = 1 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "work_apron", n = 1 }]
+ticks = 0
+discovery = "steam"
+fine_bonus = 0
+steps = [
+  { label = "Kumaşı önlük ve pantolon için kes", kind = "fit", strikes = 3, window = 22, period = 0, tools = [{ item = "sharp_stone", bonus = 6 }] },
+  { label = "Dikişleri sık at", kind = "tension", strikes = 3, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+  { label = "Dişli kopçayı tak", kind = "fit", strikes = 1, window = 18, period = 0, tools = [] },
 ]
 
 # --- Husbandry: a pair of one kind kept in the pen and fed brings a young one, which works like its parents. ---

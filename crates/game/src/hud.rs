@@ -119,6 +119,10 @@ pub fn item_name(k: ItemKind) -> &'static str {
         ItemKind::WaterPot => "Su dolu çömlek",
         ItemKind::Cloth => "Kumaş",
         ItemKind::Tunic => "Dokuma giysi",
+        ItemKind::LinenHood => "Keten başlık",
+        ItemKind::BronzePlate => "Bronz göğüslük",
+        ItemKind::SteelHelm => "Çelik miğfer",
+        ItemKind::WorkApron => "İş önlüğü",
         ItemKind::Bag => "Dokuma torba",
         ItemKind::Wheel => "Tekerlek",
         ItemKind::Cart => "Araba",
@@ -330,13 +334,13 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Discovered(Discovery::Ironwork) => "Demir kütleyi tezgahta dövüp alet yapabilirsin: balta ve kazma.".into(),
         Event::Discovered(Discovery::Mechanics) => "Dişliler gücü aktarır. Akan suyun yanına bir su çarkı kurarsan yakındaki tezgahlar iki kat hızlı çalışır.".into(),
         Event::Discovered(Discovery::Alloying) => "Üç bakır ile bir kalayı birlikte eritirsen bronz olur: demirden önce bilinen sert metal. Ocağı kullan.".into(),
-        Event::Discovered(Discovery::Bronzework) => "Bronz kütleyi tezgahta dövüp alet yapabilirsin: balta ve kazma.".into(),
+        Event::Discovered(Discovery::Bronzework) => "Bronz kütleyi tezgahta dövüp alet yapabilirsin: balta ve kazma. Bronz levhayı postla astarlarsan göğüslük olur.".into(),
         Event::Discovered(Discovery::Clothing) => "Lif ve post, üşüyen bedeni örter. Yap sekmesinde örtü, pelerin ve çizme yapabilirsin; taşıdıkça giyilir ve sıcak tutar.".into(),
         Event::Discovered(Discovery::Clamp) => "İki dal ve lifi Yap sekmesinde birleştir: kıskaç olur, parçaları senin yerine tutar.".into(),
         Event::Discovered(Discovery::Farming) => "Bu uzun otun başakları tohum döküyor. Keskin taşı iki dala bağlarsan çapa olur; çapayla toprağı sürüp İnşa'dan tarla kur, tohumu ek.".into(),
         Event::Discovered(Discovery::Milling) => "Buğday taneleri çiğ yenmez. Üç taşı düzleyip öğütme taşı yap, taneleri un et, unu ateşte ekmek pişir.".into(),
         Event::Discovered(Discovery::Pottery) => "Islak kil şekil tutuyor. Üç kili halka halka üst üste koyup ateşte pişirirsen çömlek olur: suyu yanında taşırsın.".into(),
-        Event::Discovered(Discovery::Weaving) => "Lifleri gergin iplere geçirip sık sık dokursan kumaş olur. Odun ve kil ağırlıklarla bir dokuma tezgahı kur; kumaştan giysi ve torba dikersin.".into(),
+        Event::Discovered(Discovery::Weaving) => "Lifleri gergin iplere geçirip sık sık dokursan kumaş olur. Odun ve kil ağırlıklarla bir dokuma tezgahı kur; kumaştan giysi, keten başlık ve torba dikersin.".into(),
         Event::Discovered(Discovery::Husbandry) => "Hayvanlar bir arada, beslenince çoğalır. Odun kazıklarla bir ağıl kur, aynı türden iki hayvanı içine götür, buğdayla besle: yavru olur.".into(),
         Event::Discovered(Discovery::Draught) => "Öküzün gücü bronzla birleşince: tezgahta tekerlek, araba ve saban yapılır. Arabayı koşulan hayvan çok daha fazla taşır; sabanlı hayvan tarlanın yanında ekini iki kat hızlı büyütür.".into(),
         Event::Discovered(Discovery::Hammer) => "Yuvarlak bir taşı dala bağlarsan çekiç olur: kaya damarlarını söker, içinden çakmaktaşı çıkar.".into(),
@@ -346,8 +350,8 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Discovered(Discovery::Electricity) => "Mıknatısın yanında dönen bakır tel akım verir. Haddehanede tel çek, demir örste mıknatıs yap; dinamo, direk, motor ve lamba kur.".into(),
         Event::Discovered(Discovery::Electronics) => "Kumdan ve koktan silisyum indirilir. Silisyum ve telle transistör, transistörlerle devre kartı yapılır.".into(),
         Event::Discovered(Discovery::Computing) => "Devre kartları bir araya gelince hesap yapar: bir bilgisayar kur. Ağa bağlı bilgisayar tasarım masasını açar: kendi tarifini yazarsın, sonra yeni bir dünyaya geçebilirsin.".into(),
-        Event::Discovered(Discovery::Steam) => "Kaynayan su kapağı kaldırır. Dökme demir silindirli bir buhar makinesi kömür ve suyla makineleri çevirir; bir pompa su basmış madeni boşaltır. Kum ocakta cama döner.".into(),
-        Event::Discovered(Discovery::Steelmaking) => "Ateş kili büyük ısıya dayanır, kireçtaşı cürufu taşır. Ateş tuğlasından körüklü bir yüksek fırın pik demir verir; pik demir demir örste dövülünce çelik olur.".into(),
+        Event::Discovered(Discovery::Steam) => "Kaynayan su kapağı kaldırır. Dökme demir silindirli bir buhar makinesi kömür ve suyla makineleri çevirir; bir pompa su basmış madeni boşaltır. Kum ocakta cama döner. Kumaşa dişli kopçalar takıp makine işçisinin önlüğünü dikebilirsin.".into(),
+        Event::Discovered(Discovery::Steelmaking) => "Ateş kili büyük ısıya dayanır, kireçtaşı cürufu taşır. Ateş tuğlasından körüklü bir yüksek fırın pik demir verir; pik demir demir örste dövülünce çelik olur; çelikten miğfer de dövülür.".into(),
         Event::Discovered(Discovery::Casting) => "Bu yeşilimsi taş ateşte erir. Kilden bir pota ve kalıplar yap, çukur fırında bakırı erit, kalıba dök: ilk metal aletin olur.".into(),
         Event::Discovered(Discovery::Medicine) => "Acı otlar karın ve yara için iyidir. Çiğneyebilir ya da iki otu sargıya çevirebilirsin.".into(),
         Event::Struck { .. } => return None,
@@ -643,7 +647,7 @@ pub fn era_name(w: &World) -> &'static str {
     }
 }
 
-fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_ctx: &UiCtx) {
+fn draw_status(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx) {
     use crate::pxpanel as pp;
     let level = w.perception_level();
     let th = pp::Theme::era(level);
@@ -656,6 +660,10 @@ fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_
             let m = minute_of_day(w.tick);
             let sky = w.weather();
             let daytime = (360..1200).contains(&m);
+            // the player's portrait, dressed as they are, beside the day and what the tribe has mastered
+            ui.horizontal(|ui| {
+            crate::portrait::portrait(ui, &th, level, me.id.0, alaz_render::outfit_bits(&me.inventory)).on_hover_text("Sen");
+            ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 let (rows, col) = match sky {
                     alaz_sim::time::Weather::Rain => (pp::RAIN, Color32::from_rgb(170, 190, 215)),
@@ -689,6 +697,10 @@ fn draw_status(ctx: &egui::Context, w: &World, _me: &alaz_sim::world::Agent, ui_
                         ui.label(RichText::new(parts.join("  ·  ")).small().color(Color32::from_rgb(170, 190, 220)));
                     }
                 });
+            });
+            ui.add_space(3.0);
+            crate::portrait::tech_strip(ui, w);
+            });
             });
             ui.add_space(3.0);
             let stage = level.min(5);
@@ -1459,24 +1471,57 @@ pub fn ui_zoom_controls(ui: &mut egui::Ui) {
         let z = ui.ctx().zoom_factor() / UI_BASE;
         let mut set = None;
         if ui.button(" - ").clicked() {
-            set = Some((z - 0.1).max(0.6));
+            set = Some(z - 0.1);
         }
         if ui.button(format!("%{:.0}", z * 100.0)).on_hover_text("Sıfırla").clicked() {
             set = Some(1.0);
         }
         if ui.button(" + ").clicked() {
-            set = Some((z + 0.1).min(2.0));
+            set = Some(z + 0.1);
         }
         if let Some(z) = set {
-            ui.ctx().set_zoom_factor(z * UI_BASE);
-            let _ = std::fs::create_dir_all(crate::saveio::base_dir());
-            let _ = std::fs::write(crate::saveio::base_dir().join("ui.cfg"), format!("zoom={z:.2}\n"));
+            set_ui_zoom(ui.ctx(), z);
         }
     });
 }
 
+/// Sets the interface size (the player's number, 1.0 = "%100") and keeps it in ui.cfg.
+fn set_ui_zoom(ctx: &egui::Context, z: f32) {
+    let z = ((z * 10.0).round() / 10.0).clamp(0.6, 2.0);
+    ctx.set_zoom_factor(z * UI_BASE);
+    let _ = std::fs::create_dir_all(crate::saveio::base_dir());
+    let _ = std::fs::write(crate::saveio::base_dir().join("ui.cfg"), format!("zoom={z:.2}\n"));
+}
+
+/// Ctrl + / Ctrl - / Ctrl 0 change the interface size like the buttons do. egui's own keys are off: they know nothing
+/// of UI_BASE (Ctrl 0 would jump to "%125") and do not save.
+fn ui_zoom_keys(ctx: &egui::Context) {
+    use egui::{Key, KeyboardShortcut, Modifiers};
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    let sc = |k| KeyboardShortcut::new(Modifiers::COMMAND, k);
+    let (reset, up, down) = ctx.input_mut(|i| {
+        (
+            i.consume_shortcut(&sc(Key::Num0)),
+            i.consume_shortcut(&sc(Key::Plus)) || i.consume_shortcut(&sc(Key::Equals)),
+            i.consume_shortcut(&sc(Key::Minus)),
+        )
+    });
+    let z = ctx.zoom_factor() / UI_BASE;
+    if reset {
+        set_ui_zoom(ctx, 1.0);
+    } else if up {
+        set_ui_zoom(ctx, z + 0.1);
+    } else if down {
+        set_ui_zoom(ctx, z - 0.1);
+    }
+}
+
 /// The interface size saved last time (1.0 when none).
 pub fn saved_ui_zoom() -> f32 {
+    // dev aid for screenshots: ALAZ_UI_ZOOM=1.25 overrides the saved size
+    if let Some(z) = std::env::var("ALAZ_UI_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
+        return z.clamp(0.6, 2.0);
+    }
     std::fs::read_to_string(crate::saveio::base_dir().join("ui.cfg"))
         .ok()
         .and_then(|t| t.lines().find_map(|l| l.strip_prefix("zoom=").and_then(|v| v.trim().parse::<f32>().ok())))
@@ -1561,6 +1606,7 @@ fn set_era_font(ctx: &egui::Context, era: u8) {
 }
 
 pub fn apply_style(ctx: &egui::Context) {
+    ui_zoom_keys(ctx);
     set_era_font(ctx, ERA.load(std::sync::atomic::Ordering::Relaxed));
     let px = crate::pxpanel::Px::of(ctx);
     crate::pxui::set_unit(px.u);
@@ -1685,7 +1731,18 @@ fn craft_area(ctx: &egui::Context, name: &str) -> egui::Area {
     let y = (p.y + 60.0).clamp(screen.top() + 20.0, (screen.bottom() - 20.0).max(screen.top() + 20.0));
     // never over the status column on the left or the action bar at the bottom, whatever the window size
     let left = if screen.width() >= 700.0 { screen.left() + 226.0 } else { screen.left() + 8.0 };
-    let keep = egui::Rect::from_min_max(egui::pos2(left, screen.top() + 8.0), egui::pos2(screen.right() - 8.0, (screen.bottom() - 70.0).max(screen.top() + 120.0)));
+    let mut keep = egui::Rect::from_min_max(egui::pos2(left, screen.top() + 8.0), egui::pos2(screen.right() - 8.0, (screen.bottom() - 70.0).max(screen.top() + 120.0)));
+    // nor over the needs in the bottom right corner (at a large interface size they reach up into the panel's way):
+    // stop above them if that leaves room for the panel, otherwise stay left of them
+    // (a small window has room for neither: then the panel may cover them rather than leave the screen)
+    if let Some(needs) = ctx.memory(|m| m.area_rect(egui::Id::NULL.with("needs"))) {
+        let size = ctx.memory(|m| m.area_rect(egui::Id::NULL.with(name))).map_or(egui::vec2(PANEL_W, 360.0), |r| r.size());
+        if needs.top() - 8.0 - keep.top() >= size.y {
+            keep.max.y = keep.max.y.min(needs.top() - 8.0);
+        } else if needs.left() - 8.0 - keep.left() >= size.x {
+            keep.max.x = keep.max.x.min(needs.left() - 8.0);
+        }
+    }
     if p.x + 70.0 + PANEL_W < screen.right() {
         egui::Area::new(egui::Id::NULL.with(name)).pivot(Align2::LEFT_CENTER).fixed_pos(egui::pos2(p.x + 70.0, y)).constrain_to(keep)
     } else {

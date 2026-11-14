@@ -82,7 +82,7 @@ impl Menu {
             season_idx: 1,
             hardcore: false,
             confirm_delete: None,
-            keys_screen: false,
+            keys_screen: std::env::var_os("ALAZ_DEMO_KEYS").is_some(),
             capturing: None,
             error: None,
             born: None,

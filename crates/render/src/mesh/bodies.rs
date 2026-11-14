@@ -339,7 +339,7 @@ pub(crate) struct Pose {
     pub(crate) work: Work,
     pub(crate) tool: Tool,
     /// Clothes worn (bit 1 wrap, 2 cloak, 4 boots) and the person's id, which varies skin and hair.
-    pub(crate) outfit: u8,
+    pub(crate) outfit: u16,
     pub(crate) id: u32,
     /// How far the tribe has evolved, 0 (ape) to 5 (sage): posture, height and body hair follow.
     pub(crate) stage: u8,

@@ -211,6 +211,15 @@ pub enum ItemKind {
     CookedFish,
     /// A branch, a line of twisted fibre and a hook of sharp stone; kept.
     FishingRod,
+    // --- Clothes of later ages, worn while carried like the first three ---
+    /// A linen hood sewn from woven cloth.
+    LinenHood,
+    /// A breastplate of beaten bronze on a hide lining.
+    BronzePlate,
+    /// A steel cap with a nose guard.
+    SteelHelm,
+    /// Canvas work clothes for the engine age: trousers, an apron with a brass buckle.
+    WorkApron,
 }
 
 impl ItemKind {
@@ -247,6 +256,10 @@ impl ItemKind {
                 | ItemKind::Saw
                 | ItemKind::ProspectorPick
                 | ItemKind::FishingRod
+                | ItemKind::LinenHood
+                | ItemKind::BronzePlate
+                | ItemKind::SteelHelm
+                | ItemKind::WorkApron
         )
     }
 
@@ -257,11 +270,15 @@ impl ItemKind {
             ItemKind::HideCloak => 25,
             ItemKind::HideBoots => 10,
             ItemKind::Tunic => 20,
+            ItemKind::LinenHood => 8,
+            ItemKind::BronzePlate => 12,
+            ItemKind::SteelHelm => 6,
+            ItemKind::WorkApron => 22,
             _ => 0,
         }
     }
 
-    pub const COUNT: usize = 105;
+    pub const COUNT: usize = 109;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -368,6 +385,10 @@ impl ItemKind {
         ItemKind::RawFish,
         ItemKind::CookedFish,
         ItemKind::FishingRod,
+        ItemKind::LinenHood,
+        ItemKind::BronzePlate,
+        ItemKind::SteelHelm,
+        ItemKind::WorkApron,
     ];
 }
 

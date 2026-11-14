@@ -25,6 +25,7 @@ pub(crate) use common::*;
 pub(crate) use creatures::*;
 pub(crate) use decor::*;
 pub(crate) use human::*;
+pub use human::{look, outfit_bits, Look, OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_HELM, OUT_HOOD, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
 pub(crate) use nodes::*;
 pub(crate) use terrain::*;
 pub(crate) use water::*;

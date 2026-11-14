@@ -445,8 +445,7 @@ impl Renderer {
             }
             let working = work != Work::None && w.amp < 0.3;
             let cyc = work_cycle(world, a, work, w, alpha, secs, dt);
-            let worn = |k: alaz_sim::ItemKind, bit: u8| if a.inventory.counts[k as usize] > 0 { bit } else { 0 };
-            let outfit = worn(alaz_sim::ItemKind::FiberWrap, 1) | worn(alaz_sim::ItemKind::HideCloak, 2) | worn(alaz_sim::ItemKind::HideBoots, 4);
+                        let outfit = outfit_bits(&a.inventory);
             let slope = {
                 let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                 (ground_height(world.seed, x + sx, z + sz) - ground_height(world.seed, x - sx, z - sz)) / 1.2

@@ -49,6 +49,22 @@ mod vertex_census {
         }
         println!("total {total} ({:.0} per chunk)", total as f32 / 25.0);
     }
+
+    /// Vertices of one standing person by stage and outfit (`cargo test --release -p alaz-render human_verts -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn human_verts() {
+        for outfit in [0u16, 0xFFFF] {
+            let row: Vec<usize> = (0..6u8)
+                .map(|stage| {
+                    let mut o = Mesh::new();
+                    push_human(&mut o, 5.0, 9.0, Pose { outfit, stage, id: 5, ..Pose::idle(1.0) });
+                    o.len()
+                })
+                .collect();
+            println!("outfit {outfit:#06x}: verts by stage 0..5 = {row:?}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -72,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: (i % 8) as u8, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize] }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize] }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -290,44 +306,44 @@ mod mesh_hashes {
         ("campfire 0", 0xb81451d68c550836),
         ("campfire 0.4", 0xb3ff0ed12254b8e3),
         ("campfire 1", 0x39408f657b7c3591),
-        ("human 0", 0x3d3b7cfd97ad3214),
+        ("human 0", 0x9f0da828f23a75bb),
         ("chips 0", 0xf1ee7d13c71175fd),
-        ("human 1", 0xafbc634283e780c8),
+        ("human 1", 0x4d48ff74498f1241),
         ("chips 1", 0x4f90e872f7b9bb49),
-        ("human 2", 0x1f4da7243115e1f6),
+        ("human 2", 0x29ae213011efe60a),
         ("chips 2", 0x29212fa195674fb1),
-        ("human 3", 0xbeb3287468478512),
+        ("human 3", 0x4266f20c7f88d95e),
         ("chips 3", 0x24a4650a3d23774d),
-        ("human 4", 0x718bba44557c827c),
+        ("human 4", 0x4150a4be237df237),
         ("chips 4", 0x80890b727ab91b75),
-        ("human 5", 0xd907b299c220bc43),
+        ("human 5", 0x84ce8b23e2f5e7c8),
         ("chips 5", 0xb0b82e4a8b2b2ce5),
-        ("human 6", 0x21b51fb5d3be7704),
+        ("human 6", 0xd4158308e81e71d7),
         ("chips 6", 0x208689db08b27ee5),
-        ("human 7", 0x00f900d204897012),
+        ("human 7", 0x928bc1dadb31de62),
         ("chips 7", 0xb01cc00bdd0007b1),
-        ("human 8", 0x113da0102ea7f63c),
+        ("human 8", 0x92c03354729c93c8),
         ("chips 8", 0x8f35433f8bfe4225),
-        ("human 9", 0xd9ed8ac72859ab56),
+        ("human 9", 0x65028d0de85cb032),
         ("chips 9", 0xa0d90ffb37f89491),
-        ("human 10", 0x9192973a3d578539),
+        ("human 10", 0x1d8cbc4fb93f73fd),
         ("chips 10", 0x74cdbe2ae6a4fb15),
-        ("human 11", 0xd10cb31cb3ef551b),
+        ("human 11", 0xd2853a9bbdd7e7c5),
         ("chips 11", 0x5d40cb8c63cb9efd),
-        ("human 12", 0x80112f75b7c3170d),
+        ("human 12", 0xaec8bee166ccf015),
         ("chips 12", 0x3d32ec87c4f000e1),
-        ("human 13", 0x2b4e4e9805758822),
+        ("human 13", 0xf8cd7d8c070c72dd),
         ("chips 13", 0xdfec6e628fa8f5b1),
-        ("human 14", 0x75c9ef410544304b),
+        ("human 14", 0x452d387fe0cbe79b),
         ("chips 14", 0xcbe30d69dd14f68d),
-        ("human 15", 0x12e328a8e6cbc000),
+        ("human 15", 0x3c0057ede6fd7902),
         ("chips 15", 0x1b7bb2ed30491225),
-        ("human 16", 0xd46eba77a04ae406),
+        ("human 16", 0x49a6ac832115e125),
         ("chips 16", 0xdf641d4e5def6905),
-        ("human 17", 0x918bec796a10812d),
+        ("human 17", 0xbc1f514790fee85d),
         ("chips 17", 0xd12ff22a885b3e59),
-        ("creature Human false", 0x84eca15975d63bb8),
-        ("creature Human true", 0xb47d04c66add288e),
+        ("creature Human false", 0x01f6d4aad6f3f5c5),
+        ("creature Human true", 0x862f187b81be2fcb),
         ("creature Dog false", 0xd3c2f146f8aef670),
         ("creature Dog true", 0x34d8fa9a933d6547),
         ("creature Ox false", 0xac48a2d1111b2a34),
