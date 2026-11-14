@@ -68,7 +68,7 @@ fn rain(g0: vec3<f32>, q: vec2<i32>, wa: f32, up_down: f32) -> vec3<f32> {
     let lim = vec2<i32>(textureDimensions(scene)) - vec2<i32>(1);
     let q = vec2<i32>(floor((frag.xy + p.a.zw) / p.a.x));
     // sharp bilinear: a texel is a hard block, blended with its neighbour only across the one screen pixel where
-    // their edge falls. A texel is not a whole number of screen pixels at every zoom (2.25 at the default), and
+    // their edge falls. A texel is not a whole number of screen pixels at every zoom (1.8 at the default), and
     // picking the nearest texel then makes blocks 2 and 3 pixels wide in a pattern fixed to the screen, which the
     // world crawls under as the camera moves; this way every block is the same width and the picture glides on
     // smoothly, a fraction of a pixel at a time

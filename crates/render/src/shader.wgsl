@@ -32,8 +32,8 @@ struct Globals {
 @group(0) @binding(6) var bake_nrm: texture_2d<f32>;
 // the bake pass only: per drawn block, (world texel - ring texel) of its first texel
 @group(0) @binding(8) var<uniform> bake_params: array<vec4<f32>, 32>;
-// side of the bake ring in ground texels (4 chunks of 32 tiles of 21 texels; bake.rs keeps the same number)
-const RING_TEXELS: i32 = 2688;
+// side of the bake ring in ground texels (4 chunks of 32 tiles of 27 texels; bake.rs keeps the same number)
+const RING_TEXELS: i32 = 3456;
 
 fn corner(i: vec2<i32>) -> vec4<f32> {
     return textureLoad(hmap, clamp(i, vec2<i32>(0), vec2<i32>(255)), 0);
@@ -403,7 +403,7 @@ fn finish(lit0: vec3<f32>, wpos: vec2<f32>, glow: f32) -> vec3<f32> {
 }
 
 // ---- the ground ------------------------------------------------------------------------------------------------
-// Ground is drawn on a texel grid of 21 per metre. Everything about a land texel that does not change with time or
+// Ground is drawn on a texel grid of 27 per metre. Everything about a land texel that does not change with time or
 // weather (its painted picture, ragged tile borders, wet shore sand, biomes, deserts, swamps, mountain and snow cap,
 // and which way it faces) is worked out by `ground_static`, either live (fs_ground_live) or ahead of time into the bake
 // (fs_bake -> fs_ground). Wind, rain, puddles, snow fall, sparkle, the sea, light and shadow stay per frame.
@@ -418,8 +418,8 @@ struct GStatic {
 
 // integer division of ground texels into tiles that rounds down
 fn tile_of(t: vec2<i32>) -> vec2<i32> {
-    let d = t / vec2<i32>(21);
-    return select(d, d - vec2<i32>(1), (t - d * 21) < vec2<i32>(0));
+    let d = t / vec2<i32>(27);
+    return select(d, d - vec2<i32>(1), (t - d * 27) < vec2<i32>(0));
 }
 
 // the tile window's entry for a tile: (atlas x, atlas y, ground kind, shade)
@@ -434,7 +434,7 @@ fn land_base(tx: vec2<i32>, tile: vec2<i32>, tl: vec2<i32>, mine: vec4<f32>) -> 
     if (mine.z > 0.5) {
         // ground boundaries wander: each texel looks a little way off along a slow noise and, if that falls on a
         // tile of another kind of land, wears that tile's ground; edges become ragged lines, not tile staircases
-        let q = vec2<f32>(tx) / 21.0;
+        let q = vec2<f32>(tx) / 27.0;
         let jit = vec2<f32>(vnoise(q * 1.7 + vec2<f32>(17.3, 4.1)), vnoise(q * 1.7 + vec2<f32>(3.7, 91.2))) - vec2<f32>(0.5);
         let fine = vec2<f32>(vnoise(q * 6.0 + vec2<f32>(51.0, 7.0)), vnoise(q * 6.0 + vec2<f32>(9.0, 33.0))) - vec2<f32>(0.5);
         let wl = q + jit * 0.9 + fine * 0.25;
@@ -460,9 +460,9 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     r.state = 2.0;
     r.g = vec2<f32>(0.0);
     let tile = tile_of(tx);
-    let tl = tx - tile * 21;
+    let tl = tx - tile * 27;
     let mine = tile_at(tile);
-    let q = vec2<f32>(tx) / 21.0;
+    let q = vec2<f32>(tx) / 27.0;
     // near the shore, water or land is decided by the smooth shore field, not by whole tiles: a coast that runs
     // across the grid is a curve, not a staircase of tile corners
     let sh0 = shore_at(q);
@@ -471,7 +471,7 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     // the ground right by the water is wet and dark, in a band that the waves keep washing
     if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }
     // the middle of the texel stands for the smooth fields below
-    let w = (vec2<f32>(tx) + 0.5) / 21.0;
+    let w = (vec2<f32>(tx) + 0.5) / 27.0;
     // the shape of the land: which way it faces
     let e = 0.5;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
@@ -530,8 +530,8 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
 
 // can a puddle form here? (the same test ground_static makes, for the few texels the bake marks as pools)
 fn puddle_allowed(tx: vec2<i32>, g: vec2<f32>) -> bool {
-    let q = vec2<f32>(tx) / 21.0;
-    let w = (vec2<f32>(tx) + 0.5) / 21.0;
+    let q = vec2<f32>(tx) / 27.0;
+    let w = (vec2<f32>(tx) + 0.5) / 27.0;
     let steep = clamp(length(g) * 2.5, 0.0, 1.0);
     let cap = smoothstep(11.5, 14.5, ground_h(w) - steep * 3.0 + 1.2 * vnoise(w * 0.4));
     return steep < 0.25 && shore_at(q) < -0.7 && cap < 0.5;
@@ -554,7 +554,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
     if (g.state > 1.5 && g.state < 2.5) {
         // water, drawn on the ground's own texel grid: deep blue r in the open, turquoise in the shallows,
         // wave bands drifting with the wind, foam lapping at the shore and the sun sparkling on the ripples
-        let q = vec2<f32>(tx) / 21.0;
+        let q = vec2<f32>(tx) / 27.0;
         let depth = shore_at(q);
         let deep = smoothstep(0.0, 3.5, depth);
         col = mix(vec3<f32>(0.22, 0.58, 0.62), vec3<f32>(0.13, 0.36, 0.56), smoothstep(0.0, 1.2, depth));
@@ -630,7 +630,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         // wet earth is darker
         col = col * (1.0 - 0.22 * rain);
         if (rain > 0.05) {
-            let tq = vec2<f32>(tx) / 21.0;
+            let tq = vec2<f32>(tx) / 27.0;
             // puddles: still water in the flat hollows, growing as the rain goes on; they hold the grey sky,
             // deeper toward the middle, with a muddy lip, and the drops ring them
             let pn = vnoise(tq * 0.45 + vec2<f32>(31.7, 12.9)) * 0.65 + vnoise(tq * 1.4 + vec2<f32>(4.2, 77.1)) * 0.35;
@@ -656,8 +656,8 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
                 let ph = fract(clock * (1.1 + 0.6 * hs) + hs * 13.0);
                 // (the sand edge of a water tile gets no drops)
                 if (hs < rain * 0.55 && ph < 0.13 && tile_at(tile_of(tx)).z > 0.5) {
-                    let ctr = floor((sc + vec2<f32>(0.25 + 0.5 * fract(hs * 31.0), 0.25 + 0.5 * fract(hs * 57.0))) / 1.7 * 21.0);
-                    let a = abs(floor(w * 21.0) - ctr);
+                    let ctr = floor((sc + vec2<f32>(0.25 + 0.5 * fract(hs * 31.0), 0.25 + 0.5 * fract(hs * 57.0))) / 1.7 * 27.0);
+                    let a = abs(floor(w * 27.0) - ctr);
                     let first = ph < 0.045 && a.x + a.y < 0.5;
                     let crown = ph >= 0.045 && a.x + a.y > 0.5 && a.x + a.y < 1.5;
                     if (first || crown) { col = mix(col, vec3<f32>(0.80, 0.86, 0.93), select(0.45, 0.65, first)); }
@@ -666,7 +666,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         }
         // snow settles in patches
         if (snow > 0.02) {
-            let tx2 = floor(w * 21.0);
+            let tx2 = floor(w * 27.0);
             let nt = fract(sin(dot(tx2, vec2<f32>(12.9898, 78.233))) * 43758.5453);
             let lo = floor(w * 1.7);
             let nl = fract(sin(dot(lo, vec2<f32>(39.3468, 11.135))) * 24634.6345);
@@ -697,7 +697,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk whose bake is complete: one lookup stands in for the whole static colour.
 @fragment fn fs_ground(v: GIn) -> @location(0) vec4<f32> {
-    let tx = vec2<i32>(floor(v.wpos * 21.0));
+    let tx = vec2<i32>(floor(v.wpos * 27.0));
     let rt = ((tx % vec2<i32>(RING_TEXELS)) + vec2<i32>(RING_TEXELS)) % vec2<i32>(RING_TEXELS);
     let c = textureLoad(bake_col, rt, 0);
     var g: GStatic;
@@ -709,7 +709,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk the bake has not reached yet (or lies beyond the ring): the same, worked out on the spot.
 @fragment fn fs_ground_live(v: GIn) -> @location(0) vec4<f32> {
-    let tx = vec2<i32>(floor(v.wpos * 21.0));
+    let tx = vec2<i32>(floor(v.wpos * 27.0));
     return ground_finish(ground_dyn(v.wpos, tx, ground_static(tx)), v.wpos, v.world);
 }
 

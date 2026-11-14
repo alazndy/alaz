@@ -7,9 +7,9 @@ pub type Rgb = [u8; 3];
 pub const PPM: f32 = 16.0;
 pub const ATLAS: u32 = 1024;
 pub const TILE: i32 = 16;
-/// Ground tiles are finer than the painted sprites: 21 texels to the metre, as close as whole texels get to the
-/// picture's own 16 * 4/3, so a ground texel is one picture texel and they all come out the same width.
-pub const GT: i32 = 21;
+/// Ground tiles are finer than the painted sprites: 27 texels to the metre, as close as whole texels get to the
+/// picture's own 16 * 5/3, so a ground texel is one picture texel and they all come out the same width.
+pub const GT: i32 = 27;
 /// Material tiles (modulation textures for the 3D models) live in a fixed strip at the bottom of the atlas:
 /// tile i (0 wood, 1 leaves, 2 stone, 3 skin and cloth) at x = 16 * i. A texel is a multiplier, 128 = 1.0.
 pub const MAT_Y: u32 = 1008;

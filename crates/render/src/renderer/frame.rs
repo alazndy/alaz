@@ -535,24 +535,7 @@ impl Renderer {
         }
         let dyn_buf = self.vertex_buffer(&dynamic);
 
-        // --- egui
         let t_scene = std::time::Instant::now();
-        let raw = self.egui_state.take_egui_input(&self.window);
-        let full = self.egui_ctx.run_pass(raw, |ctx| hud(ctx));
-        self.egui_state.handle_platform_output(&self.window, full.platform_output);
-        let prims = self.egui_ctx.tessellate(full.shapes, full.pixels_per_point);
-        let mut tex = full.textures_delta;
-        for (id, deltas) in std::mem::take(&mut tex.set) {
-            for delta in &deltas {
-                self.egui_renderer.update_texture(&self.device, &self.queue, id, delta);
-            }
-        }
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [self.config.width, self.config.height],
-            pixels_per_point: full.pixels_per_point,
-        };
-
-        let t_ui = std::time::Instant::now();
         let mut enc = self.device.create_command_encoder(&Default::default());
         self.bake.encode(&mut enc, &self.queue, &self.bake_pipeline, &jobs, self.prof.as_ref().and_then(|p| p.writes(7)));
         if redraw_static {
@@ -608,7 +591,6 @@ impl Renderer {
             pass.set_vertex_buffer(0, dyn_buf.slice(..));
             pass.draw(0..dynamic.len() as u32, 0..1);
         }
-        let extra = self.egui_renderer.update_buffers(&self.device, &self.queue, &mut enc, &prims, &screen);
         // the scene: the chunks' models first, then the ground, then what moves. Models first: the ground's shading
         // is the dearest in the game, and where a tree or rock already stands the depth test now skips it. One pass
         // normally; three when profiling, so each part gets its own GPU time (0 ground, 1 models, 2 what moves).
@@ -730,6 +712,28 @@ impl Renderer {
             pass.set_bind_group(0, Some(&self.pixel.group), &[]);
             pass.draw(0..3, 0..1);
         }
+        // --- egui. The scene's commands go to the GPU first, and the interface is worked out while it draws: the GPU
+        // would otherwise sit idle through this (about 2 ms of the CPU's time) before its first pass.
+        self.queue.submit([enc.finish()]);
+        let t_scene_sent = std::time::Instant::now();
+        let raw = self.egui_state.take_egui_input(&self.window);
+        let full = self.egui_ctx.run_pass(raw, |ctx| hud(ctx));
+        self.egui_state.handle_platform_output(&self.window, full.platform_output);
+        let prims = self.egui_ctx.tessellate(full.shapes, full.pixels_per_point);
+        let mut tex = full.textures_delta;
+        for (id, deltas) in std::mem::take(&mut tex.set) {
+            for delta in &deltas {
+                self.egui_renderer.update_texture(&self.device, &self.queue, id, delta);
+            }
+        }
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: full.pixels_per_point,
+        };
+
+        let t_ui = std::time::Instant::now();
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        let extra = self.egui_renderer.update_buffers(&self.device, &self.queue, &mut enc, &prims, &screen);
         {
             let mut pass = enc
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -757,8 +761,8 @@ impl Renderer {
             let now = std::time::Instant::now();
             p.cpu[0] += ms(t_start, t_acquired);
             p.cpu[1] += ms(t_acquired, t_scene);
-            p.cpu[2] += ms(t_scene, t_ui);
-            p.cpu[3] += ms(t_ui, now);
+            p.cpu[2] += ms(t_scene_sent, t_ui);
+            p.cpu[3] += ms(t_scene, t_scene_sent) + ms(t_ui, now);
             p.collect(&self.device);
         }
         for id in &tex.free {

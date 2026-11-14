@@ -1448,11 +1448,15 @@ fn tab_routes(ui: &mut egui::Ui, w: &World, ui_ctx: &UiCtx, acts: &mut Vec<UiAct
     }
 }
 
+/// The interface's real scale at the "%100" setting: everything (text, panels, pixels) a fifth smaller than egui's
+/// own size. ui.cfg and the settings show the player's number; egui gets it times this.
+const UI_BASE: f32 = 0.8;
+
 /// The size of the whole interface (kept between runs in ui.cfg beside the saves).
 pub fn ui_zoom_controls(ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("Arayüz boyutu").strong());
-        let z = ui.ctx().zoom_factor();
+        let z = ui.ctx().zoom_factor() / UI_BASE;
         let mut set = None;
         if ui.button(" - ").clicked() {
             set = Some((z - 0.1).max(0.6));
@@ -1464,7 +1468,7 @@ pub fn ui_zoom_controls(ui: &mut egui::Ui) {
             set = Some((z + 0.1).min(2.0));
         }
         if let Some(z) = set {
-            ui.ctx().set_zoom_factor(z);
+            ui.ctx().set_zoom_factor(z * UI_BASE);
             let _ = std::fs::create_dir_all(crate::saveio::base_dir());
             let _ = std::fs::write(crate::saveio::base_dir().join("ui.cfg"), format!("zoom={z:.2}\n"));
         }
@@ -1552,7 +1556,7 @@ fn set_era_font(ctx: &egui::Context, era: u8) {
     ctx.set_fonts(fonts);
     if first == u8::MAX {
         // and the interface size chosen last time
-        ctx.set_zoom_factor(saved_ui_zoom());
+        ctx.set_zoom_factor(saved_ui_zoom() * UI_BASE);
     }
 }
 

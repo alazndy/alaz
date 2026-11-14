@@ -3,7 +3,7 @@
 //! into two textures instead, in blocks of 8x8 tiles within a small per-frame budget, and the ground shader only looks
 //! it up and adds what moves (wind, rain, snow fall, sea, light).
 //!
-//! The textures are a ring of RING x RING chunks at the ground's own 21 texels per metre: a world texel lives at its
+//! The textures are a ring of RING x RING chunks at the ground's own 27 texels per metre: a world texel lives at its
 //! coordinates modulo the ring, so a chunk keeps its place while the camera stays near and nothing is copied when it
 //! moves. A chunk is drawn from the bake only once all 16 of its blocks are done (until then the shader that works
 //! the colour out on the spot draws it), and a chunk the ring has no room for is drawn that way for good.
@@ -11,12 +11,12 @@ use crate::renderer::CHUNK_TILES;
 use std::collections::HashSet;
 
 /// Ground texels per metre; the shader's number.
-const TEXELS_PER_TILE: i32 = 21;
+const TEXELS_PER_TILE: i32 = crate::sprites::GT;
 /// Chunks on a side of the ring (shader.wgsl's RING_TEXELS is this times CHUNK_TEXELS).
 pub(crate) const RING: i32 = 4;
 pub(crate) const CHUNK_TEXELS: i32 = CHUNK_TILES * TEXELS_PER_TILE;
 pub(crate) const RING_TEXELS: u32 = (RING * CHUNK_TEXELS) as u32;
-/// A block is the unit of baking: 8x8 tiles, 168x168 texels, 16 to a chunk.
+/// A block is the unit of baking: 8x8 tiles, 216x216 texels, 16 to a chunk.
 const BLOCK_TILES: i32 = 8;
 const BLOCK_TEXELS: i32 = BLOCK_TILES * TEXELS_PER_TILE;
 const BLOCKS_SIDE: i32 = CHUNK_TILES / BLOCK_TILES;

@@ -4,7 +4,7 @@
 use super::Mesh;
 
 /// One texel of the drawn picture, in metres (it has 16 * 4/3 texels to the metre).
-const TEXEL: f32 = 1.0 / 21.3;
+const TEXEL: f32 = 1.0 / (16.0 * 5.0 / 3.0);
 
 const LIGHT: [f32; 3] = [-0.45, 0.78, -0.42];
 

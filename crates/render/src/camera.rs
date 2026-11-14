@@ -24,7 +24,7 @@ impl Camera {
     pub const PITCH_MIN: f32 = 28.0;
     /// How much finer the picture is than the painted art's 16 texels per metre: the world keeps its size on screen,
     /// only the texels get smaller.
-    pub const RES: f32 = 4.0 / 3.0;
+    pub const RES: f32 = 5.0 / 3.0;
     /// Texels per meter.
     pub const PPM: f32 = 16.0 * Self::RES;
     const DIST: f32 = 150.0;
@@ -33,7 +33,7 @@ impl Camera {
         Self { target: Vec3::ZERO, pitch_deg: Self::PITCH_ISO, yaw_deg: 45.0, zoom: 1.0, win: (1280, 720) }
     }
 
-    /// Screen pixels per texel (zoom 1 = 3 / RES = 2.25). Zoom still moves in whole steps of the old scale.
+    /// Screen pixels per texel (zoom 1 = 3 / RES = 1.8). Zoom still moves in whole steps of the old scale.
     pub fn scale(&self) -> f32 {
         ((self.zoom * 3.0).round()).clamp(2.0, 6.0) / Self::RES
     }
