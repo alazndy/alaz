@@ -362,7 +362,29 @@ pub fn button(ui: &mut Ui, label: &str, size: f32, enabled: bool) -> egui::Respo
     } else {
         (th.title_fill, th.light, th.dark)
     };
-    bevel(ui.painter(), rect, face, light, dark);
+    // a button picture (`assets/ui/button.png`, with `button_hover.png` and `button_down.png` if wanted) replaces the bevel
+    let era = crate::hud::ERA.load(std::sync::atomic::Ordering::Relaxed);
+    let state = if !enabled { "off" } else if down { "down" } else if resp.hovered() { "hover" } else { "" };
+    let pic = if crate::art::any() {
+        let named = |n: &str| crate::art::era_texture(ui.ctx(), n, era);
+        let base = || named("button");
+        match state {
+            "" => base().map(|t| (t, Color32::WHITE)),
+            "hover" => named("button_hover").map(|t| (t, Color32::WHITE)).or_else(|| base().map(|t| (t, Color32::WHITE))),
+            "down" => named("button_down").map(|t| (t, Color32::WHITE)).or_else(|| base().map(|t| (t, Color32::from_gray(190)))),
+            _ => named("button_off").map(|t| (t, Color32::WHITE)).or_else(|| base().map(|t| (t, Color32::from_gray(120)))),
+        }
+    } else {
+        None
+    };
+    match pic {
+        Some(((tex, size), tint)) => {
+            for sh in crate::art::nine_slice(&tex, size, rect, unit(), tint) {
+                ui.painter().add(sh);
+            }
+        }
+        None => bevel(ui.painter(), rect, face, light, dark),
+    }
     let c = rect.center() + if down { Vec2::splat(unit()) } else { Vec2::ZERO };
     text(ui.painter(), c, Align2::CENTER_CENTER, label, size, if enabled { th.title_ink } else { Color32::from_gray(140) });
     resp

@@ -31,7 +31,7 @@ pub struct HotReload {
     next_check: Instant,
 }
 
-fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     match std::env::var("ALAZ_HOTRELOAD") {
         Ok(v) => v != "0" && !v.is_empty(),
         Err(_) => cfg!(debug_assertions),
@@ -116,6 +116,20 @@ impl Renderer {
                 Err(e) => eprintln!("[hotreload] {name}: {e}"),
             }
         }
+    }
+
+    /// Called once a frame: when asset files changed on disk (see `assets::poll`) the ground tiles are painted again and
+    /// every built chunk is dropped, so models and pictures show their new version.
+    pub(crate) fn assets_poll(&mut self) {
+        crate::assets::poll();
+        let g = crate::assets::generation();
+        if g == self.assets_gen {
+            return;
+        }
+        self.assets_gen = g;
+        self.repaint_atlas();
+        self.refresh_groups();
+        self.shadow_static.valid = false;
     }
 
     fn rebuild(&mut self, which: Which, name: &str, src: &str) -> Result<(), String> {

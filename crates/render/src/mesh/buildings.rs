@@ -20,6 +20,15 @@ pub(crate) fn push_box(out: &mut Mesh, base: [f32; 3], half: [f32; 3], col: [f32
     }
 }
 
+/// Which numbered variant of a model stands at (x, z): fixed by the place, so it does not change from frame to frame.
+/// (The placement preview always shows the first.)
+pub(crate) fn site_seed(x: f32, z: f32, tint: Option<[f32; 3]>) -> u32 {
+    if tint.is_some() {
+        return 0;
+    }
+    ((x * 100.0) as i32 as u32).wrapping_mul(0x9E37_79B1) ^ ((z * 100.0) as i32 as u32).wrapping_mul(0x85EB_CA6B)
+}
+
 /// Make what was drawn since `start` shine by itself (flames, embers, sparks).
 pub(crate) fn glowify(out: &mut [Vertex], start: usize) {
     for v in &mut out[start..] {
@@ -34,6 +43,11 @@ pub(crate) fn glowify(out: &mut [Vertex], start: usize) {
 /// `tint` draws the whole thing in one flat colour (placement preview).
 pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, tint: Option<[f32; 3]>) {
     use shapes::{limb, sphere};
+    // a model file stands in for the whole fire (its `lit_` parts show while there is fuel)
+    if let Some(m) = assets::model("campfire", site_seed(x, z, tint)) {
+        m.place(out, &assets::Place::at(x, z).working(fuel > 0.0, (t * 60.0) as u64).tinted(tint));
+        return;
+    }
     out.set_anchor(x, z);
     let fuel = fuel.clamp(0.0, 1.0);
     let lit = fuel > 0.0;
@@ -189,6 +203,11 @@ pub(crate) fn push_grass_fire(out: &mut Mesh, x: f32, z: f32, age: f32, t: f32) 
 
 /// Building models from simple boxes. `tint` turns it into a flat bright preview colour.
 pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, active: bool, tick: u64, tint: Option<[f32; 3]>) {
+    // a model file for this kind (`models/<kind>.vox|.glb`) replaces the code-made one
+    if let Some(m) = assets::model(assets::building_name(kind), site_seed(x, z, tint)) {
+        m.place(out, &assets::Place::at(x, z).working(active, tick).tinted(tint));
+        return;
+    }
     out.set_anchor(x, z);
     fn round(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], tint: Option<[f32; 3]>) {
         match tint {

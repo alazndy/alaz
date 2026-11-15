@@ -1,6 +1,7 @@
 //! Everything that turns the world into triangles: the ground, the scenery, buildings and living bodies.
 //! Builders push into a `Mesh`, which carries the settings they used to keep in thread-locals.
 
+use crate::assets;
 use crate::sprites::{self, Art, Spr};
 use crate::Camera;
 use alaz_sim::{AgentKind, BuildingKind, NodeKind, Terrain, World};

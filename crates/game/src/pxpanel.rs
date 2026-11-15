@@ -216,7 +216,12 @@ pub fn frame_with<R>(ui: &mut Ui, th: &Theme, title: Option<&str>, margin: f32, 
     });
     let outer = px.outer(inner.response.rect);
     let mut shapes = Vec::with_capacity(12);
-    chrome(&mut shapes, outer, th, px);
+    // a frame picture (`assets/ui/panel.png`, or `panel_<era>.png`) takes the place of the painted chrome
+    let era = crate::hud::ERA.load(std::sync::atomic::Ordering::Relaxed);
+    match crate::art::any().then(|| crate::art::era_texture(ui.ctx(), "panel", era)).flatten() {
+        Some((tex, size)) => shapes.extend(crate::art::nine_slice(&tex, size, outer, px.u, Color32::WHITE)),
+        None => chrome(&mut shapes, outer, th, px),
+    }
     if let Some(t) = strip {
         let i = outer.shrink(px.n(2.0));
         let bottom = px.snap(t.bottom() + px.n(1.0));

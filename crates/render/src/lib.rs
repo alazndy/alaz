@@ -3,8 +3,10 @@
 //! Pixel-art renderer: the world is a fixed top-down view drawn from a painted sprite atlas (`sprites.rs`) into a
 //! small picture of whole texels (16 per metre), which is then enlarged by a whole number of screen pixels.
 
+pub mod assets;
 mod bake;
 mod camera;
+mod export;
 mod hotreload;
 mod mesh;
 mod pipelines;
@@ -16,6 +18,7 @@ pub mod sprites;
 mod tests;
 
 pub use camera::Camera;
+pub use export::export_world_assets;
 pub use egui;
 pub use glam;
 pub use quality::{PixelDetail, Quality, ShadowQuality};

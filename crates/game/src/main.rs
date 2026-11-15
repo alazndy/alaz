@@ -7,7 +7,9 @@ use alaz_sim::world::{dist2, BUILD_RADIUS_MM};
 use alaz_net::{apply_turn, Client, Host};
 use alaz_sim::{rules, AgentId, BuildingKind, Command, CommandKind, RouteStep, World};
 use hud::{Selection, UiAction, UiCtx};
+mod art;
 mod audio;
+mod export;
 mod hud;
 mod icons;
 mod keys;
@@ -696,6 +698,10 @@ impl App {
         };
         if let Some(z) = std::env::var("ALAZ_DEMO_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
             app.cam.zoom = z;
+        }
+        // the model preview wants to be close
+        if std::env::var_os("ALAZ_DEMO_VIEW").is_some() && std::env::var_os("ALAZ_DEMO_ZOOM").is_none() {
+            app.cam.zoom = 2.0;
         }
         if let Some(p) = std::env::var("ALAZ_DEMO_PITCH").ok().and_then(|v| v.parse::<f32>().ok()) {
             app.pitch_goal = p.clamp(Camera::PITCH_MIN, Camera::PITCH_TOP);
@@ -1489,6 +1495,13 @@ impl App {
             if flash > 0.0 {
                 hud::hurt_vignette(ctx, flash);
             }
+            if let Some(k) = view_item() {
+                // the preview of an item icon: the file's picture if there is one, else the painted icon, big
+                alaz_render::egui::Area::new(alaz_render::egui::Id::NULL.with("view_icon")).anchor(alaz_render::egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                    let (rect, _) = ui.allocate_exact_size(alaz_render::egui::vec2(256.0, 256.0), alaz_render::egui::Sense::hover());
+                    icons::draw_slot(ui.painter(), rect, k, true);
+                });
+            }
             if menu.is_none() {
                 let (sun, k) = alaz_render::sun_of(world.tick, 0.0, world.settings.season_days as u64);
                 hud::compass(ctx, cam.yaw_deg, cam.pitch_deg, sun, k > 0.3);
@@ -2196,7 +2209,23 @@ impl ApplicationHandler for App {
     }
 }
 
+/// `ALAZ_DEMO_VIEW=<item id>` (an icon preview instead of a model).
+fn view_item() -> Option<alaz_sim::ItemKind> {
+    static ITEM: std::sync::OnceLock<Option<alaz_sim::ItemKind>> = std::sync::OnceLock::new();
+    *ITEM.get_or_init(|| {
+        let v = std::env::var("ALAZ_DEMO_VIEW").ok()?;
+        alaz_sim::ItemKind::ALL.iter().copied().find(|k| alaz_render::assets::snake(&format!("{k:?}")) == v)
+    })
+}
+
 fn main() {
+    // `--export-assets <folder>`: write the code-made models, tiles and icons out as files, then leave (no window)
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--export-assets") {
+        let dir = args.get(i + 1).cloned().unwrap_or_else(|| "alaz-assets".into());
+        export::run(std::path::Path::new(&dir));
+        return;
+    }
     let el = EventLoop::new().expect("event loop");
     el.set_control_flow(ControlFlow::Poll);
     el.run_app(&mut App::new(parse_args())).expect("run");

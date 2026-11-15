@@ -66,6 +66,9 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
         // things you have never handled look like the ordinary thing they resemble
         let known = world.has_seen(n.kind.item());
         let (x, z) = (n.tx as f32 + 0.5 + 0.18 * jit(3), n.ty as f32 + 0.5 + 0.18 * jit(7));
+        if assets::has_models() && push_node_file(out, world, n, (x, z), seed, known) {
+            return;
+        }
         out.set_anchor(x, z);
         let stone = |out: &mut Mesh, x: f32, z: f32| {
             let g = 0.58 + 0.06 * jit(11);
@@ -289,4 +292,59 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
             }
         }
     }
+}
+
+/// The species name a tree gets in file names (`tree_pine.vox`), by the same rules the code-made trees use.
+pub(crate) fn tree_species_name(world: &World, n: &alaz_sim::world::Node, seed: u32) -> &'static str {
+    let (warm, wet) = alaz_sim::climate(world.seed, n.tx, n.ty);
+    let (warm, wet) = (warm as f32 / 1000.0, wet as f32 / 1000.0);
+    let cold = warm < 0.38;
+    let steppe = warm > 0.56 && wet < 0.5;
+    let jungle = warm > 0.56 && wet >= 0.5;
+    let autumn = !cold && warm < 0.55 && warm > 0.32 && wet > 0.4;
+    let desert = warm > 0.66 && wet < 0.34;
+    let swamp = wet > 0.7 && warm > 0.4 && warm < 0.6;
+    let terrain = world.map.terrain(n.tx, n.ty);
+    let pine = cold && (seed >> 4) % 100 < 85
+        || terrain == Some(Terrain::Forest) && !steppe && !jungle && (seed >> 4) % 100 < 45
+        || terrain == Some(Terrain::Grass) && (seed >> 4) % 100 < 8;
+    if desert {
+        "cactus"
+    } else if swamp && !pine {
+        "willow"
+    } else if pine {
+        "pine"
+    } else if steppe {
+        "acacia"
+    } else if jungle {
+        "jungle"
+    } else if autumn {
+        "autumn"
+    } else if (seed >> 5) % 100 < 22 {
+        "birch"
+    } else {
+        "oak"
+    }
+}
+
+/// A model file for this node (`models/tree_pine.vox`, then `models/tree`; `iron_outcrop_unknown` while its ore is
+/// still unrecognised), standing where the code-made one would. Returns false when there is none.
+fn push_node_file(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, (x, z): (f32, f32), seed: u32, known: bool) -> bool {
+    let base = assets::node_name(n.kind);
+    let model = if n.kind == NodeKind::Tree {
+        assets::model(&format!("tree_{}", tree_species_name(world, n, seed)), seed).or_else(|| assets::model(base, seed))
+    } else if !known {
+        assets::model(&format!("{base}_unknown"), seed).or_else(|| assets::model(base, seed))
+    } else {
+        assets::model(base, seed)
+    };
+    let Some(m) = model else { return false };
+    let mut scale = 1.0;
+    if n.kind == NodeKind::Tree && m.opts.fit_height.unwrap_or(true) && m.height > 0.05 {
+        let h = alaz_sim::map::tree_height_mm(world.seed, n.tx, n.ty) as f32 / 1000.0;
+        scale = (h / m.height).clamp(0.25, 4.0);
+    }
+    let yaw = if m.opts.rotate { (seed >> 8) as f32 % 628.0 / 100.0 } else { 0.0 };
+    m.place(out, &assets::Place::at(x, z).turned(yaw, scale));
+    true
 }

@@ -134,7 +134,11 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let fluff = [0.86, 0.80, 0.66];
     let fibre = [0.66, 0.70, 0.36];
     let fibre_dk = [0.47, 0.52, 0.24];
-    let o = pose.outfit;
+    let mut o = pose.outfit;
+    if !lod && assets::has_models() {
+        // garments that come from a model file are stamped on the body's spot; the code-made ones are left out
+        o &= !file_outfit(out, x, z, &pose);
+    }
     let (wrap, cloak, boots) = (o & OUT_WRAP != 0, o & OUT_CLOAK != 0, o & OUT_BOOTS != 0);
     let (tunic, hood, plate, helm, apron) = (o & OUT_TUNIC != 0, o & OUT_HOOD != 0, o & OUT_PLATE != 0, o & OUT_HELM != 0, o & OUT_APRON != 0);
     // cloth is natural linen or dyed one of five ways; metal is bronze or steel
@@ -474,7 +478,13 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                     let left = along(right, d, -0.17);
                     arm(out, 1.0, right);
                     arm(out, -1.0, left);
-                    if pose.tool == Tool::Hand {
+                    let file = if lod { None } else { tool_file(pose.tool) };
+                    if let Some(m) = file {
+                        // a model file for the tool: grip at the hand, handle up its y toward the head, blade facing +z
+                        let n = lw(if w == Work::Mine { [0.0, 0.0, 1.0] } else { [-0.3, 0.11, -0.95] });
+                        let b = [n[1] * d[2] - n[2] * d[1], n[2] * d[0] - n[0] * d[2], n[0] * d[1] - n[1] * d[0]];
+                        m.place(out, &assets::Place { origin: right, basis: [[-b[0], -b[1], -b[2]], d, n], active: false, tick: 0, tint: None });
+                    } else if pose.tool == Tool::Hand {
                         sphere(out, along(right, d, 0.06), [0.08, 0.07, 0.08], stone, 7, 5, 0.15, 3);
                     } else {
                         let len = if w == Work::Mine { 0.62 } else { 0.68 };
@@ -500,8 +510,18 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                     arm(out, 1.0, right);
                     arm(out, -1.0, hpos(hl));
                     let tip = along(right, d, 1.0);
-                    limb(out, along(right, d, -0.6), tip, 0.025, 0.016, wood, 5);
-                    limb(out, along(tip, d, -0.04), along(tip, d, 0.14), 0.04, 0.005, [0.62, 0.62, 0.66], 5);
+                    let file = if lod { None } else { tool_file(Tool::Spear) };
+                    if let Some(m) = file {
+                        // (the spear model: its middle at the hand, point up its y)
+                        let up = [0.0, 1.0, 0.0];
+                        let x = cross(up, d);
+                        let x = if x[0] * x[0] + x[1] * x[1] + x[2] * x[2] < 1e-4 { [1.0, 0.0, 0.0] } else { norm(x) };
+                        let zc = cross(x, d);
+                        m.place(out, &assets::Place { origin: right, basis: [x, d, zc], active: false, tick: 0, tint: None });
+                    } else {
+                        limb(out, along(right, d, -0.6), tip, 0.025, 0.016, wood, 5);
+                        limb(out, along(tip, d, -0.04), along(tip, d, 0.14), 0.04, 0.005, [0.62, 0.62, 0.66], 5);
+                    }
                 }
                 Work::Hammer => {
                     let left = hpos(hl);
@@ -612,4 +632,45 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             }
         }
     }
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+fn norm(v: [f32; 3]) -> [f32; 3] {
+    let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6);
+    [v[0] / l, v[1] / l, v[2] / l]
+}
+
+/// The model file of a held tool (`models/tool_stone_axe.vox` ...), if any.
+fn tool_file(tool: Tool) -> Option<std::sync::Arc<assets::Model>> {
+    if !assets::has_models() {
+        return None;
+    }
+    let name = match tool {
+        Tool::Hand => return None,
+        Tool::StoneAxe => "tool_stone_axe",
+        Tool::MetalAxe => "tool_metal_axe",
+        Tool::MetalPick => "tool_metal_pick",
+        Tool::Spear => "tool_spear",
+    };
+    assets::model(name, 0)
+}
+
+/// Garments that have a model file (`models/outfit_cloak.vox` ...) are stamped at the person's feet, turned with them;
+/// returns the bits of the ones that were, so the body does not draw its own.
+fn file_outfit(out: &mut Mesh, x: f32, z: f32, pose: &Pose) -> u16 {
+    const FILES: [(u16, &str); 8] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron")];
+    let mut done = 0;
+    for (bit, name) in FILES {
+        if pose.outfit & bit != 0 {
+            if let Some(m) = assets::model(name, pose.id) {
+                m.place(out, &assets::Place::at(x, z).turned(pose.heading, 1.0));
+                done |= bit;
+            }
+        }
+    }
+    out.set_anchor(x, z);
+    done
 }

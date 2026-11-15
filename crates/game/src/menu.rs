@@ -318,8 +318,18 @@ fn scene(p: &Painter, screen: Rect, t: f32, fire_x: f32) {
     p.add(Shape::mesh(v));
 }
 
-/// The big extruded title, letters dropping in one after another, sparks between them.
+/// The big extruded title, letters dropping in one after another, sparks between them. A logo picture
+/// (`assets/ui/logo.png`) takes its place, fading in.
 fn title(p: &Painter, at: Pos2, size: f32, intro: f32, t: f32) {
+    if crate::art::any() {
+        if let Some((tex, dim)) = crate::art::texture(p.ctx(), "ui/logo.png") {
+            let a = (ease(intro / 0.8) * 255.0) as u8;
+            let h = size * 1.5;
+            let r = Rect::from_min_size(at, vec2(h * dim[0] as f32 / dim[1] as f32, h));
+            p.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::from_white_alpha(a));
+            return;
+        }
+    }
     let letters = ["A", "L", "A", "Z"];
     let mut x = at.x;
     for (i, l) in letters.iter().enumerate() {

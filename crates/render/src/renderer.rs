@@ -206,6 +206,8 @@ pub struct Renderer {
     pub(crate) shadow_copy_group: wgpu::BindGroup,
     pub(crate) shadow_static: StaticShadow,
     pub(crate) chunk_gen: u64,
+    /// The asset files' generation the meshes and the atlas were built from.
+    pub(crate) assets_gen: u64,
     pub(crate) art: Arc<Art>,
     pub(crate) egui_ctx: egui::Context,
     pub(crate) egui_state: egui_winit::State,
@@ -220,6 +222,8 @@ pub struct Renderer {
     pub(crate) tick_gap: f32,
     /// Tile of the resource node under the pointer: drawn with a bright rim so it is clear what can be taken.
     pub hover_node: Option<(i32, i32)>,
+    /// `ALAZ_DEMO_VIEW=<model name>`: the preview screen shows only this model (or an item icon), the camera circling.
+    pub(crate) view: Option<crate::assets::View>,
     /// How far the game is between the last simulated tick and the next (0..1), when the caller knows it
     /// exactly; otherwise it is guessed from the time between ticks.
     pub sim_alpha: Option<f32>,
@@ -520,6 +524,7 @@ impl Renderer {
             prof,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,
+            view: std::env::var("ALAZ_DEMO_VIEW").ok().filter(|v| !v.is_empty()).map(crate::assets::View::new),
             last_frame: std::time::Instant::now(),
             tick_seen: 0,
             tick_at: std::time::Instant::now(),
@@ -548,6 +553,7 @@ impl Renderer {
             shadow_copy_group,
             shadow_static: StaticShadow { every_frame: std::env::var_os("ALAZ_SHADOW_EVERY").is_some(), ..Default::default() },
             chunk_gen: 0,
+            assets_gen: crate::assets::generation(),
             art: Arc::new(art),
             egui_ctx,
             egui_state,
@@ -660,15 +666,7 @@ impl Renderer {
         let shadows_changed = q.shadows != old.shadows;
         if pixels_changed {
             quality::set_pixels(q.pixels);
-            let (art, atlas) = sprites::build();
-            self.atlas_view = Self::upload_atlas(&self.device, &self.queue, &atlas);
-            self.art = Arc::new(art);
-            self.bake = GroundBake::new(&self.device, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view);
-            self.layouts.bake = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ground bake"), bind_group_layouts: &[Some(&self.bake.layout)], immediate_size: 0 });
-            // (meshes carry atlas positions, and the tile window holds them too)
-            self.chunks.clear();
-            self.height_at = None;
-            self.chunk_gen += 1;
+            self.repaint_atlas();
         }
         if shadows_changed {
             (self.shadow_res, self.shadow_static_res) = q.shadows.sizes();
@@ -676,15 +674,34 @@ impl Renderer {
             self.shadow_static.valid = false;
         }
         if pixels_changed || shadows_changed {
-            let (main, shadow_pass, copy) = Self::make_groups(&self.device, &self.layouts, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view, &self.shadow_view, &self.shadow_static_view, &self.bake);
-            self.bind_group = main;
-            self.shadow_bind_group = shadow_pass;
-            self.shadow_copy_group = copy;
-            // the scene shader's constants follow both (the file on disk when it is being watched)
-            let body = self.hot.as_ref().and_then(|h| h.scene_source()).unwrap_or_else(|| hotreload::SHADER.to_string());
-            let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shader"), source: wgpu::ShaderSource::Wgsl(scene_source(&body, q).into()) });
-            self.apply_scene(pipelines::SceneSet::build(&self.device, &module, &self.layouts, self.config.format));
+            self.refresh_groups();
         }
+    }
+
+    /// Rebuilds the bind groups and scene pipelines after the atlas, bake or shadow maps were replaced.
+    pub(crate) fn refresh_groups(&mut self) {
+        let q = self.quality;
+        let (main, shadow_pass, copy) = Self::make_groups(&self.device, &self.layouts, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view, &self.shadow_view, &self.shadow_static_view, &self.bake);
+        self.bind_group = main;
+        self.shadow_bind_group = shadow_pass;
+        self.shadow_copy_group = copy;
+        // the scene shader's constants follow both (the file on disk when it is being watched)
+        let body = self.hot.as_ref().and_then(|h| h.scene_source()).unwrap_or_else(|| hotreload::SHADER.to_string());
+        let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shader"), source: wgpu::ShaderSource::Wgsl(scene_source(&body, q).into()) });
+        self.apply_scene(pipelines::SceneSet::build(&self.device, &module, &self.layouts, self.config.format));
+    }
+
+    /// Paints the atlas again (ground texel size or tile pictures changed): a new bake, every built chunk dropped.
+    pub(crate) fn repaint_atlas(&mut self) {
+        let (art, atlas) = sprites::build();
+        self.atlas_view = Self::upload_atlas(&self.device, &self.queue, &atlas);
+        self.art = Arc::new(art);
+        self.bake = GroundBake::new(&self.device, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view);
+        self.layouts.bake = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ground bake"), bind_group_layouts: &[Some(&self.bake.layout)], immediate_size: 0 });
+        // (meshes carry atlas positions, and the tile window holds them too)
+        self.chunks.clear();
+        self.height_at = None;
+        self.chunk_gen += 1;
     }
 
     /// Swaps in freshly built scene pipelines. What was drawn with the old shader is out of date.

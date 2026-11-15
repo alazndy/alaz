@@ -9,6 +9,14 @@ fn c(r: u8, g: u8, b: u8) -> Color32 {
 
 /// Draw `k` inside `rect`. Coordinates below are in a unit square (0..1, y down).
 pub fn draw_item(p: &Painter, rect: Rect, k: ItemKind) {
+    // a picture file (`assets/icons/<item>.png`) replaces the painted icon
+    if crate::art::any() {
+        if let Some(t) = crate::art::item_icon(p.ctx(), k) {
+            let s = rect.width().min(rect.height());
+            p.image(t.id(), Rect::from_center_size(rect.center(), alaz_render::egui::vec2(s, s)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            return;
+        }
+    }
     let s = rect.width().min(rect.height());
     let o = rect.center() - alaz_render::egui::vec2(s / 2.0, s / 2.0);
     let pt = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);

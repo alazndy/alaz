@@ -70,6 +70,7 @@ impl Renderer {
     ) {
         let t_start = std::time::Instant::now();
         self.hot_reload_poll();
+        self.assets_poll();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
@@ -88,6 +89,13 @@ impl Renderer {
         let t_acquired = std::time::Instant::now();
         let (win_w, win_h) = (self.config.width, self.config.height);
         let mut cam = *cam;
+        if let Some(v) = &mut self.view {
+            // the preview: a fixed spot (where the camera was at the start), the camera circling it
+            let at = *v.at.get_or_insert([cam.target.x, cam.target.z]);
+            cam.target = glam::Vec3::new(at[0], 0.0, at[1]);
+            cam.yaw_deg = world.tick as f32 / 60.0 * 24.0;
+            cam.pitch_deg = 38.0;
+        }
         cam.win = (win_w, win_h);
         let scale = cam.scale();
         let (sw, sh) = cam.tex_dims();
@@ -640,6 +648,17 @@ impl Renderer {
                     }
                 }
             }
+            if let Some(v) = &self.view {
+                // (nothing but the model: the one thing the artist is looking at)
+                dynamic = Mesh::new();
+                dynamic.wind = wind;
+                me_body = 0..0;
+                v.push(&mut dynamic, world.tick);
+                if dynamic.is_empty() {
+                    // (an empty buffer cannot be bound: one triangle with no area)
+                    dynamic.extend_from_slice(&[bytemuck::Zeroable::zeroed(); 3]);
+                }
+            }
             let dyn_buf = self.vertex_buffer(&dynamic);
 
             let t_scene = std::time::Instant::now();
@@ -662,7 +681,7 @@ impl Renderer {
                 });
                 pass.set_pipeline(&self.shadow_static_pipeline);
                 pass.set_bind_group(0, Some(&self.shadow_bind_group), &[]);
-                for key in &visible {
+                for key in visible.iter().filter(|_| self.view.is_none()) {
                     let Some(c) = self.chunks.get(key) else { continue };
                     if let Some((b, n)) = &c.nodes {
                         pass.set_vertex_buffer(0, b.slice(..));
@@ -753,7 +772,7 @@ impl Renderer {
                         }
                         1 => {
                             pass.set_pipeline(&self.tri_pipeline);
-                            for key in &visible {
+                            for key in visible.iter().filter(|_| self.view.is_none()) {
                                 let Some(c) = self.chunks.get(key) else { continue };
                                 for (b, n) in c.nodes.iter().chain(c.decor.iter().filter(|_| decor_shown)) {
                                     pass.set_vertex_buffer(0, b.slice(..));
