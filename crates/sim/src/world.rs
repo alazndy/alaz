@@ -179,6 +179,11 @@ impl Default for Inventory {
 }
 
 impl Inventory {
+    /// What the clothes carried do for the wearer.
+    pub fn gear(&self) -> crate::rules::Gear {
+        crate::rules::Gear::of(|k| self.get(k) > 0)
+    }
+
     pub fn total(&self) -> u16 {
         self.counts.iter().sum()
     }
@@ -2760,7 +2765,12 @@ impl World {
                             _ => n.kind.item(),
                         };
                         a.inventory.counts[item as usize] += 1;
-                        if let Some(t) = tool.filter(|_| a.kind == AgentKind::Human && life > 0) {
+                        // an apron-wearer's tools last longer: some strokes leave no mark
+                        let spared = a.kind == AgentKind::Human && {
+                            let save = a.inventory.gear().tool_save as u64;
+                            save > 0 && crate::rng::hash2(seed ^ 0xA9F0, a.id.0 as i32, (tick % 1_000_000) as i32) % 100 < save
+                        };
+                        if let Some(t) = tool.filter(|_| a.kind == AgentKind::Human && life > 0 && !spared) {
                             if a.add_wear(t.item) == life {
                                 events.push(Event::ToolBlunt { agent: a.id, item: t.item });
                             }
@@ -2944,8 +2954,9 @@ impl World {
                     let fall = 5 + 7 * depth as u64;
                     if roll < fall {
                         let a = &mut self.agents[ai];
-                        a.health -= 1_500;
-                        a.injury += 600;
+                        let blow = a.inventory.gear().blow;
+                        a.health -= crate::rules::Gear::cut(1_500, blow);
+                        a.injury += crate::rules::Gear::cut(600, blow);
                         self.events.push(Event::CaveRockfall(id));
                         if depth >= 2 && crate::rng::hash2(self.seed ^ 0xB0E5, id.0 as i32, (self.tick % 1_000_000) as i32) % 100 < 50 && a.broken == 0 {
                             a.broken = BREAK_TICKS;
@@ -3422,8 +3433,9 @@ impl World {
         let mercy = if self.tick < 2 * crate::time::TICKS_PER_DAY { 2 } else { 1 };
         for ai in bites {
             let a = &mut self.agents[ai];
-            a.health -= WOLF_BITE_DAMAGE / mercy;
-            a.injury += WOLF_BITE_BLEED / mercy;
+            let bite = a.inventory.gear().bite;
+            a.health -= crate::rules::Gear::cut(WOLF_BITE_DAMAGE / mercy, bite);
+            a.injury += crate::rules::Gear::cut(WOLF_BITE_BLEED / mercy, bite);
             let id = a.id;
             self.events.push(Event::Bitten(id));
         }
@@ -3512,8 +3524,9 @@ impl World {
                 }
                 // out in the rain or snow without cover the cold bites harder
                 let covered = heat.iter().any(|&(hx, hy, r, _)| dist2(hx, hy, a.x, a.y) <= r * r);
-                let wet = if covered { 0 } else { match sky { crate::time::Weather::Clear => 0, crate::time::Weather::Rain => 30, crate::time::Weather::Snow => 50 } };
-                let worn: i32 = ItemKind::ALL.iter().filter(|k| a.inventory.get(**k) > 0).map(|k| k.warmth_bonus()).sum();
+                let gear = a.inventory.gear();
+                let wet = if covered { 0 } else { (match sky { crate::time::Weather::Clear => 0, crate::time::Weather::Rain => 30, crate::time::Weather::Snow => 50 } - gear.dry).max(0) };
+                let worn = gear.warmth;
                 let mut target = ((ambient + worn - wet) * MAX_STAT / 150).clamp(0, MAX_STAT);
                 for &(hx, hy, r, fire) in &heat {
                     if dist2(hx, hy, a.x, a.y) <= r * r {
@@ -3543,7 +3556,7 @@ impl World {
                 // breath: running burns it, standing or walking brings it back
                 if depth == 2 {
                 } else if a.sprint && matches!(a.task, Task::Move { .. } | Task::Gather { .. } | Task::Hunt { .. }) {
-                    a.stamina = (a.stamina - SPRINT_DRAIN).max(0);
+                    a.stamina = (a.stamina - crate::rules::Gear::cut(SPRINT_DRAIN * 1000, -a.inventory.gear().tire) / 1000).max(0);
                     if tick % 3 == 0 {
                         a.thirst = (a.thirst - 1).max(0);
                     }

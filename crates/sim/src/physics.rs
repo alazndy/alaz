@@ -173,7 +173,7 @@ pub fn isin(urad: i64) -> i64 {
     4 * p * 1_000_000 / (40_500_000_000 - p)
 }
 
-fn ground_q(seed: u64, x: i64, y: i64) -> i64 {
+pub(crate) fn ground_q(seed: u64, x: i64, y: i64) -> i64 {
     elevation_at_mm(seed, x.div_euclid(Q), y.div_euclid(Q)) as i64 * Q
 }
 
@@ -342,7 +342,8 @@ impl World {
                 continue;
             }
             let a = &mut self.agents[ai];
-            a.health -= ((drop - SAFE_FALL_MM) * MAX_STAT as i64 / (LETHAL_FALL_MM - SAFE_FALL_MM)) as i32;
+            let hurt = ((drop - SAFE_FALL_MM) * MAX_STAT as i64 / (LETHAL_FALL_MM - SAFE_FALL_MM)) as i32;
+            a.health -= crate::rules::Gear::cut(hurt, a.inventory.gear().fall);
             let unlucky = hash2(seed ^ 0xFA11, id.0 as i32, self.tick as i32) % (BREAK_FALL_MM - SAFE_FALL_MM) as u64;
             if a.broken == 0 && (drop >= BREAK_FALL_MM || (unlucky as i64) < drop - SAFE_FALL_MM) {
                 a.broken = BREAK_TICKS;
@@ -508,7 +509,7 @@ impl World {
         for (ai, dmg, breaks, tree) in hits {
             let a = &mut self.agents[ai];
             let id = a.id;
-            a.health -= dmg;
+            a.health -= crate::rules::Gear::cut(dmg, a.inventory.gear().blow);
             if breaks && a.broken == 0 {
                 a.broken = BREAK_TICKS;
                 a.sprint = false;

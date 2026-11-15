@@ -473,7 +473,14 @@ fn slot_cell(ui: &mut egui::Ui, w: &World, k: ItemKind, n: u16) -> egui::Respons
     p.text(icon.right_bottom() - egui::vec2(5.0, 3.0), Align2::RIGHT_BOTTOM, n.to_string(), egui::FontId::proportional(22.0), Color32::WHITE);
     let name = crate::lang::item_word(w, k);
     p.text(egui::pos2(rect.center().x, rect.bottom() - 9.0), Align2::CENTER_CENTER, &name, egui::FontId::proportional(11.0), Color32::from_gray(205));
-    resp.on_hover_text(name)
+    // dev aid for screenshots: ALAZ_DEMO_TIP keeps the cloak's tooltip open
+    if k == ItemKind::HideCloak && std::env::var_os("ALAZ_DEMO_TIP").is_some() {
+        let tip = item_tip(w, k);
+        egui::Area::new(egui::Id::NULL.with("demo_tip")).order(egui::Order::Tooltip).fixed_pos(resp.rect.right_top()).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(tip));
+        });
+    }
+    resp.on_hover_text(item_tip(w, k))
 }
 
 /// Each ingredient as its icon with "have/need", green when the bag has enough and red when it does not.
@@ -714,6 +721,51 @@ fn draw_status(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_c
     });
 }
 
+/// What a worn piece (or a whole outfit) does, one short line per effect.
+fn gear_lines(g: &alaz_sim::rules::Gear) -> Vec<String> {
+    let mut v = Vec::new();
+    if g.warmth > 0 {
+        v.push(format!("Soğuğa karşı +{:.1}°", g.warmth as f32 / 10.0));
+    }
+    if g.dry > 0 {
+        v.push(format!("Yağmur ve karda +{:.1}° daha az üşütür", g.dry as f32 / 10.0));
+    }
+    if g.bite > 0 {
+        v.push(format!("Hayvan saldırısı -%{}", g.bite / 10));
+    }
+    if g.blow > 0 {
+        v.push(format!("Düşen taş ve ağaç, mağara -%{}", g.blow / 10));
+    }
+    if g.fall > 0 {
+        v.push(format!("Düşme hasarı -%{}", g.fall / 10));
+    }
+    if g.grip > 0 {
+        v.push(format!("Yokuşta %{} daha az yavaşlarsın", g.grip / 10));
+    }
+    if g.tool_save > 0 {
+        v.push(format!("Aletler %{} daha az aşınır", g.tool_save));
+    }
+    if g.burden > 0 || g.tire > 0 {
+        v.push(format!("Ağır: yürüyüş -%{}, koşarken %{} çabuk yorulursun", g.burden / 10, g.tire / 10));
+    }
+    v
+}
+
+/// The hover text of a bag item: its name, and for clothes what they do.
+fn item_tip(w: &World, k: ItemKind) -> String {
+    let name = crate::lang::item_word(w, k);
+    if k.garment().is_none() {
+        return name;
+    }
+    let g = alaz_sim::rules::Gear::of(|i| i == k);
+    let mut t = format!("{name} (giyilir)");
+    for l in gear_lines(&g) {
+        t.push_str("\n");
+        t.push_str(&l);
+    }
+    t
+}
+
 /// A vital: a row of ten pixel icons; its name (and the exact amount, once the tribe counts) on hover.
 fn vital(ui: &mut egui::Ui, w: &World, g: crate::ui_art::Glyph, name: &str, v: i32, col: Color32, _width: f32) {
     let level = w.perception_level();
@@ -770,6 +822,19 @@ fn draw_needs(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent) {
             vital(ui, w, Glyph::Food, crate::lang::stat_word(w, "Tokluk"), me.hunger, Color32::from_rgb(214, 156, 56), 180.0);
             vital(ui, w, Glyph::Drop, crate::lang::stat_word(w, "Su"), me.thirst, Color32::from_rgb(64, 140, 224), 180.0);
             vital(ui, w, Glyph::Flame, crate::lang::stat_word(w, "Sıcaklık"), me.warmth, Color32::from_rgb(232, 118, 44), 180.0);
+            let gear = me.inventory.gear();
+            if gear != alaz_sim::rules::Gear::default() {
+                let mut tip = String::from("Giydiklerin:");
+                for l in gear_lines(&gear) {
+                    tip.push_str("\n");
+                    tip.push_str(&l);
+                }
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+                    crate::ui_art::badge(ui.painter(), rect.center(), 10.0, Glyph::Flame, Color32::from_rgb(232, 118, 44));
+                    crate::ui_art::chip(ui, &format!("Giyim +{:.1}°", gear.warmth as f32 / 10.0), Color32::from_rgb(58, 40, 24), Color32::from_rgb(240, 190, 120)).on_hover_text(tip);
+                });
+            }
             if w.perception_level() >= 2 {
                 for (g, name) in alaz_sim::world::NUTRITION_GROUPS.iter().enumerate() {
                     let v = me.nutrition[g];
@@ -1199,7 +1264,7 @@ fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &
             crate::icons::draw_slot(ui.painter(), rect, k, w.has_seen(k));
             ui.painter().text(rect.right_bottom() - egui::vec2(3.0, 2.0), Align2::RIGHT_BOTTOM, free.to_string(), egui::FontId::proportional(22.0), Color32::WHITE);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Çantadan al: {}", crate::lang::item_word(w, k))));
-            if resp.on_hover_text(crate::lang::item_word(w, k)).clicked() {
+            if resp.on_hover_text(item_tip(w, k)).clicked() {
                 if let Some(s) = hands.iter().position(|&i| i == 255) {
                     // the hand closes on one of the heap at random: the eye cannot choose what it cannot see
                     let pool: Vec<ItemKind> = members.iter().flat_map(|(r, _)| std::iter::repeat_n(*r, free_of(*r) as usize)).collect();

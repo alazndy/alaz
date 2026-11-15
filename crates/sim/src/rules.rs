@@ -172,6 +172,83 @@ pub struct GateDef {
     pub loose: u16,
 }
 
+/// What a worn item does for the wearer. Clothes are worn while they are carried; every field defaults to 0, and
+/// the effects of several pieces add up (permille fields are capped where they are used).
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct GarmentDef {
+    pub item: ItemKind,
+    /// Warmer by this much (tenths of a degree C).
+    #[serde(default)]
+    pub warmth: i32,
+    /// Takes this much off the chill of rain or snow when out in the open (tenths of a degree C).
+    #[serde(default)]
+    pub dry: i32,
+    /// Share of an animal's bite (blood and bleeding) turned away, permille.
+    #[serde(default)]
+    pub bite: i32,
+    /// Share of the hurt from falling stones and trees, and from rock in a mine, turned away, permille.
+    #[serde(default)]
+    pub blow: i32,
+    /// Share of the hurt from a fall off a height turned away, permille.
+    #[serde(default)]
+    pub fall: i32,
+    /// Share of the slope's slowing (uphill going) taken away, permille.
+    #[serde(default)]
+    pub grip: i32,
+    /// Weight: share of walking speed lost, permille.
+    #[serde(default)]
+    pub burden: i32,
+    /// Weight: extra breath burnt when running, permille.
+    #[serde(default)]
+    pub tire: i32,
+    /// Chance a tool use does not wear the tool, percent.
+    #[serde(default)]
+    pub tool_save: i32,
+}
+
+/// The sum of everything worn (see `GarmentDef`), with the permille shares capped so no outfit makes one immune.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Gear {
+    pub warmth: i32,
+    pub dry: i32,
+    pub bite: i32,
+    pub blow: i32,
+    pub fall: i32,
+    pub grip: i32,
+    pub burden: i32,
+    pub tire: i32,
+    pub tool_save: i32,
+}
+
+impl Gear {
+    pub fn of(has: impl Fn(ItemKind) -> bool) -> Gear {
+        let mut g = Gear::default();
+        for d in rules().garments.iter().filter(|d| has(d.item)) {
+            g.warmth += d.warmth;
+            g.dry += d.dry;
+            g.bite += d.bite;
+            g.blow += d.blow;
+            g.fall += d.fall;
+            g.grip += d.grip;
+            g.burden += d.burden;
+            g.tire += d.tire;
+            g.tool_save += d.tool_save;
+        }
+        g.bite = g.bite.min(800);
+        g.blow = g.blow.min(800);
+        g.fall = g.fall.min(800);
+        g.grip = g.grip.min(1000);
+        g.burden = g.burden.min(500);
+        g.tool_save = g.tool_save.min(80);
+        g
+    }
+
+    /// `v` with `share` permille taken off.
+    pub fn cut(v: i32, share: i32) -> i32 {
+        v * (1000 - share) / 1000
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RulesFile {
     /// Pick tier needed to step down into each cave chamber (index = chamber depth).
@@ -185,6 +262,8 @@ struct RulesFile {
     gate: Vec<GateDef>,
     #[serde(default)]
     perish: Vec<PerishDef>,
+    #[serde(default)]
+    garment: Vec<GarmentDef>,
 }
 
 /// Food that spoils: the share of a stack that goes bad in a day, permille (before cold, jars and difficulty).
@@ -202,6 +281,7 @@ pub struct Rules {
     pub gates: Vec<GateDef>,
     pub cave_tiers: Vec<u8>,
     pub perish: Vec<PerishDef>,
+    pub garments: Vec<GarmentDef>,
     /// FNV-1a of the source text; stored in saves.
     pub checksum: u64,
 }
@@ -225,6 +305,10 @@ impl Rules {
         self.tools.iter().find(|t| t.item == item)
     }
 
+    pub fn garment(&self, item: ItemKind) -> Option<&GarmentDef> {
+        self.garments.iter().find(|g| g.item == item)
+    }
+
     pub fn gate(&self, node: NodeKind) -> Option<&GateDef> {
         self.gates.iter().find(|g| g.node == node)
     }
@@ -244,7 +328,7 @@ impl Rules {
             h ^= b as u64;
             h = h.wrapping_mul(0x100000001b3);
         }
-        Ok(Rules { buildings: file.building, recipes: file.recipe, tools: file.tool, gates: file.gate, cave_tiers: file.cave_tiers, perish: file.perish, checksum: h })
+        Ok(Rules { buildings: file.building, recipes: file.recipe, tools: file.tool, gates: file.gate, cave_tiers: file.cave_tiers, perish: file.perish, garments: file.garment, checksum: h })
     }
 
     /// The source text of the base rules (a world's own rules start from a copy of it).

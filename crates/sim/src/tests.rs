@@ -4969,3 +4969,138 @@ fn bench_sim_ticks() {
     }
     run("default world, sixteen people", w, 18_000);
 }
+
+// ---------- clothes with a game effect ----------
+
+/// A world whose clock is set to a cold hour (spring, ambient about 5 C), clear sky, nobody near a fire.
+fn chilly_world() -> World {
+    let (mut w, _) = with_agent(7);
+    w.tick = TICKS_PER_DAY * 2;
+    while !(30..=70).contains(&w.ambient_x10()) || crate::time::weather(w.seed, w.tick, w.settings.season_days as u64) != crate::time::Weather::Clear {
+        w.tick += 50;
+    }
+    w
+}
+
+#[test]
+fn a_cloak_keeps_the_body_warmer_on_a_cold_night() {
+    let run = |items: &[ItemKind]| {
+        let mut w = chilly_world();
+        for k in items {
+            w.agents[0].inventory.counts[*k as usize] = 1;
+        }
+        w.agents[0].warmth = 0;
+        for _ in 0..1500 {
+            w.step(&[]);
+        }
+        w.agents[0].warmth
+    };
+    let bare = run(&[]);
+    let cloak = run(&[ItemKind::HideCloak, ItemKind::HideBoots]);
+    assert!(cloak > bare + 500, "bare {bare}, cloaked {cloak}");
+}
+
+#[test]
+fn rain_gear_cuts_the_chill_of_the_wet() {
+    let wet_chill = |items: &[ItemKind], sky_wet: i32| {
+        let mut inv = Inventory::default();
+        for k in items {
+            inv.counts[*k as usize] = 1;
+        }
+        (sky_wet - inv.gear().dry).max(0)
+    };
+    assert_eq!(wet_chill(&[], 30), 30);
+    assert!(wet_chill(&[ItemKind::LinenHood], 30) < wet_chill(&[ItemKind::HideBoots], 30));
+    assert_eq!(wet_chill(&[ItemKind::HideCloak, ItemKind::LinenHood], 30), 3);
+}
+
+#[test]
+fn the_breastplate_turns_a_share_of_a_bite_and_the_wearer_tires_sooner() {
+    let hurt = |plate: bool| {
+        let (mut w, _) = wolf_world();
+        if plate {
+            give(&mut w, ItemKind::BronzePlate, 1);
+        }
+        for _ in 0..800 {
+            w.step(&[]);
+            if w.take_events().iter().any(|e| matches!(e, Event::Bitten(_))) {
+                return (MAX_STAT - w.agents[0].health, w.agents[0].injury);
+            }
+        }
+        panic!("no bite");
+    };
+    let (bare, bare_bleed) = hurt(false);
+    let (plated, plated_bleed) = hurt(true);
+    assert!(plated < bare && plated_bleed < bare_bleed, "{plated}/{plated_bleed} vs {bare}/{bare_bleed}");
+    // the weight: slower going and a faster-burning breath
+    let mut inv = Inventory::default();
+    inv.counts[ItemKind::BronzePlate as usize] = 1;
+    assert!(inv.gear().burden > 0 && inv.gear().tire > 0);
+    let cap = |items: &[ItemKind]| {
+        let mut inv = Inventory::default();
+        for k in items {
+            inv.counts[*k as usize] = 1;
+        }
+        inv.gear()
+    };
+    // pieces add up, but never to immunity
+    let all = cap(&ItemKind::ALL.iter().copied().filter(|k| k.garment().is_some()).collect::<Vec<_>>());
+    assert!(all.bite <= 800 && all.blow <= 800 && all.tool_save <= 80);
+}
+
+#[test]
+fn boots_soften_a_fall_and_the_helm_a_blow_and_the_apron_spares_tools() {
+    let g = |k: ItemKind| k.garment().copied().expect("garment");
+    assert!(g(ItemKind::HideBoots).fall > 0 && g(ItemKind::HideBoots).grip > 0);
+    assert!(g(ItemKind::SteelHelm).blow > g(ItemKind::BronzePlate).blow);
+    assert!(g(ItemKind::WorkApron).tool_save > 0);
+    assert_eq!(crate::rules::Gear::cut(1000, 400), 600);
+    // a stone strikes less hard on a helmed head
+    let fall_of = |boots: bool| {
+        let (mut w, _) = with_agent(3);
+        if boots {
+            give(&mut w, ItemKind::HideBoots, 1);
+        }
+        let (x, y) = (w.agents[0].x, w.agents[0].y);
+        w.launch(w.agents[0].id, 0, 0);
+        let g0 = crate::physics::ground_q(w.seed, x * 256, y * 256);
+        w.air[0].top = g0 + 4_000 * 256;
+        w.air[0].z = g0 + 4_000 * 256;
+        for _ in 0..400 {
+            w.step(&[]);
+            if w.air.is_empty() {
+                break;
+            }
+        }
+        MAX_STAT - w.agents[0].health
+    };
+    assert!(fall_of(true) < fall_of(false));
+}
+
+#[test]
+fn the_apron_makes_tools_last_longer() {
+    let wear1 = |apron: bool, skew: u64| {
+        let (mut w, a) = with_agent(1);
+        w.tick += skew;
+        learn_all(&mut w);
+        w.settings.difficulty = crate::world::Difficulty::Realistic;
+        give(&mut w, ItemKind::Hammer, 1);
+        if apron {
+            w.agents[0].inventory.counts[ItemKind::WorkApron as usize] = 1;
+        }
+        let i = w.nodes.iter().position(|n| n.kind == NodeKind::StoneOutcrop && n.amount == 5).expect("stone");
+        w.set_node_amount(i, 3);
+        let (nx, ny) = w.nodes[i].center_mm();
+        w.agents[0].x = nx;
+        w.agents[0].y = ny + 900;
+        w.step(&[cmd(a, CommandKind::Gather { node: NodeId(i as u32) })]);
+        for _ in 0..90 * 20 {
+            w.step(&[]);
+        }
+        w.agents[0].wear_of(ItemKind::Hammer)
+    };
+    // the apron spares strokes by chance: over several starts the hammer ends up less worn
+    let wear = |apron: bool| (0..8).map(|k| wear1(apron, k * 37)).sum::<u16>();
+    let (plain, aproned) = (wear(false), wear(true));
+    assert!(plain >= 2 && aproned < plain, "{aproned} vs {plain}");
+}

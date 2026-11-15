@@ -265,17 +265,12 @@ impl ItemKind {
 
     /// Clothes are worn while they are carried: how much warmer they keep the wearer (in tenths of a degree).
     pub fn warmth_bonus(self) -> i32 {
-        match self {
-            ItemKind::FiberWrap => 10,
-            ItemKind::HideCloak => 25,
-            ItemKind::HideBoots => 10,
-            ItemKind::Tunic => 20,
-            ItemKind::LinenHood => 8,
-            ItemKind::BronzePlate => 12,
-            ItemKind::SteelHelm => 6,
-            ItemKind::WorkApron => 22,
-            _ => 0,
-        }
+        self.garment().map_or(0, |g| g.warmth)
+    }
+
+    /// What this item does when worn (from `data/rules.toml`), if it is clothing.
+    pub fn garment(self) -> Option<&'static crate::rules::GarmentDef> {
+        crate::rules::rules().garment(self)
     }
 
     pub const COUNT: usize = 109;

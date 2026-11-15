@@ -1710,3 +1710,51 @@ per_day = 650
 [[perish]]
 item = "cooked_fish"
 per_day = 280
+
+# Clothes: worn while carried. warmth/dry in tenths of a degree C, the rest permille (tool_save percent).
+# warmth: warmer air-feel; dry: less chill from rain or snow in the open; bite: animal bites turned away;
+# blow: falling stones, trees and cave rock; fall: drops; grip: uphill slowing taken away;
+# burden: walking speed lost; tire: extra breath burnt running; tool_save: tools that do not wear.
+[[garment]]
+item = "fiber_wrap"
+warmth = 10
+
+[[garment]]
+item = "hide_cloak"
+warmth = 25
+dry = 12
+
+[[garment]]
+item = "hide_boots"
+warmth = 10
+dry = 8
+fall = 300
+grip = 250
+
+[[garment]]
+item = "tunic"
+warmth = 20
+
+[[garment]]
+item = "linen_hood"
+warmth = 8
+dry = 15
+
+[[garment]]
+item = "bronze_plate"
+warmth = 12
+bite = 350
+blow = 150
+burden = 60
+tire = 150
+
+[[garment]]
+item = "steel_helm"
+warmth = 6
+bite = 100
+blow = 400
+
+[[garment]]
+item = "work_apron"
+warmth = 22
+tool_save = 30

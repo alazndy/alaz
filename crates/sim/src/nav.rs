@@ -258,6 +258,7 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
     if a.broken > 0 {
         speed = (speed * 55 / 100).max(1);
     }
+    speed = (speed * (1000 - a.inventory.gear().burden as i64) / 1000).max(1);
     let (dx, dy) = (tx - a.x, ty - a.y);
     let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
     if len == 0 {
@@ -321,6 +322,8 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
         // a broken leg: half speed
         speed = (speed * 55 / 100).max(1);
     }
+    let gear = a.inventory.gear();
+    speed = (speed * (1000 - gear.burden as i64) / 1000).max(1);
     let (dx, dy) = (tx - a.x, ty - a.y);
     {
         // uphill is slower, downhill a little quicker: grade over the intended step, in permille
@@ -329,7 +332,10 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
             let (px, py) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
             let rise = (crate::map::elevation_at_mm(nav.map.seed, px, py) - crate::map::elevation_at_mm(nav.map.seed, a.x, a.y)) as i64;
             let grade = rise * 1000 / len.min(speed).max(1);
-            speed = (speed * 1000 / (1000 + (grade * 3).clamp(-300, 1500))).max(1);
+            // good soles keep their grip: less of the climb's slowing
+            let slow = (grade * 3).clamp(-300, 1500);
+            let slow = if slow > 0 { crate::rules::Gear::cut(slow as i32, gear.grip) as i64 } else { slow };
+            speed = (speed * 1000 / (1000 + slow)).max(1);
             // a rock face is climbed, up or down, hand over hand: only so much height a tick
             if grade.abs() * speed / 1000 > CLIMB_MM {
                 speed = (CLIMB_MM * 1000 + grade.abs() - 1) / grade.abs();
