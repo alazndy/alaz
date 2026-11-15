@@ -353,11 +353,13 @@ pub(crate) struct Pose {
     pub(crate) cyc: f32,
     /// In the air: rising (up to 1) or falling (down to -1); 0 on the ground.
     pub(crate) air: f32,
+    /// Far or small on screen: drop what a few texels cannot show (face parts, buckles) and use fewer sides.
+    pub(crate) lod: bool,
 }
 
 impl Pose {
     pub(crate) fn idle(t: f32) -> Pose {
-        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, stage: 5, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0 }
+        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, stage: 5, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false }
     }
 }
 
@@ -622,4 +624,119 @@ pub(crate) fn piece_colour(k: alaz_sim::map::ItemKind) -> [f32; 3] {
         I::Coal | I::Charcoal | I::Coke => [0.12, 0.12, 0.12],
         _ => [0.80, 0.70, 0.52],
     }
+}
+
+/// Everything one body needs to be drawn, worked out beforehand (it reads and moves the walk state) so that the
+/// meshes can be built on several threads.
+pub(crate) struct BodyJob {
+    pub(crate) kind: AgentKind,
+    pub(crate) x: f32,
+    pub(crate) z: f32,
+    pub(crate) marked: bool,
+    pub(crate) is_me: bool,
+    pub(crate) pose: Pose,
+    /// A blow's flying chips: the work, what it hits, and the work cycle.
+    pub(crate) chips: Option<(Work, (f32, f32), f32)>,
+    /// Height of the flight, when off the ground.
+    pub(crate) lift: Option<f32>,
+    /// Roll and forward lean of a body that is going somewhere.
+    pub(crate) lean: Option<(f32, f32)>,
+    pub(crate) heading: f32,
+    /// Water the body stands in: 0 dry, 1 wading, 2 swimming.
+    pub(crate) depth: u8,
+    /// Swell under the body (half of it when wading).
+    pub(crate) wave: f32,
+    pub(crate) secs: f32,
+    pub(crate) seed: u32,
+}
+
+/// Draws one body: its chips, shadow and figure, then bends the figure to the ground it is on.
+fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u32>> {
+    let (x, z, secs) = (j.x, j.z, j.secs);
+    if let Some((work, target, cyc)) = j.chips {
+        push_chips(out, work, target, (x, z), cyc, j.pose.tool);
+    }
+    decal(out, art.shadow_s, x, z, WHITE, 0.0);
+    let body_start = out.len();
+    push_creature(out, j.kind, x, z, j.marked, j.pose);
+    let range = if j.is_me { Some(body_start as u32..out.len() as u32) } else { None };
+    // off the ground: the body rides up the flight
+    if let Some(lift) = j.lift {
+        for v in &mut out.verts[body_start..] {
+            v.pos[1] += lift.max(0.0);
+        }
+    }
+    if let Some((roll, lean)) = j.lean {
+        if roll.abs() > 0.002 || lean > 0.002 {
+            let h = j.heading;
+            let fwd = glam::Vec3::new(h.sin(), 0.0, h.cos());
+            let right = glam::Vec3::new(h.cos(), 0.0, -h.sin());
+            let rot = glam::Quat::from_axis_angle(fwd, roll) * glam::Quat::from_axis_angle(right, lean);
+            let foot = glam::Vec3::new(x, 0.0, z);
+            for v in &mut out.verts[body_start..] {
+                let p = glam::Vec3::from(v.pos);
+                v.pos = (rot * (p - foot) + foot).to_array();
+            }
+        }
+    }
+    // in the water: wading, the body goes in to the waist; out of its depth, it lies forward on the surface
+    // and swims (the walk's arm swing becomes the stroke), riding up and down on the very swell drawn there
+    if j.depth == 1 {
+        for v in &mut out.verts[body_start..] {
+            v.pos[1] += j.wave - 0.5;
+        }
+    } else if j.depth == 2 {
+        let h = j.heading;
+        let (fwd, right) = (glam::Vec3::new(h.sin(), 0.0, h.cos()), glam::Vec3::new(h.cos(), 0.0, -h.sin()));
+        // tip forward about the hips, a little more as the stroke pulls, and rock with the waves' slope
+        let tilt = 1.30 + 0.06 * (secs * 2.2 + j.seed as f32).sin();
+        let rot = glam::Quat::from_axis_angle(right, tilt);
+        let pivot = glam::Vec3::new(x, 1.0, z);
+        // the head and shoulders ride just above the surface
+        let lift = glam::Vec3::new(0.0, j.wave - 0.78, 0.0) + fwd * 0.4;
+        for v in &mut out.verts[body_start..] {
+            let p = glam::Vec3::from(v.pos);
+            v.pos = (rot * (p - pivot) + pivot + lift).to_array();
+        }
+    }
+    range
+}
+
+/// Fewest bodies worth the cost of starting threads.
+pub(crate) const PAR_BODIES: usize = 8;
+
+/// All bodies in one mesh, in the order given. A crowd is split into runs, one per thread; the runs are joined in
+/// order, so the result is the same as building them one after another. Also returns where the player's body lies.
+pub(crate) fn build_bodies(jobs: &[BodyJob], art: &Art, wind: [f32; 3]) -> (Mesh, Option<std::ops::Range<u32>>) {
+    let fresh = || Mesh { wind, ..Mesh::new() };
+    let threads = if jobs.len() >= PAR_BODIES { std::thread::available_parallelism().map_or(1, |n| n.get()).min(8).min(jobs.len() / 4) } else { 1 };
+    let serial = |jobs: &[BodyJob]| {
+        let mut out = fresh();
+        let mut me = None;
+        for j in jobs {
+            if let Some(r) = push_body(&mut out, j, art) {
+                me = Some(r);
+            }
+        }
+        (out, me)
+    };
+    if threads <= 1 {
+        return serial(jobs);
+    }
+    let run = jobs.len().div_ceil(threads);
+    let parts: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = jobs.chunks(run).map(|c| scope.spawn(|| serial(c))).collect();
+        handles.into_iter().map(|h| h.join().expect("body worker")).collect()
+    });
+    let mut out = fresh();
+    out.verts.reserve(parts.iter().map(|(m, _)| m.len()).sum());
+    let mut me = None;
+    for (m, r) in parts {
+        let base = out.len() as u32;
+        if let Some(r) = r {
+            me = Some(base + r.start..base + r.end);
+        }
+        out.extend_from_slice(&m);
+    }
+    (out, me)
 }

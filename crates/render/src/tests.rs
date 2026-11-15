@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize] }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -371,5 +371,111 @@ mod mesh_hashes {
         assert_eq!(got.len(), EXPECTED.len());
         let bad: Vec<&str> = got.iter().zip(EXPECTED).filter(|(g, e)| g.0 != e.0 || g.1 != e.1).map(|(g, _)| g.0.as_str()).collect();
         assert!(bad.is_empty(), "meshes changed: {bad:?}");
+    }
+
+    /// Cost of building a crowd's bodies, full against simple build (`cargo test --release -p alaz-render crowd_cost -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn crowd_cost() {
+        for outfit in [0u16, 0xFFFF] {
+            for n in [1u32, 10, 30, 60] {
+                let mut res = [(0usize, 0.0f64); 2];
+                for (k, lod) in [false, true].into_iter().enumerate() {
+                    let reps = 400 / n.max(1) + 20;
+                    let mut verts = 0;
+                    let t0 = std::time::Instant::now();
+                    for r in 0..reps {
+                        let mut o = Mesh::new();
+                        for i in 0..n {
+                            let f = (i + r) as f32;
+                            let walking = i % 3 != 0;
+                            let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if walking { 1.0 } else { 0.0 }, outfit, stage: 4, id: i * 5 + 1, lod, ..Pose::idle(3.0) };
+                            push_creature(&mut o, AgentKind::Human, 5.0 + i as f32, 9.0, false, pose);
+                        }
+                        verts = std::hint::black_box(o.len());
+                    }
+                    res[k] = (verts, t0.elapsed().as_secs_f64() * 1000.0 / reps as f64);
+                }
+                println!("outfit {outfit:#06x} N={n:3}: full {:7} verts {:7.3} ms | lod {:7} verts {:7.3} ms | verts x{:.2} time x{:.2}", res[0].0, res[0].1, res[1].0, res[1].1, res[1].0 as f64 / res[0].0 as f64, res[1].1 / res[0].1);
+            }
+        }
+    }
+
+    fn crowd_jobs(n: u32, outfit: u16, lod: bool) -> Vec<BodyJob> {
+        (0..n)
+            .map(|i| {
+                let f = i as f32;
+                let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if i % 3 != 0 { 1.0 } else { 0.0 }, outfit, stage: 4, id: i * 5 + 1, lod, hurt: if i % 7 == 0 { 0.6 } else { 0.0 }, ..Pose::idle(3.0) };
+                BodyJob {
+                    kind: AgentKind::Human,
+                    x: 5.0 + f,
+                    z: 9.0 + (i % 5) as f32,
+                    marked: i % 2 == 0,
+                    is_me: i == 13,
+                    pose,
+                    chips: None,
+                    lift: if i % 11 == 0 { Some(0.4) } else { None },
+                    lean: Some((0.1, 0.05)),
+                    heading: pose.heading,
+                    depth: (i % 3) as u8 * (i % 2) as u8,
+                    wave: 0.2,
+                    secs: 3.0,
+                    seed: i,
+                }
+            })
+            .collect()
+    }
+
+    /// A crowd built on several threads is the same bytes as one built a body at a time.
+    #[test]
+    fn parallel_bodies_match_serial() {
+        let (art, _) = sprites::build();
+        let wind = [0.6, -0.3, 0.7];
+        for n in [3u32, 8, 21, 60] {
+            let jobs = crowd_jobs(n, 0xFFFF, false);
+            let (par, par_me) = build_bodies(&jobs, &art, wind);
+            let mut one = Vec::new();
+            let mut one_me = None;
+            for j in &jobs {
+                let (m, r) = build_bodies(std::slice::from_ref(j), &art, wind);
+                if let Some(r) = r {
+                    one_me = Some(one.len() as u32 + r.start..one.len() as u32 + r.end);
+                }
+                one.extend_from_slice(&m);
+            }
+            assert!(bytemuck::cast_slice::<Vertex, u8>(&par) == bytemuck::cast_slice::<Vertex, u8>(&one), "n={n}");
+            assert_eq!(par_me, one_me);
+        }
+    }
+
+    /// The same crowd, one thread against the threads `build_bodies` uses.
+    #[test]
+    #[ignore]
+    fn crowd_cost_parallel() {
+        let (art, _) = sprites::build();
+        for outfit in [0u16, 0xFFFF] {
+            for n in [10u32, 30, 60] {
+                let jobs = crowd_jobs(n, outfit, false);
+                let reps = 400 / n + 20;
+                let time = |f: &dyn Fn() -> usize| {
+                    let t0 = std::time::Instant::now();
+                    let mut v = 0;
+                    for _ in 0..reps {
+                        v = std::hint::black_box(f());
+                    }
+                    (v, t0.elapsed().as_secs_f64() * 1000.0 / reps as f64)
+                };
+                let (v1, t1) = time(&|| {
+                    let mut o = Mesh::new();
+                    for j in &jobs {
+                        let (m, _) = build_bodies(std::slice::from_ref(j), &art, [0.0; 3]);
+                        o.extend_from_slice(&m);
+                    }
+                    o.len()
+                });
+                let (v2, t2) = time(&|| build_bodies(&jobs, &art, [0.0; 3]).0.len());
+                println!("outfit {outfit:#06x} N={n:3}: serial {v1} verts {t1:.3} ms | parallel {v2} verts {t2:.3} ms | x{:.2}", t2 / t1);
+            }
+        }
     }
 }

@@ -92,11 +92,29 @@ pub fn outfit_bits(inv: &alaz_sim::world::Inventory) -> u16 {
         .fold(0, |m, (_, b)| m | b)
 }
 
+/// A person this tall on the screen (pixels) or less is drawn with `Pose::lod`; the figure is 1.9 m.
+const LOD_PX: f32 = 70.0;
+
+/// Whether the people in view are small enough (zoomed far out) for the simpler build.
+pub(crate) fn human_lod(cam: &Camera) -> bool {
+    1.9 * Camera::ppm() * cam.scale() < LOD_PX
+}
+
 /// A person built from tapered limbs and round parts: legs and arms bend, walking swings them,
 /// and every kind of work gets its own motion.
 pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     out.set_anchor(x, z);
-    use shapes::{ellipsoid, limb, sphere};
+    let lod = pose.lod;
+    // the simple build uses fewer sides; the full one passes every count through unchanged
+    let limb = |out: &mut Mesh, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, col: [f32; 3], segs: usize| shapes::limb(out, a, b, r0, r1, col, if lod { segs.div_ceil(2).max(4) } else { segs });
+    let sphere = |out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu: usize, nv: usize, wob: f32, seed: u32| {
+        let (nu, nv) = if lod { (nu.div_ceil(2).max(4), nv.min(3)) } else { (nu, nv) };
+        shapes::sphere(out, c, r, col, nu, nv, wob, seed)
+    };
+    let ellipsoid = |out: &mut Mesh, c: [f32; 3], axes: [[f32; 3]; 3], col: [f32; 3], nu: usize, nv: usize| {
+        let (nu, nv) = if lod { (nu.div_ceil(2).max(5), nv.min(3)) } else { (nu, nv) };
+        shapes::ellipsoid(out, c, axes, col, nu, nv)
+    };
     let (s, c) = pose.heading.sin_cos();
     let (fx, fz, rx, rz) = (s, c, c, -s);
     let id = pose.id as usize;
@@ -236,7 +254,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         limb(out, hip, knee, 0.09, 0.07, if trousers { denim } else if ape { fur } else { skin_dk }, 6);
         limb(out, knee, ankle, 0.07, 0.05, if boots { hide } else if trousers { denim } else { skin_dk }, 6);
         part(out, foot, 0.06, 0.045, 0.11, 0.0, if boots { hide_dk } else { skin_dk }, 6);
-        if boots {
+        if boots && !lod {
             // a fur cuff where the boot ends
             let cuff = [knee[0] * 0.45 + ankle[0] * 0.55, knee[1] * 0.45 + ankle[1] * 0.55, knee[2] * 0.45 + ankle[2] * 0.55];
             sphere(out, cuff, [0.078, 0.045, 0.078], fluff, 6, 3, 0.12, 1);
@@ -258,7 +276,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         limb(out, at(0.0, y(1.14), 0.0), at(0.01, y(0.6), 0.0), 0.168, 0.25 * hip_k, dye, 9);
         limb(out, at(0.0, y(0.63), 0.0), at(0.0, y(0.58), 0.0), 0.252 * hip_k, 0.258 * hip_k, linen, 9);
         upart(out, ub(0.0, 1.3, 0.0), 0.228 * sh_k, 0.185, 0.152, tilt, dye, 9);
-        sphere(out, ub(0.02, 1.47, 0.0), [0.1, 0.03, 0.1], linen, 7, 3, 0.0, 1);
+        if !lod {
+            sphere(out, ub(0.02, 1.47, 0.0), [0.1, 0.03, 0.1], linen, 7, 3, 0.0, 1);
+        }
     } else if wrap {
         limb(out, at(0.0, y(0.94), 0.0), at(0.0, y(0.55), 0.0), 0.18, 0.26, fibre, 9);
         limb(out, at(0.0, y(0.7), 0.0), at(0.0, y(0.54), 0.0), 0.24, 0.27, fibre_dk, 9);
@@ -270,23 +290,29 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         // a belt with a pouch on the hip for what the hands do not hold
         let belt_r = if tunic || apron || plate { 0.2 } else { 0.175 };
         limb(out, at(0.0, y(0.97), 0.0), at(0.0, y(0.91), 0.0), belt_r * hip_k.max(1.0), belt_r * hip_k.max(1.0), hide_dk, 9);
-        part(out, at(-0.02, y(0.86), 0.19), 0.05, 0.065, 0.06, 0.0, hide, 6);
+        if !lod {
+            part(out, at(-0.02, y(0.86), 0.19), 0.05, 0.065, 0.06, 0.0, hide, 6);
+        }
     }
     if apron {
         // a canvas bib and skirt with a brass buckle, held by straps over the shoulders
         part(out, at(0.13, y(0.8), 0.0), 0.15, 0.3, 0.035, 0.0, canvas, 8);
         upart(out, ub(0.14, 1.27, 0.0), 0.13, 0.16, 0.03, tilt, canvas, 8);
-        for side in [-1.0f32, 1.0] {
-            limb(out, ub(0.13, 1.4, side * 0.09), ub(-0.02, 1.47, side * 0.15), 0.02, 0.02, canvas, 5);
+        if !lod {
+            for side in [-1.0f32, 1.0] {
+                limb(out, ub(0.13, 1.4, side * 0.09), ub(-0.02, 1.47, side * 0.15), 0.02, 0.02, canvas, 5);
+            }
+            sphere(out, ub(0.16, 1.3, 0.0), [0.03; 3], [0.85, 0.7, 0.3], 5, 3, 0.0, 1);
+            part(out, at(0.16, y(0.78), 0.07), 0.05, 0.045, 0.02, 0.0, [0.34, 0.28, 0.2], 6);
         }
-        sphere(out, ub(0.16, 1.3, 0.0), [0.03; 3], [0.85, 0.7, 0.3], 5, 3, 0.0, 1);
-        part(out, at(0.16, y(0.78), 0.07), 0.05, 0.045, 0.02, 0.0, [0.34, 0.28, 0.2], 6);
     }
     if plate {
         // a bronze breastplate with a studded kilt band
         upart(out, ub(0.0, 1.31, 0.0), 0.236 * sh_k, 0.2, 0.16, tilt, bronze, 9);
         limb(out, at(0.0, y(0.99), 0.0), at(0.0, y(0.84), 0.0), 0.205 * hip_k, 0.235 * hip_k, bronze_dk, 9);
-        sphere(out, ub(0.15, 1.34, 0.0), [0.045, 0.06, 0.03], bronze_dk, 6, 4, 0.0, 2);
+        if !lod {
+            sphere(out, ub(0.15, 1.34, 0.0), [0.045, 0.06, 0.03], bronze_dk, 6, 4, 0.0, 2);
+        }
     }
     if cloak {
         // a hide mantle over the shoulders with a fur collar, hanging down the back
@@ -309,7 +335,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     // jaw and chin, ears
     hpart(out, hd(0.04 + 0.04 * stoop, -0.08, 0.0), 0.095, 0.06, 0.09 + 0.03 * stoop, skin);
     for side in [-1.0f32, 1.0] {
-        hpart(out, hd(-0.01, 0.0, side * 0.135), 0.022, 0.04, 0.03, skin_dk);
+        if !lod {
+            hpart(out, hd(-0.01, 0.0, side * 0.135), 0.022, 0.04, 0.03, skin_dk);
+        }
     }
     if stoop > 0.35 {
         // an early skull: a heavy brow ridge
@@ -328,8 +356,10 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
     let nose_dk = [skin[0] * 0.8, skin[1] * 0.68, skin[2] * 0.62];
     hpart(out, hd(0.15, -0.025, 0.0), 0.026, 0.035, 0.03, [skin[0] * 0.95, skin[1] * 0.84, skin[2] * 0.78]);
-    hpart(out, hd(0.14, -0.06, 0.0), 0.03, 0.01, 0.026, nose_dk);
-    hpart(out, hd(0.122, -0.088, 0.0), 0.034, 0.007, 0.016, [skin[0] * 0.6, skin[1] * 0.4, skin[2] * 0.38]);
+    if !lod {
+        hpart(out, hd(0.14, -0.06, 0.0), 0.03, 0.01, 0.026, nose_dk);
+        hpart(out, hd(0.122, -0.088, 0.0), 0.034, 0.007, 0.016, [skin[0] * 0.6, skin[1] * 0.4, skin[2] * 0.38]);
+    }
     // hair: one of six cuts per person (the ape is always shaggy), and a beard on some
     let style = if ape { 3 } else { lk.style };
     let crop = if style == 5 { 0.94 } else { 1.0 };
@@ -344,7 +374,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             let top = hd(-0.07, -0.02, side * 0.09);
             let end = [neck[0] + urx * side * 0.17 - ufx * 0.08, neck[1] - 0.3 * body_k, neck[2] + urz * side * 0.17 - ufz * 0.08];
             limb(out, top, end, 0.045, 0.028, hair, 6);
-            sphere(out, end, [0.03; 3], hide, 5, 3, 0.0, 1);
+            if !lod {
+                sphere(out, end, [0.03; 3], hide, 5, 3, 0.0, 1);
+            }
         }
         5 => {}
         // long hair down the back
@@ -363,14 +395,18 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         // a linen hood: over the crown and ears, a cowl at the neck and a soft point behind
         hpart(out, hd(-0.035, 0.08, 0.0), 0.158, 0.115, 0.155, linen);
         limb(out, hd(-0.1, 0.02, 0.0), ub(-0.04, 1.44, 0.0), 0.11, 0.17, linen, 7);
-        sphere(out, hd(-0.15, 0.09, 0.0), [0.04, 0.05, 0.04], linen, 5, 3, 0.0, 1);
-        hpart(out, hd(0.1, 0.1, 0.0), 0.12, 0.012, 0.03, dye);
+        if !lod {
+            sphere(out, hd(-0.15, 0.09, 0.0), [0.04, 0.05, 0.04], linen, 5, 3, 0.0, 1);
+            hpart(out, hd(0.1, 0.1, 0.0), 0.12, 0.012, 0.03, dye);
+        }
     }
     if helm {
         // a steel cap with a rim above the brows, a nose guard and a plume along the crest
         hpart(out, hd(-0.01, 0.085, 0.0), 0.158, 0.115, 0.162, steel);
-        hpart(out, hd(0.0, 0.098, 0.0), 0.164, 0.026, 0.168, steel_dk);
-        hpart(out, hd(0.152, -0.01, 0.0), 0.012, 0.07, 0.012, steel);
+        if !lod {
+            hpart(out, hd(0.0, 0.098, 0.0), 0.164, 0.026, 0.168, steel_dk);
+            hpart(out, hd(0.152, -0.01, 0.0), 0.012, 0.07, 0.012, steel);
+        }
         hpart(out, hd(-0.01, 0.2, 0.0), 0.012, 0.03, 0.12, [0.66, 0.16, 0.12]);
     }
 
@@ -408,7 +444,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                 let hand = mixp(mixp(hand, rise, pose.air.max(0.0) * 0.8), flail, (-pose.air).max(0.0));
                 arm(out, side, hand);
             }
-            if slide > 0.3 {
+            if slide > 0.3 && !lod {
                 // dust kicked up behind the skidding feet
                 for k in 0..4 {
                     let ph = (pose.t * 2.2 + k as f32 * 0.25).fract();
@@ -474,7 +510,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                     sphere(out, [right[0], right[1] + 0.03, right[2]], [0.07, 0.065, 0.08], [0.62, 0.62, 0.66], 7, 5, 0.12, 3);
                     let core = [left[0], left[1] + 0.05, left[2]];
                     sphere(out, core, [0.1, 0.07, 0.09], [0.48, 0.48, 0.52], 7, 5, 0.14, 5);
-                    if hit > 0.0 {
+                    if hit > 0.0 && !lod {
                         // sparks and flakes off the core
                         let k = 1.0 - hit;
                         for i in 0..5 {
@@ -503,7 +539,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                         let p = [mid[0] + urx * 0.9 * k, (mid[1] + 0.5 * k - 1.2 * k * k).max(0.05), mid[2] + urz * 0.9 * k];
                         sphere(out, p, [0.1, 0.07, 0.1], clay, 6, 4, 0.25, 7);
                     }
-                    if hit > 0.0 {
+                    if hit > 0.0 && !lod {
                         let k = 1.0 - hit;
                         for i in 0..4 {
                             let a = i as f32 * 1.6 + pose.cyc.floor();
@@ -566,7 +602,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             }
         }
         // a few drops flying off
-        if pose.hurt > 0.4 {
+        if pose.hurt > 0.4 && !lod {
             let u = 1.0 - pose.hurt;
             for i in 0..5u32 {
                 let a = i as f32 * 1.26 + pose.id as f32;

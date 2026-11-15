@@ -450,6 +450,9 @@ impl Renderer {
                 let live: std::collections::HashSet<u32> = world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)).iter().map(|w| w.id).collect();
                 self.wild_anim.retain(|k, _| live.contains(k));
             }
+            // a person a few dozen pixels tall (zoomed far out) is drawn in a simpler build; the player never is
+            let lod_humans = human_lod(&cam);
+            let mut body_jobs: Vec<BodyJob> = Vec::with_capacity(world.agents.len());
             for a in &world.agents {
                 let (x, z) = (a.x as f32 / 1000.0, a.y as f32 / 1000.0);
                 let w = self.anim.entry(a.id.0).or_insert(Walk::at(x, z, 0.0, a.health));
@@ -480,10 +483,7 @@ impl Renderer {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (ground_height(world.seed, x + sx, z + sz) - ground_height(world.seed, x - sx, z - sz)) / 1.2
                 };
-                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, stage: world.perception_level(), slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0 };
-                if working {
-                    push_chips(&mut dynamic, work, target, (x, z), cyc, pose.tool);
-                }
+                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, stage: world.perception_level(), slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;
@@ -494,58 +494,40 @@ impl Renderer {
                     Some((_, v)) => Pose { air: if v.abs() < 0.05 { 0.05 } else { v }, amp: 0.0, work: Work::None, ..pose },
                     None => pose,
                 };
-                decal(&mut dynamic, art.shadow_s, x, z, WHITE, 0.0);
-                let body_start = dynamic.len();
-                push_creature(&mut dynamic, a.kind, x, z, a.kind.is_worker() || (a.kind == AgentKind::Human && a.id != me), pose);
-                if a.id == me {
-                    me_body = body_start as u32..dynamic.len() as u32;
-                }
-                if let Some((lift, _)) = flight {
-                    for v in &mut dynamic[body_start..] {
-                        v.pos[1] += lift.max(0.0);
-                    }
-                }
-                // the body leans into a turn and a little forward when it hurries (not when swimming or in the air)
-                let depth_here = alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
-                if a.kind == AgentKind::Human && flight.is_none() && depth_here == 0 {
-                    let roll = (-w.spin * w.speed * 0.07).clamp(-0.22, 0.22);
-                    let lean = (w.speed * 0.035).clamp(0.0, 0.11);
-                    if roll.abs() > 0.002 || lean > 0.002 {
-                        let h = w.heading;
-                        let fwd = glam::Vec3::new(h.sin(), 0.0, h.cos());
-                        let right = glam::Vec3::new(h.cos(), 0.0, -h.sin());
-                        let rot = glam::Quat::from_axis_angle(fwd, roll) * glam::Quat::from_axis_angle(right, lean);
-                        let foot = glam::Vec3::new(x, 0.0, z);
-                        for v in &mut dynamic[body_start..] {
-                            let p = glam::Vec3::from(v.pos);
-                            v.pos = (rot * (p - foot) + foot).to_array();
-                        }
-                    }
-                }
-                // in the water: wading, the body goes in to the waist; out of its depth, it lies forward on the surface
-                // and swims (the walk's arm swing becomes the stroke), riding up and down on the very swell drawn there
                 let depth = alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
-                if depth == 1 && flight.is_none() {
-                    let wave = swell_height(world, x, z, alpha) * 0.5;
-                    for v in &mut dynamic[body_start..] {
-                        v.pos[1] += wave - 0.5;
-                    }
-                } else if depth == 2 && flight.is_none() {
-                    let wave = swell_height(world, x, z, alpha);
-                    let h = pose.heading;
-                    let (fwd, right) = (glam::Vec3::new(h.sin(), 0.0, h.cos()), glam::Vec3::new(h.cos(), 0.0, -h.sin()));
-                    // tip forward about the hips, a little more as the stroke pulls, and rock with the waves' slope
-                    let tilt = 1.30 + 0.06 * (secs * 2.2 + a.id.0 as f32).sin();
-                    let rot = glam::Quat::from_axis_angle(right, tilt);
-                    let pivot = glam::Vec3::new(x, 1.0, z);
-                    // the head and shoulders ride just above the surface
-                    let lift = glam::Vec3::new(0.0, wave - 0.78, 0.0) + fwd * 0.4;
-                    for v in &mut dynamic[body_start..] {
-                        let p = glam::Vec3::from(v.pos);
-                        let q = rot * (p - pivot) + pivot + lift;
-                        v.pos = q.to_array();
-                    }
-                }
+                // the body leans into a turn and a little forward when it hurries (not when swimming or in the air)
+                let lean = if a.kind == AgentKind::Human && flight.is_none() && depth == 0 {
+                    Some(((-w.spin * w.speed * 0.07).clamp(-0.22, 0.22), (w.speed * 0.035).clamp(0.0, 0.11)))
+                } else {
+                    None
+                };
+                let wave = match depth {
+                    1 if flight.is_none() => swell_height(world, x, z, alpha) * 0.5,
+                    2 if flight.is_none() => swell_height(world, x, z, alpha),
+                    _ => 0.0,
+                };
+                body_jobs.push(BodyJob {
+                    kind: a.kind,
+                    x,
+                    z,
+                    marked: a.kind.is_worker() || (a.kind == AgentKind::Human && a.id != me),
+                    is_me: a.id == me,
+                    pose,
+                    chips: if working { Some((work, target, cyc)) } else { None },
+                    lift: flight.map(|(l, _)| l),
+                    lean,
+                    heading: w.heading,
+                    depth: if flight.is_none() { depth } else { 0 },
+                    wave,
+                    secs,
+                    seed: a.id.0,
+                });
+            }
+            let (body_mesh, me_range) = build_bodies(&body_jobs, art, wind);
+            let base = dynamic.len() as u32;
+            dynamic.extend_from_slice(&body_mesh);
+            if let Some(r) = me_range {
+                me_body = base + r.start..base + r.end;
             }
             if self.anim.len() > world.agents.len() * 2 + 8 {
                 let live: std::collections::HashSet<u32> = world.agents.iter().map(|a| a.id.0).collect();
