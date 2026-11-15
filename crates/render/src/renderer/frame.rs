@@ -2,6 +2,63 @@ use crate::renderer::*;
 use crate::*;
 
 impl Renderer {
+    /// The surface layer of the tile window: mud, puddles, ice, ash and flames, kept in the kind channel as
+    /// `kind + 16 * code` (code: the surface in the low three bits, for fire and ash their progress above them; see
+    /// `World::surface_code`). The weather's part is worked out for the stretch of tiles around the camera when the
+    /// wetness has moved a step, the cold has come or gone, or the camera has gone some way; the fire's part whenever a
+    /// tile catches or goes out (and as flames and ash age). With dry ground and nothing burning it costs nothing.
+    fn update_surfaces(&mut self, world: &World, hx: i32, hy: i32, cam_tile: (i32, i32)) {
+        let ground = world.ground();
+        let active = !ground.quiet() || world.has_burn();
+        if !active && !self.surf_on {
+            return;
+        }
+        let win = HWIN as i32;
+        let cell = (cam_tile.0.div_euclid(24), cam_tile.1.div_euclid(24));
+        // (flames change look every couple of seconds, ash every half minute)
+        let age = if world.burning().next().is_some() { world.tick / 120 } else { world.tick / 1800 };
+        let key = (world.seed, hx, hy, ground.wet / 24, ground.freezing(), world.burn_version(), age, cell.0, cell.1);
+        if self.surf_key == Some(key) || self.tile_cpu.len() != (win * win * 4) as usize {
+            return;
+        }
+        let wkey = (world.seed, hx, hy, ground.wet / 24, ground.freezing(), cell.0, cell.1);
+        if self.surf_wkey != Some(wkey) {
+            self.surf_base.fill(0);
+            if !ground.quiet() {
+                // 72 tiles either side of the camera's cell: all the screen shows at the widest zoom
+                let (x0, x1) = ((cell.0 * 24 - 72).max(hx), (cell.0 * 24 + 96).min(hx + win));
+                let (y0, y1) = ((cell.1 * 24 - 72).max(hy), (cell.1 * 24 + 96).min(hy + win));
+                for ty in y0..y1 {
+                    for tx in x0..x1 {
+                        self.surf_base[((ty - hy) * win + (tx - hx)) as usize] = ground.weather_surface(&world.map, tx, ty) as u8;
+                    }
+                }
+            }
+            self.surf_wkey = Some(wkey);
+        }
+        for (i, px) in self.tile_cpu.chunks_exact_mut(4).enumerate() {
+            let kind = px[2] - 16.0 * (px[2] / 16.0).floor();
+            px[2] = kind + 16.0 * self.surf_base[i] as f32;
+        }
+        // flames and ash over the weather's mud
+        for (&(tx, ty), _) in world.burn_iter() {
+            let (x, y) = (tx - hx, ty - hy);
+            if x >= 0 && y >= 0 && x < win && y < win {
+                let px = &mut self.tile_cpu[((y * win + x) * 4 + 2) as usize];
+                let kind = *px - 16.0 * (*px / 16.0).floor();
+                *px = kind + 16.0 * world.surface_code(&ground, tx, ty) as f32;
+            }
+        }
+        self.queue.write_texture(
+            self.tile_tex.as_image_copy(),
+            bytemuck::cast_slice(&self.tile_cpu),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
+            wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
+        );
+        self.surf_on = active;
+        self.surf_key = Some(key);
+    }
+
     pub fn render(
         &mut self,
         world: &World,
@@ -87,8 +144,14 @@ impl Renderer {
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
                 wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
             );
+            self.tile_cpu = tiles;
             self.height_at = Some((world.seed, hx, hy));
+            // (the window was written bare: the surface layer goes on again)
+            self.surf_wkey = None;
+            self.surf_key = None;
+            self.surf_on = false;
         }
+        self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
         let mut g = [0f32; 164];
         g[..16].copy_from_slice(&snap_cam.view_proj(1.0).to_cols_array());
         // the sun crosses the sky from morning (east, +x) to evening (west); at night a weak moon casts from above
@@ -174,6 +237,23 @@ impl Renderer {
                     Some((d, [x, ground_height(world.seed, x, z) + 0.45, z, reach]))
                 })
                 .collect();
+            // grass fires light the ground too: the burning tiles near the camera in clumps of 4x4 tiles, each clump a light
+            // (the camera sees far less than 90 m of flames at a time)
+            if world.burning().next().is_some() {
+                let mut clumps: std::collections::BTreeMap<(i32, i32), (f32, f32, u32)> = Default::default();
+                for (tx, ty) in world.burning() {
+                    let (x, z) = (tx as f32 + 0.5, ty as f32 + 0.5);
+                    if (x - cam.target.x).abs() < 90.0 && (z - cam.target.z).abs() < 90.0 {
+                        let c = clumps.entry((tx.div_euclid(4), ty.div_euclid(4))).or_default();
+                        *c = (c.0 + x, c.1 + z, c.2 + 1);
+                    }
+                }
+                for (_, (sx, sz, n)) in clumps {
+                    let (x, z) = (sx / n as f32, sz / n as f32);
+                    let d = (x - cam.target.x).powi(2) + (z - cam.target.z).powi(2);
+                    fires.push((d, [x, ground_height(world.seed, x, z) + 0.5, z, 2.5 + 0.7 * (n as f32).sqrt()]));
+                }
+            }
             fires.sort_by(|a, b| a.0.total_cmp(&b.0));
             for (i, (_, f)) in fires.iter().take(8).enumerate() {
                 g[68 + i * 4..72 + i * 4].copy_from_slice(f);
@@ -181,6 +261,8 @@ impl Renderer {
             // how many there are, so the shader's light loop stops there (most of the time there are none)
             g[100] = fires.len().min(8) as f32;
         }
+        // (the shader looks for the surface layer only while it holds something)
+        g[103] = self.surf_on as u8 as f32;
         g[16..19].copy_from_slice(&tint);
         g[19] = world.perception_permille() as f32 / 1000.0;
         g[20] = cam.target.x;
@@ -373,6 +455,20 @@ impl Renderer {
                     let start = dynamic.len();
                     push_building(&mut dynamic, b.kind, bx, bz, b.active(), tick, None);
                     turn_quarters(&mut dynamic, start, bx, bz, b.facing);
+                }
+            }
+            // grass fires: flames over the burning tiles in view (the nearest forty)
+            if world.burning().next().is_some() {
+                let mut near: Vec<(f32, i32, i32)> = world
+                    .burning()
+                    .filter(|&(tx, ty)| inside(tx as f32 + 0.5, ty as f32 + 0.5))
+                    .map(|(tx, ty)| ((tx as f32 + 0.5 - cam.target.x).powi(2) + (ty as f32 + 0.5 - cam.target.z).powi(2), tx, ty))
+                    .collect();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let ground = world.ground();
+                for &(_, tx, ty) in near.iter().take(40) {
+                    let age = (world.surface_code(&ground, tx, ty) >> 3) as f32;
+                    push_grass_fire(&mut dynamic, tx as f32 + 0.5, ty as f32 + 0.5, age, secs);
                 }
             }
             if let Some(g) = ghost {

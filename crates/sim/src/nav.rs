@@ -71,6 +71,11 @@ impl Obstacles {
     pub(crate) fn clear(&mut self) {
         self.tiles.clear();
     }
+
+    /// Does a building stand on this tile?
+    pub(crate) fn blocked(&self, tx: i32, ty: i32) -> bool {
+        self.tiles.contains(&tile_key(tx, ty))
+    }
 }
 
 /// Read-only view of what blocks walking, plus this tick's path-planning allowance.
@@ -79,6 +84,8 @@ pub(crate) struct Nav<'a> {
     pub obstacles: &'a Obstacles,
     /// How many A* runs may still happen this tick (an agent over budget just waits a tick).
     pub budget: u32,
+    /// The wet and the cold underfoot (mud slows, puddles slow a little).
+    pub ground: crate::surface::Ground,
 }
 
 pub(crate) const PATHS_PER_TICK: u32 = 3;
@@ -258,7 +265,11 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
     if a.broken > 0 {
         speed = (speed * 55 / 100).max(1);
     }
-    speed = (speed * (1000 - a.inventory.gear().burden as i64) / 1000).max(1);
+    let gear = a.inventory.gear();
+    speed = (speed * (1000 - gear.burden as i64) / 1000).max(1);
+    if !a.fly {
+        speed = (speed * nav.ground.walk_permille(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32, gear.grip) as i64 / 1000).max(1);
+    }
     let (dx, dy) = (tx - a.x, ty - a.y);
     let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
     if len == 0 {
@@ -324,6 +335,10 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
     }
     let gear = a.inventory.gear();
     speed = (speed * (1000 - gear.burden as i64) / 1000).max(1);
+    // mud and standing water drag at the feet (the soles' grip helps in mud)
+    if depth == 0 {
+        speed = (speed * nav.ground.walk_permille(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32, gear.grip) as i64 / 1000).max(1);
+    }
     let (dx, dy) = (tx - a.x, ty - a.y);
     {
         // uphill is slower, downhill a little quicker: grade over the intended step, in permille

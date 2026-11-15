@@ -423,8 +423,18 @@ fn tile_of(t: vec2<i32>) -> vec2<i32> {
 }
 
 // the tile window's entry for a tile: (atlas x, atlas y, ground kind, shade)
+// (the kind channel also carries the surface layer, `kind + 16 * code`: see surf_code)
 fn tile_at(t: vec2<i32>) -> vec4<f32> {
-    return textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0);
+    var v = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0);
+    v.z = v.z - 16.0 * floor(v.z / 16.0);
+    return v;
+}
+
+// the surface layer the sim keeps for a tile: the surface in the low three bits (1 mud, 2 puddle, 3 ice, 4 ash,
+// 5 fire) and, for ash and fire, how far along it is (0..3) above them
+fn surf_code(t: vec2<i32>) -> i32 {
+    let z = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0).z;
+    return i32(floor(z / 16.0));
 }
 
 // the painted picture of a land texel, with the ragged borders between kinds of ground (and the wet sand that is the
@@ -547,7 +557,121 @@ fn puddle_allowed(tx: vec2<i32>, g: vec2<f32>) -> bool {
 struct GDyn {
     col: vec3<f32>,
     n: vec3<f32>,
+    // light the ground gives off by itself (flames, embers), added after the lighting
+    glow: vec3<f32>,
 };
+
+// a hash of a texel's integer position, 0..1 (the sine hash shows lines and grids on a texel lattice)
+fn ihash(p: vec2<i32>) -> f32 {
+    var h = bitcast<u32>(p.x) * 374761393u + bitcast<u32>(p.y) * 668265263u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    return f32(h & 0xFFFFu) / 65535.0;
+}
+
+// how much of a texel the surface `k` covers: its tile and the neighbours' blended across the tile centres, like the
+// shade, so patches have rounded edges instead of tile corners
+fn surf_cover(k: i32, c00: i32, c10: i32, c01: i32, c11: i32, fr: vec2<f32>) -> f32 {
+    let a = select(0.0, 1.0, (c00 & 7) == k);
+    let b = select(0.0, 1.0, (c10 & 7) == k);
+    let c = select(0.0, 1.0, (c01 & 7) == k);
+    let d = select(0.0, 1.0, (c11 & 7) == k);
+    return mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
+}
+
+// mud, standing water, ice, ash and flames over a land texel (the sim says where; `globals.occ.w` says if anywhere)
+fn surface_layer(col0: vec3<f32>, tx: vec2<i32>, rain: f32) -> GDyn {
+    var o: GDyn;
+    o.col = col0;
+    o.glow = vec3<f32>(0.0);
+    o.n = vec3<f32>(0.0, 1.0, 0.0);
+    let clock = globals.env.x;
+    let tq = vec2<f32>(tx) / GTF;
+    let qs = tq - vec2<f32>(0.5);
+    let t0 = vec2<i32>(floor(qs));
+    let fr = qs - floor(qs);
+    let c00 = surf_code(t0);
+    let c10 = surf_code(t0 + vec2<i32>(1, 0));
+    let c01 = surf_code(t0 + vec2<i32>(0, 1));
+    let c11 = surf_code(t0 + vec2<i32>(1, 1));
+    if ((c00 | c10 | c01 | c11) == 0) { return o; }
+    // the tile the texel is in: how old its ash or flames are
+    let age = f32(surf_code(tile_of(tx)) >> 3);
+    let n1 = vnoise(tq * 2.1 + vec2<f32>(7.3, 1.9));
+    let n2 = vnoise(tq * 5.0 + vec2<f32>(2.2, 9.1));
+    let hx = ihash(tx);
+    var col = col0;
+    // ragged patch edges: the covered share, shaken by noise, cut at a threshold
+    let jag = (n1 - 0.5) * 0.7 + (n2 - 0.5) * 0.25;
+    // mud: dark wet earth with a dull sheen where the sky catches it
+    let mud = smoothstep(0.40, 0.60, surf_cover(1, c00, c10, c01, c11, fr) + jag);
+    if (mud > 0.0) {
+        var m = mix(vec3<f32>(0.25, 0.18, 0.115), vec3<f32>(0.17, 0.12, 0.08), n2);
+        if (hx > 0.92) { m = m * 0.78; }
+        let sheen = vnoise(tq * 8.0 + vec2<f32>(11.0, 4.0));
+        if (sheen > 0.74) { m = mix(m, vec3<f32>(0.50, 0.52, 0.55), 0.35 + 0.25 * rain); }
+        col = mix(col, m, 0.88 * mud);
+    }
+    // standing water: the grey sky mirrored, deeper toward the middle, rings where drops land
+    let pud_c = surf_cover(2, c00, c10, c01, c11, fr);
+    let pud = smoothstep(0.40, 0.58, pud_c + jag * 0.8);
+    if (pud_c > 0.0) {
+        let lip = smoothstep(0.40, 0.58, pud_c + jag * 0.8 - 0.16);
+        if (pud > 0.0 && lip < 0.5) { col = mix(col, vec3<f32>(0.16, 0.115, 0.08), 0.85 * pud); }
+        if (lip > 0.0) {
+            var pc = mix(vec3<f32>(0.43, 0.45, 0.47), vec3<f32>(0.30, 0.32, 0.34), smoothstep(0.0, 0.5, pud_c));
+            pc = mix(pc, vec3<f32>(0.60, 0.66, 0.72), 0.25 * vnoise(tq * 3.0 + vec2<f32>(clock * 0.15, 0.0)));
+            if (rain > 0.05) {
+                let cell = floor(tq * 2.2);
+                let hh = hash21(cell + vec2<f32>(5.3, 1.7));
+                let phase = fract(clock * 1.4 + hh * 7.0);
+                let c0 = (cell + vec2<f32>(0.2 + 0.6 * hh, 0.2 + 0.6 * fract(hh * 91.7))) / 2.2;
+                if (abs(length(tq - c0) - phase * 0.3) < 0.04) { pc = pc + vec3<f32>(0.26, 0.27, 0.28) * (1.0 - phase); }
+            }
+            col = mix(col, pc, lip);
+        }
+    }
+    // ice: pale blue and white, hairline cracks, and the odd glint
+    let ice = smoothstep(0.38, 0.56, surf_cover(3, c00, c10, c01, c11, fr) + jag * 0.7);
+    if (ice > 0.0) {
+        var ic = mix(vec3<f32>(0.74, 0.86, 0.93), vec3<f32>(0.92, 0.97, 1.0), n2);
+        let crack = abs(vnoise(tq * 3.3 + vec2<f32>(21.0, 6.0)) - 0.5);
+        if (crack < 0.028) { ic = vec3<f32>(0.97, 0.99, 1.0); }
+        if (hx > 0.975 && fract(clock * 1.1 + hx * 31.0) < 0.45) { o.glow = o.glow + vec3<f32>(0.55, 0.62, 0.7); }
+        col = mix(col, ic, 0.92 * ice);
+    }
+    // ash: dark grey scorch that greys and breaks up as the grass comes back; embers wink in the fresh ash
+    let ash_c = surf_cover(4, c00, c10, c01, c11, fr);
+    let ash = smoothstep(0.38 + 0.07 * age, 0.58 + 0.07 * age, ash_c + jag);
+    if (ash > 0.0) {
+        let k = age / 3.0;
+        var a = mix(vec3<f32>(0.15, 0.14, 0.13), vec3<f32>(0.30, 0.29, 0.27), n2);
+        if (hx > 0.8) { a = a * 1.25; }
+        col = mix(col, a, (0.92 - 0.5 * k) * ash);
+        if (age < 1.5 && hx > 0.975 - 0.01 * age && n2 > 0.45) {
+            let pulse = 0.5 + 0.5 * sin(clock * 5.0 + hx * 90.0);
+            o.glow = o.glow + vec3<f32>(0.9, 0.34, 0.07) * pulse * (0.7 - 0.3 * age) * ash;
+        }
+    }
+    // flames: scorched ground under tongues of red, orange and yellow rising and flickering; they die back with age
+    let fire_c = surf_cover(5, c00, c10, c01, c11, fr);
+    let fire = smoothstep(0.34, 0.56, fire_c + jag);
+    if (fire > 0.0) {
+        col = mix(col, vec3<f32>(0.10, 0.07, 0.05), 0.85 * fire);
+        let life = 1.0 - 0.18 * age;
+        let f1 = vnoise(vec2<f32>(tq.x * 6.0, tq.y * 6.0 + clock * 2.6));
+        let f2 = vnoise(vec2<f32>(tq.x * 11.0 + 5.0, tq.y * 11.0 + clock * 4.1));
+        let flame = (f1 * 0.65 + f2 * 0.35) * life + 0.12 * fire_c;
+        if (flame > 0.42) {
+            let h = smoothstep(0.42, 0.78, flame);
+            var fc = mix(vec3<f32>(0.95, 0.22, 0.04), vec3<f32>(1.0, 0.62, 0.12), h);
+            fc = mix(fc, vec3<f32>(1.0, 0.92, 0.55), smoothstep(0.7, 0.9, flame));
+            o.glow = o.glow + fc * (0.7 + 0.5 * h) * fire;
+        }
+    }
+    o.col = col;
+    return o;
+}
 
 // what a texel of the ground looks like this moment: `g` is its time-independent part
 fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
@@ -556,6 +680,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
     let rain = globals.env.z;
     let snow = globals.env.w;
     var r: GDyn;
+    r.glow = vec3<f32>(0.0);
     var col = g.col;
     var n = vec3<f32>(0.0, 1.0, 0.0);
     if (g.state > 1.5 && g.state < 2.5) {
@@ -679,6 +804,12 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
             let nl = fract(sin(dot(lo, vec2<f32>(39.3468, 11.135))) * 24634.6345);
             if (nt < snow * (0.55 + 0.9 * nl) - 0.05) { col = mix(col, vec3<f32>(0.90, 0.94, 1.0), 0.88); }
         }
+        // the sim's surfaces: mud, standing water, ice, ash and flames (only while there are any)
+        if (globals.occ.w > 0.5 && g.state < 3.5) {
+            let sl = surface_layer(col, tx, rain);
+            col = sl.col;
+            r.glow = sl.glow;
+        }
     }
     r.col = col;
     r.n = n;
@@ -689,7 +820,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
 fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     // light: sky, sun (held back by shadows and clouds) and fires
     let l = quantize(env_light(d.n, world, 1.0), 0.06);
-    let lit = d.col * (l * globals.light.rgb + fires_at(d.n, world));
+    let lit = d.col * (l * globals.light.rgb + fires_at(d.n, world)) + d.glow;
     return vec4<f32>(finish(lit, wpos, 0.0), 1.0);
 }
 

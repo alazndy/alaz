@@ -317,6 +317,16 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
             }
             "Yukarıda bir kaya koptu, aşağı yuvarlanıyor! Yolundan çekil.".into()
         }
+        Event::Slipped(a) if *a == me => "Buzda kaydın! Donmuş su birikintilerinde koşma, yürü. Tabanı tutan çizme kaymayı azaltır.".into(),
+        Event::Burned(a) if *a == me => "Alevlerin içindesin! Yanmamış yere çık. Post giysiler ateşe biraz dayanır.".into(),
+        Event::FireStarted { x, y } => {
+            let a = w.agents.get(me.0 as usize)?;
+            if (a.x - x).pow(2) + (a.y - y).pow(2) > 40_000i64 * 40_000 {
+                return None;
+            }
+            "Kuru otlar tutuştu! Alev rüzgârla yayılır; ıslak topraktan, kumdan ve kayadan öteye geçemez. Yağmur söndürür.".into()
+        }
+        Event::Slipped(_) | Event::Burned(_) => return None,
         Event::Fell { .. } | Event::Crushed(_) | Event::RockHit(_) | Event::TreeDown { .. } | Event::RockBounce { .. } => return None,
         Event::CraftAbandoned(a) if *a == me => "İşi yarım bıraktın. Malzemelerin çantanda duruyor, yeniden başlayabilirsin.".into(),
         Event::Discovered(Discovery::SharpStone) => "Elinde iki taş var: Yap sekmesinde ellerine koyup Dene de, vurunca keskin bir kenar çıkar.".into(),
@@ -411,6 +421,7 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
             Reject::NeedsStation(kind) => format!("Bunu {} başında yapmalısın.", rules().building(*kind).name.to_lowercase()),
             Reject::CannotHitch => "Araba ve sabanı yalnız öküz ya da at çeker; her biri birer tane.".into(),
             Reject::NeedsPair => "Yavru için o türden iki hayvan ağılın içinde olmalı. İşçi panelinden \"Ağıla götür\" de.".into(),
+            Reject::WetGround => "Su birikintisinin ya da buzun üstünde ateş tutuşmaz. Kuru bir yer bul; çamurda ateş zor yanar.".into(),
             Reject::NoFlint => "Kıvılcım çıkaracak bir şey yok: ateş yakmak için çakmaktaşı gerek. Taş damarlarını kazarken arada bir çıkar.".into(),
         },
         Event::Chopped { .. } => return None,

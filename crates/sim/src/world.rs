@@ -459,6 +459,8 @@ pub enum Reject {
     NoLight,
     /// Lighting a fire needs flint in the pack.
     NoFlint,
+    /// A fire will not take on standing water or ice.
+    WetGround,
     /// Breeding in a pen needs two animals of that kind inside it.
     NeedsPair,
     /// Only an ox or a horse can pull a cart or a plough, and each pulls one of a kind.
@@ -524,6 +526,12 @@ pub enum Event {
     Crushed(AgentId),
     /// A rolling rock struck this one.
     RockHit(AgentId),
+    /// Went down on ice while running.
+    Slipped(AgentId),
+    /// Standing in flames.
+    Burned(AgentId),
+    /// A fire started by itself (embers off a campfire, dry lightning) here (mm).
+    FireStarted { x: i64, y: i64 },
     /// A stone broke off a ledge up here (mm).
     Rockfall { x: i64, y: i64 },
     /// A falling rock struck the ground hard (mm).
@@ -1102,6 +1110,10 @@ pub struct World {
     /// what lies there. Derived, not saved.
     pub(crate) node_stamps: std::collections::HashMap<(i32, i32), u64>,
     pub(crate) node_seq: u64,
+    /// Tiles that burn or lie in ash (see `surface`). Saved; the weather's mud, puddles and ice are not state.
+    pub(crate) burn: std::collections::BTreeMap<(i32, i32), crate::surface::Burn>,
+    /// Bumped whenever `burn` changes. Derived, not saved.
+    pub(crate) burn_seq: u64,
     pub buildings: Vec<Building>,
     pub agents: Vec<Agent>,
     pub wild: Vec<Wild>,
@@ -1206,6 +1218,8 @@ impl World {
             node_version: 0,
             node_stamps: Default::default(),
             node_seq: 0,
+            burn: Default::default(),
+            burn_seq: 0,
             buildings: Vec::new(),
             agents: Vec::new(),
             wild: Vec::new(),
@@ -1691,6 +1705,10 @@ impl World {
                 None | Some(Terrain::Water) => return Err(Reject::Blocked),
                 _ => {}
             }
+        }
+        // a fire will not take on a puddle or on ice
+        if kind.burns() && matches!(self.surface_at((x.div_euclid(TILE_MM)) as i32, (y.div_euclid(TILE_MM)) as i32), crate::surface::Surface::Puddle | crate::surface::Surface::Ice) {
+            return Err(Reject::WetGround);
         }
         let defs = &*rules_now;
         for (bi, b) in self.buildings.iter().enumerate() {
@@ -2214,7 +2232,9 @@ impl World {
                 if !free {
                     self.agents[idx].inventory.take(&def.cost);
                 }
-                let fuel = if kind.burns() { FIRE_FUEL_START } else { 0 };
+                // wet earth is hard to light on: the fire starts with half the fuel
+                let damp = self.surface_at((x.div_euclid(TILE_MM)) as i32, (y.div_euclid(TILE_MM)) as i32) == crate::surface::Surface::Mud;
+                let fuel = if kind.burns() { if damp { FIRE_FUEL_START / 2 } else { FIRE_FUEL_START } } else { 0 };
                 self.buildings.push(Building { fuel, ..Building::new(kind, x, y) });
                 self.obstacles.block_footprint(&self.map, x, y, def.radius_mm);
                 self.obstacles.built_for = self.buildings.len();
@@ -2523,8 +2543,9 @@ impl World {
         // pieces broken off trunks this tick (what, from where, which way), and who is looking for the next piece
         let mut thrown: Vec<(ItemKind, (i64, i64, i64), (i64, i64, i64))> = Vec::new();
         let mut seek: Vec<usize> = Vec::new();
+        let ground = self.ground();
         let Self { map, nodes, node_seq, node_stamps, node_acc, agents, obstacles, events, air, bodies, .. } = self;
-        let mut nav = Nav { map, obstacles, budget: PATHS_PER_TICK };
+        let mut nav = Nav { map, obstacles, budget: PATHS_PER_TICK, ground };
         for (ai, a) in agents.iter_mut().enumerate() {
             // off the ground, nobody walks or works: the fall has them until they land
             if air.iter().any(|f| f.agent == a.id) {
@@ -2839,6 +2860,7 @@ impl World {
     }
 
     fn run_taming(&mut self) {
+        let ground = self.ground();
         for i in 0..self.agents.len() {
             let Task::Tame { wild, progress } = self.agents[i].task else { continue };
             let Some(wi) = self.wild.iter().position(|w| w.id == wild) else {
@@ -2848,7 +2870,7 @@ impl World {
             let (wx, wy) = (self.wild[wi].x, self.wild[wi].y);
             let a = &mut self.agents[i];
             if dist2(a.x, a.y, wx, wy) > TAME_RANGE_MM * TAME_RANGE_MM {
-                if matches!(advance(a, &mut Nav { map: &self.map, obstacles: &self.obstacles, budget: PATHS_PER_TICK }, wx, wy), Step::Blocked) {
+                if matches!(advance(a, &mut Nav { map: &self.map, obstacles: &self.obstacles, budget: PATHS_PER_TICK, ground }, wx, wy), Step::Blocked) {
                     a.task = Task::Idle;
                 }
                 continue;
@@ -2884,6 +2906,7 @@ impl World {
     }
 
     fn run_hunting(&mut self) {
+        let ground = self.ground();
         for i in 0..self.agents.len() {
             let Task::Hunt { wild, progress, chase } = self.agents[i].task else { continue };
             let Some(wi) = self.wild.iter().position(|w| w.id == wild) else {
@@ -2903,7 +2926,7 @@ impl World {
                 continue;
             }
             if dist2(a.x, a.y, wx, wy) > SPEAR_RANGE_MM * SPEAR_RANGE_MM {
-                if matches!(advance(a, &mut Nav { map: &self.map, obstacles: &self.obstacles, budget: PATHS_PER_TICK }, wx, wy), Step::Blocked) {
+                if matches!(advance(a, &mut Nav { map: &self.map, obstacles: &self.obstacles, budget: PATHS_PER_TICK, ground }, wx, wy), Step::Blocked) {
                     a.task = Task::Idle;
                 } else {
                     a.task = Task::Hunt { wild, progress: 0, chase: chase + 1 };
@@ -4168,6 +4191,7 @@ impl World {
         self.run_buildings();
         self.run_wildlife();
         self.run_needs();
+        self.run_surface();
         self.run_currents();
         self.run_spoilage();
         self.run_discoveries();
@@ -4203,6 +4227,11 @@ impl World {
             feed(p as u64);
         }
         feed(self.node_acc);
+        // only once something has burned, so a world that never saw fire keeps the hash it had
+        for (&(tx, ty), b) in &self.burn {
+            feed((tx as u32 as u64) << 32 | ty as u32 as u64);
+            feed(b.born ^ b.until << 1 ^ b.fire as u64);
+        }
         for b in &self.buildings {
             feed(b.kind as u64);
             feed(b.x as u64);

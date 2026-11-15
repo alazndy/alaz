@@ -65,6 +65,33 @@ pub fn weather(seed: u64, tick: u64, days: u64) -> Weather {
     }
 }
 
+/// How wet the ground is, permille 0..=1000. A pure function of the sky's recent past (the last nine four-hour
+/// blocks), so it needs no saved state and every peer, and the renderer, agree on it: each rainy or snowy block soaks
+/// the ground over its first hour or so, and what fell earlier dries away block by block (faster in summer).
+pub fn ground_wet(seed: u64, tick: u64, days: u64) -> i32 {
+    let block = TICKS_PER_DAY / 6;
+    let (cur, into) = (tick / block, tick % block);
+    // per-block share that stays: spring, summer, autumn, winter
+    let keep = [650, 500, 700, 800][season(tick, days) as usize] as i64;
+    let mut sum = 0i64;
+    let mut w = 1000i64;
+    for k in 0..=8u64 {
+        if cur < k {
+            break;
+        }
+        let rain = match weather(seed, (cur - k) * block, days) {
+            Weather::Clear => 0,
+            Weather::Rain => 1000,
+            Weather::Snow => 800,
+        };
+        // the block now running soaks in over its first third
+        let soak = if k == 0 { (into as i64 * 3000 / block as i64).min(1000) } else { 1000 };
+        sum += rain * soak / 1000 * w / 1000;
+        w = w * keep / 1000;
+    }
+    sum.min(1000) as i32
+}
+
 /// Light level 300..=1000 (permille): full 08:00-17:00, dim 20:00-05:00, linear ramps between.
 pub fn daylight_permille(tick: u64) -> i32 {
     let m = minute_of_day(tick) as i32;

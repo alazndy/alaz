@@ -145,6 +145,48 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
     }
 }
 
+/// Fire in the grass on one tile: three low tongues of flame that lick and sway (red outside, a yellow heart), a spark
+/// or two rising, and a thin curl of smoke leaning downwind. `age` (0..3) shrinks the flames toward the end.
+pub(crate) fn push_grass_fire(out: &mut Mesh, x: f32, z: f32, age: f32, t: f32) {
+    use shapes::{limb, sphere};
+    out.set_anchor(x, z);
+    let seed = ((x * 7.0 + z * 13.0).abs() as u32).wrapping_mul(2654435761);
+    let jit = |k: u32| ((seed.rotate_left(k) % 1000) as f32 / 1000.0 - 0.5) * 2.0;
+    let size = 1.0 - 0.22 * age;
+    let s = out.len();
+    for k in 0..3u32 {
+        let (ox, oz) = (0.3 * jit(k + 3), 0.3 * jit(k + 11));
+        let ph = t * (6.0 + 1.1 * (k % 3) as f32) + k as f32 * 1.9 + jit(k + 17) * 3.0;
+        let lick = 0.7 + 0.3 * ph.sin() + 0.12 * (ph * 2.3).sin();
+        let h = (0.42 + 0.22 * jit(k + 23).abs()) * lick * size;
+        let [wx, wz, _] = out.wind;
+        let sway = [(ph * 0.7).sin() * 0.05 + wx * 0.1, (ph * 0.6 + 1.0).cos() * 0.05 + wz * 0.1];
+        let foot = [x + ox, 0.03, z + oz];
+        let mid = [foot[0] + sway[0] * 0.5, 0.03 + h * 0.5, foot[2] + sway[1] * 0.5];
+        let tip = [foot[0] + sway[0], 0.03 + h, foot[2] + sway[1]];
+        limb(out, foot, mid, 0.075 * size, 0.055 * size, [1.0, 0.30, 0.06], 5);
+        limb(out, mid, tip, 0.055 * size, 0.008, [1.0, 0.42, 0.08], 5);
+        if k < 2 {
+            let ih = h * 0.6;
+            limb(out, foot, [foot[0] + sway[0] * 0.4, 0.03 + ih, foot[2] + sway[1] * 0.4], 0.04 * size, 0.008, [1.0, 0.82, 0.30], 5);
+        }
+    }
+    // a spark lifting off
+    let a = (t * 0.7 + jit(29) * 0.5).fract();
+    let r = 0.02 * (1.0 - a);
+    if r > 0.004 {
+        push_box(out, [x + 0.15 * jit(31) + (t * 3.0).sin() * 0.04, 0.3 + a * 1.3, z + 0.15 * jit(37)], [r, r, r], [1.0, 0.75 - 0.4 * a, 0.25], 1.0);
+    }
+    glowify(out, s);
+    // smoke: one grey puff leaning off downwind
+    let age_s = (t * 0.25 + (seed % 100) as f32 / 100.0).fract();
+    let [wx, wz, _] = out.wind;
+    let p = [x + wx * 1.4 * age_s * age_s + (t * 0.5 + jit(5)).sin() * 0.06, 0.5 + age_s * 1.6, z + wz * 1.4 * age_s * age_s];
+    let r = (0.05 + 0.16 * age_s) * (1.0 - age_s * 0.5);
+    let g = 0.34 + 0.2 * age_s;
+    sphere(out, p, [r, r * 0.85, r], [g, g, g * 1.02], 5, 3, 0.25, seed);
+}
+
 /// Building models from simple boxes. `tint` turns it into a flat bright preview colour.
 pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, active: bool, tick: u64, tint: Option<[f32; 3]>) {
     out.set_anchor(x, z);

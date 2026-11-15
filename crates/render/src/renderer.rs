@@ -183,6 +183,14 @@ pub struct Renderer {
     /// Per tile of the height window: its ground picture (atlas texel corner), ground kind and shade, so the shader
     /// can draw a neighbour's ground across a ragged boundary instead of along tile edges.
     pub(crate) tile_tex: wgpu::Texture,
+    /// The tile window as the CPU wrote it (the surface layer is patched into its kind channel and the lot sent again).
+    pub(crate) tile_cpu: Vec<f32>,
+    /// The weather's surface code per tile of the window (mud, puddles, ice), and what it was made from.
+    pub(crate) surf_base: Vec<u8>,
+    pub(crate) surf_wkey: Option<(u64, i32, i32, i32, bool, i32, i32)>,
+    /// What the window's surface layer was last built for (see `frame.rs`); `surf_on`: it holds any surface at all.
+    pub(crate) surf_key: Option<(u64, i32, i32, i32, bool, u64, u64, i32, i32)>,
+    pub(crate) surf_on: bool,
     /// (seed, tile corner of the window's first texel) of what the height texture holds now
     pub(crate) height_at: Option<(u64, i32, i32)>,
     pub(crate) weather_kind: f32,
@@ -521,6 +529,11 @@ impl Renderer {
             globals,
             height_tex,
             tile_tex,
+            tile_cpu: Vec::new(),
+            surf_base: vec![0; (HWIN * HWIN) as usize],
+            surf_wkey: None,
+            surf_key: None,
+            surf_on: false,
             height_at: None,
             weather_kind: 1.0,
             weather_amount: 0.0,

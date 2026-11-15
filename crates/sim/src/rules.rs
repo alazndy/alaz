@@ -195,6 +195,9 @@ pub struct GarmentDef {
     /// Share of the slope's slowing (uphill going) taken away, permille.
     #[serde(default)]
     pub grip: i32,
+    /// Share of the hurt from standing in flames turned away, permille.
+    #[serde(default)]
+    pub fire: i32,
     /// Weight: share of walking speed lost, permille.
     #[serde(default)]
     pub burden: i32,
@@ -215,6 +218,7 @@ pub struct Gear {
     pub blow: i32,
     pub fall: i32,
     pub grip: i32,
+    pub fire: i32,
     pub burden: i32,
     pub tire: i32,
     pub tool_save: i32,
@@ -230,6 +234,7 @@ impl Gear {
             g.blow += d.blow;
             g.fall += d.fall;
             g.grip += d.grip;
+            g.fire += d.fire;
             g.burden += d.burden;
             g.tire += d.tire;
             g.tool_save += d.tool_save;
@@ -238,6 +243,7 @@ impl Gear {
         g.blow = g.blow.min(800);
         g.fall = g.fall.min(800);
         g.grip = g.grip.min(1000);
+        g.fire = g.fire.min(800);
         g.burden = g.burden.min(500);
         g.tool_save = g.tool_save.min(80);
         g

@@ -1723,6 +1723,7 @@ warmth = 10
 item = "hide_cloak"
 warmth = 25
 dry = 12
+fire = 150
 
 [[garment]]
 item = "hide_boots"
@@ -1730,6 +1731,7 @@ warmth = 10
 dry = 8
 fall = 300
 grip = 250
+fire = 200
 
 [[garment]]
 item = "tunic"
@@ -1747,14 +1749,17 @@ bite = 350
 blow = 150
 burden = 60
 tire = 150
+fire = 300
 
 [[garment]]
 item = "steel_helm"
 warmth = 6
 bite = 100
 blow = 400
+fire = 100
 
 [[garment]]
 item = "work_apron"
 warmth = 22
 tool_save = 30
+fire = 250

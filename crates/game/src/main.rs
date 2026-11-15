@@ -370,6 +370,41 @@ fn demo_setup(w: &mut World) -> Selection {
         }
         w.tick = t + 120;
     }
+    // Dev aid: ALAZ_DEMO_SURFACE=mud|puddle|ice|fire|ash looks at the ground states of the surface layer. `mud`: the clear
+    // sky just after the first rain, `puddle`: the end of that rain, `ice`: the first frost after wet weather in winter,
+    // `fire`: grass alight (older flames beside younger ones) on a dry day, `ash`: the same a quarter minute on.
+    if let Ok(v) = std::env::var("ALAZ_DEMO_SURFACE") {
+        use alaz_sim::time::{Weather, TICKS_PER_DAY};
+        let days = w.settings.season_days as u64;
+        // (a moment of the demo clock's hour, on some later day, when the ground and the sky are as wanted)
+        let hour = alaz_sim::time::minute_of_day(w.tick) / 60;
+        let find = |from: u64, to: u64, ok: &dyn Fn(&alaz_sim::Ground) -> bool| {
+            (from..to).step_by(300).find(|&t| alaz_sim::time::minute_of_day(t) / 60 == hour && ok(&alaz_sim::Ground::at(w.seed, t, days)))
+        };
+        match v.as_str() {
+            "mud" => w.tick = find(TICKS_PER_DAY, TICKS_PER_DAY * 60, &|g| g.sky == Weather::Clear && (550..800).contains(&g.wet) && !g.freezing()).unwrap_or(w.tick),
+            "puddle" => w.tick = find(TICKS_PER_DAY, TICKS_PER_DAY * 60, &|g| g.sky == Weather::Rain && g.wet >= 980 && !g.freezing()).unwrap_or(w.tick),
+            "ice" => w.tick = find(TICKS_PER_DAY * days * 3, TICKS_PER_DAY * days * 4, &|g| g.freezing() && g.wet >= 800).unwrap_or(w.tick),
+            "fire" | "ash" => {
+                let (px, py) = ((w.agents[0].x / 1000) as i32, (w.agents[0].y / 1000) as i32);
+                // an old patch that has burnt down to ash by the time the young one catches
+                for dy in -3..=3 {
+                    for dx in 2..=7 {
+                        w.ignite(px + dx, py + dy - 3);
+                    }
+                }
+                for _ in 0..(if v == "ash" { 1100 } else { 420 }) {
+                    w.step(&[]);
+                }
+                for dy in -3..=3 {
+                    for dx in 5..=10 {
+                        w.ignite(px + dx, py + dy + 2);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     if std::env::var_os("ALAZ_DEMO_NEWBIE").is_some() {
         // a tribe that has learned nothing yet: empty hands, nothing seen, see how little it can make out
         for a in w.agents.iter_mut() {
@@ -504,6 +539,8 @@ struct App {
     recorded: Vec<RouteStep>,
     wild_hinted: bool,
     wolf_hinted: bool,
+    /// Which ground states have been explained once (bit per `alaz_sim::Surface`).
+    surf_hinted: u8,
     last_strike: Option<(bool, f32)>,
     /// The evolution stage last seen, to announce the next one.
     last_stage: u8,
@@ -624,6 +661,7 @@ impl App {
             recorded: Vec::new(),
             wild_hinted: false,
             wolf_hinted: false,
+            surf_hinted: 0,
             last_strike: None,
             last_stage: 255,
             knap: hud::KnapState::default(),
@@ -1215,6 +1253,30 @@ impl App {
                 }
             }
         }
+        // the first time the ground turns to mud, ice or flames underfoot (or beside it), say what it does
+        if self.world.tick % 15 == 0 && self.surf_hinted != 0b11_1111 {
+            if let Some(a) = self.me_agent() {
+                use alaz_sim::Surface;
+                let (tx, ty) = (a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
+                let here = self.world.surface_at(tx, ty);
+                let fire_near = (-2..=2).any(|dy| (-2..=2).any(|dx| self.world.surface_at(tx + dx, ty + dy) == Surface::Fire));
+                let (which, text) = if fire_near && self.surf_hinted & 1 << Surface::Fire as u8 == 0 {
+                    (Surface::Fire, "Ot yanıyor! Alev kuru otları yalayıp rüzgârla yayılır, canını yakar. Uzak dur; ıslak toprak ve yağmur durdurur.")
+                } else if here == Surface::Mud {
+                    (Surface::Mud, "Yağmur zemini çamura çevirdi: adımların ağırlaştı. Tabanı tutan çizme çamurda daha az yavaşlatır; güneş kuruturur.")
+                } else if here == Surface::Ice {
+                    (Surface::Ice, "Su birikintileri buz tuttu. Buzda koşarsan kayıp düşersin: yürü, ya da tabanı tutan çizme giy.")
+                } else if here == Surface::Puddle {
+                    (Surface::Puddle, "Su birikintisi: üstünde ateş tutuşmaz, içinden yürümek biraz yavaşlatır.")
+                } else {
+                    (Surface::Dry, "")
+                };
+                if which != Surface::Dry && self.surf_hinted & 1 << which as u8 == 0 {
+                    self.surf_hinted |= 1 << which as u8;
+                    self.say(text);
+                }
+            }
+        }
         if !self.wolf_hinted {
             if let Some(a) = self.me_agent() {
                 let wolf_near = self
@@ -1701,6 +1763,11 @@ impl App {
             return None;
         }
         let w = &self.world;
+        if let Some(p) = self.cursor_ground() {
+            if w.surface_at(p.x.floor() as i32, p.z.floor() as i32) == alaz_sim::Surface::Fire {
+                return Some("Yanıyor! Uzak dur".to_string());
+            }
+        }
         if let Some(id) = self.pick_node() {
             let n = w.nodes.get(id.0 as usize)?;
             return Some(format!("{}  ·  sağ tık: topla", hud::node_label(w, n)));
@@ -1741,6 +1808,16 @@ impl App {
                 alaz_sim::WildSpecies::Wolf => "Kurt (tehlikeli)",
             };
             return Some(name.to_string());
+        }
+        if w.map.terrain(tx, ty).is_some_and(|t| t != alaz_sim::Terrain::Water) {
+            return match w.surface_at(tx, ty) {
+                alaz_sim::Surface::Mud => Some("Çamur: yavaşlatır (çizme yardım eder)".to_string()),
+                alaz_sim::Surface::Puddle => Some("Su birikintisi: ateş tutuşmaz".to_string()),
+                alaz_sim::Surface::Ice => Some("Buz: kaygan, koşarsan düşersin".to_string()),
+                alaz_sim::Surface::Ash => Some("Kül: otlar yeniden yeşerecek".to_string()),
+                alaz_sim::Surface::Fire => Some("Yanıyor! Uzak dur".to_string()),
+                alaz_sim::Surface::Dry => None,
+            };
         }
         None
     }

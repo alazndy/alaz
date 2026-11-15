@@ -264,6 +264,7 @@ shot NAME / state
 | `ALAZ_DEMO_WALK=dx,dy` | Yürüme tuşunu basılı tutar |
 | `ALAZ_DEMO_IDLE` | Gösteride el işi başlatmaz |
 | `ALAZ_DEMO_HOUR`, `ALAZ_DEMO_WEATHER` | Saati ve havayı seçer |
+| `ALAZ_DEMO_SURFACE=mud\|puddle\|ice\|fire\|ash` | Zemin durumlarını gösterir: yağmur sonrası çamur, birikinti, buz (`ALAZ_DEMO_HOUR=9` ve `ALAZ_DEMO_WEATHER=snow` ile), yanan çimen, kül |
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |
 
