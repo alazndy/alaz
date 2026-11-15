@@ -1847,7 +1847,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                 let (cxi, cyi) = ((c.x / px::unit()) as i32, (c.y / px::unit()) as i32);
                 // the stone only changes when a flake comes off, so it is drawn once and kept
                 let key = v.stack.iter().fold((c.x as u64) << 20 ^ (c.y as u64), |h, s| h.wrapping_mul(1_000_003).wrapping_add(s.1 as u64 + 1)) ^ (v.step as u64) << 50;
-                px::cells_cached(ctx, egui::Id::new("knap_stone"), key, &painter, Rect::from_center_size(c, egui::Vec2::splat(r0 * 2.0 + 24.0)), |q| {
+                px::cells_cached(ctx, egui::Id::unique("knap_stone"), key, &painter, Rect::from_center_size(c, egui::Vec2::splat(r0 * 2.0 + 24.0)), |q| {
                     let (dx, dy) = (q.x - c.x, q.y - c.y);
                     let d = (dx * dx + dy * dy).sqrt();
                     let r = radius_at(dx.atan2(-dy).to_degrees().rem_euclid(360.0));
@@ -2103,7 +2103,7 @@ fn strike_fx(ctx: &egui::Context, rect: egui::Rect, last: Option<(bool, f32)>) {
     if left <= 0.0 {
         return;
     }
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("strike_fx")));
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("strike_fx")));
     let a = (left * 255.0) as u8;
     if hit {
         px::chips(&p, rect.center(), 1.0 - left, left, 12);
@@ -2667,7 +2667,7 @@ struct DesignState {
 /// The design table: pick up to three inputs and an output from what has been seen; the table shows what each side
 /// is worth and writes the recipe into this world's rules if it is not worth more than it takes.
 fn design_table(ui: &mut egui::Ui, w: &World, acts: &mut Vec<UiAction>) {
-    let id = egui::Id::new("design_table");
+    let id = egui::Id::unique("design_table");
     let mut st: DesignState = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
     let seen: Vec<ItemKind> = ItemKind::ALL.iter().copied().filter(|k| w.has_seen(*k)).collect();
     if seen.is_empty() {
@@ -2753,7 +2753,7 @@ pub fn node_label(w: &World, n: &alaz_sim::world::Node) -> String {
 /// A small label by the pointer: what it is on, and what a right click does there.
 pub fn pointer_label(ctx: &egui::Context, text: &str) {
     let Some(p) = ctx.pointer_hover_pos() else { return };
-    egui::Area::new(egui::Id::new("pointer_label")).fixed_pos(p + egui::vec2(16.0, 14.0)).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("pointer_label")).fixed_pos(p + egui::vec2(16.0, 14.0)).order(egui::Order::Tooltip).interactable(false).show(ctx, |ui| {
         egui::Frame::new().fill(Color32::from_black_alpha(190)).corner_radius(0).inner_margin(egui::Margin::symmetric(7, 4)).show(ui, |ui| {
             // one line, as long as it needs: a pointer label is never wrapped word by word
             ui.add(egui::Label::new(RichText::new(text).color(Color32::from_rgb(246, 238, 222)).size(22.0)).extend());
@@ -3299,7 +3299,7 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, acts: &mut Vec<UiActio
     use alaz_sim::world::{Task, CAVE_DEEPER_TICKS, CAVE_MAX_DEPTH, CAVE_MINE_TICKS, CAVE_TORCH_TICKS};
     let Some(Task::Cave { depth, light, act, work, .. }) = w.agents.iter().find(|a| a.id == me).map(|a| a.task) else { return };
     let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("cave")).fixed_pos(egui::pos2(screen.center().x - 230.0, (screen.center().y - 230.0).max(70.0))).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("cave")).fixed_pos(egui::pos2(screen.center().x - 230.0, (screen.center().y - 230.0).max(70.0))).order(egui::Order::Foreground).show(ctx, |ui| {
         ui.set_max_width(460.0);
         panel(ui, 6.0, |ui| {
             ui.set_min_width(440.0);
@@ -3422,7 +3422,7 @@ pub fn compass(ctx: &egui::Context, yaw_deg: f32, pitch_deg: f32, sun: [f32; 3],
     let flat = pitch_deg.to_radians().sin().clamp(0.45, 1.0);
     // a ground direction (east, south) on screen
     let to = |dx: f32, dz: f32, k: f32| c + vec2(dx * yc - dz * ys, (dx * ys + dz * yc) * flat) * k;
-    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("compass")));
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("compass")));
     let ring: Vec<egui::Pos2> = (0..32).map(|i| {
         let a = i as f32 / 32.0 * std::f32::consts::TAU;
         to(a.cos(), a.sin(), rad)

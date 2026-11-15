@@ -300,7 +300,7 @@ pub fn portrait(ui: &mut Ui, th: &Theme, level: u8, id: u32, outfit: u16) -> egu
     let key = (id as u64) << 24 ^ (outfit as u64) << 8 ^ (level as u64) << 4 ^ th.light.r() as u64 ^ 0x5EED;
     let lk = look(id);
     let (u, left, top) = (px.u, r.left(), r.top());
-    pxui::cells_cached(ui.ctx(), egui::Id::new("portrait"), key, ui.painter(), r, |p: Pos2| {
+    pxui::cells_cached(ui.ctx(), egui::Id::unique("portrait"), key, ui.painter(), r, |p: Pos2| {
         let (cx, cy) = (((p.x - left) / u).floor() as i32, ((p.y - top) / u).floor() as i32);
         cell(th, &lk, level, outfit, cx, cy)
     });

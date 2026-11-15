@@ -91,7 +91,7 @@ impl Fx {
 }
 
 fn layer(ctx: &egui::Context, name: &str) -> egui::Painter {
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new(name)))
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique(name)))
 }
 
 /// The title screen.

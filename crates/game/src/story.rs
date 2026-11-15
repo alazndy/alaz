@@ -162,7 +162,7 @@ impl Story {
         if done == list.len() || w.craft_view(me.id).is_some() {
             return;
         }
-        egui::Area::new(egui::Id::new("first_steps")).anchor(Align2::RIGHT_TOP, [-12.0, 120.0]).show(ctx, |ui| {
+        egui::Area::new(egui::Id::unique("first_steps")).anchor(Align2::RIGHT_TOP, [-12.0, 120.0]).show(ctx, |ui| {
             egui::Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(30, 24, 18, 225))
                 .stroke(Stroke::new(1.2, Color32::from_rgb(150, 120, 70)))
@@ -198,7 +198,7 @@ impl Story {
 /// secondary one, `None` while it is still being read.
 fn card(ctx: &egui::Context, id: &str, title: &str, body: &str, go: &str, skip: Option<&str>) -> Option<bool> {
     let mut out = None;
-    egui::Area::new(egui::Id::new(id)).anchor(Align2::CENTER_CENTER, [0.0, -40.0]).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique(id)).anchor(Align2::CENTER_CENTER, [0.0, -40.0]).order(egui::Order::Foreground).show(ctx, |ui| {
         egui::Frame::new()
             .fill(Color32::from_rgba_unmultiplied(28, 21, 15, 245))
             .stroke(Stroke::new(2.0, Color32::from_rgb(190, 150, 70)))

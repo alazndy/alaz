@@ -15,13 +15,6 @@ pub enum Glyph {
     Flag,
     Route,
     Help,
-    Sun,
-    Moon,
-    Cloud,
-    Rain,
-    Snow,
-    Eye,
-    Bolt,
     Plus,
     Leg,
     Skull,
@@ -100,42 +93,6 @@ pub fn glyph(p: &Painter, c: Pos2, s: f32, g: Glyph, col: Color32) {
         Glyph::Help => {
             p.text(c, Align2::CENTER_CENTER, "?", FontId::proportional(s * 0.95), col);
         }
-        Glyph::Sun => {
-            p.circle_filled(c, 0.24 * s, col);
-            for k in 0..8 {
-                let a = k as f32 * std::f32::consts::FRAC_PI_4;
-                let (sn, cs) = a.sin_cos();
-                line((cs * 0.34, sn * 0.34), (cs * 0.48, sn * 0.48), 0.07, col);
-            }
-        }
-        Glyph::Moon => {
-            p.circle_filled(c, 0.34 * s, col);
-            p.circle_filled(q(0.16, -0.1), 0.3 * s, Color32::from_rgb(24, 20, 17));
-        }
-        Glyph::Cloud | Glyph::Rain | Glyph::Snow => {
-            p.circle_filled(q(-0.18, 0.0), 0.2 * s, col);
-            p.circle_filled(q(0.06, -0.12), 0.26 * s, col);
-            p.circle_filled(q(0.26, 0.04), 0.18 * s, col);
-            p.rect_filled(Rect::from_min_max(q(-0.18, 0.0), q(0.26, 0.2)), 0.0, col);
-            for k in 0..3 {
-                let x = -0.2 + k as f32 * 0.2;
-                match g {
-                    Glyph::Rain => line((x, 0.28), (x - 0.06, 0.46), 0.06, Color32::from_rgb(120, 170, 235)),
-                    Glyph::Snow => {
-                        p.circle_filled(q(x, 0.36), 0.05 * s, Color32::WHITE);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Glyph::Eye => {
-            poly(&[(-0.46, 0.0), (-0.2, -0.22), (0.2, -0.22), (0.46, 0.0), (0.2, 0.22), (-0.2, 0.22)], col);
-            p.circle_filled(c, 0.14 * s, Color32::from_rgb(30, 36, 50));
-            p.circle_filled(q(-0.04, -0.04), 0.04 * s, Color32::WHITE);
-        }
-        Glyph::Bolt => {
-            poly(&[(0.1, -0.46), (-0.28, 0.06), (-0.02, 0.06), (-0.12, 0.46), (0.3, -0.1), (0.04, -0.1)], col);
-        }
         Glyph::Plus => {
             line((0.0, -0.34), (0.0, 0.34), 0.2, col);
             line((-0.34, 0.0), (0.34, 0.0), 0.2, col);
@@ -212,7 +169,7 @@ pub fn icon_only(ui: &mut Ui, g: Glyph, name: &str, key: Option<&str>, selected:
         Some(k) => format!("{name} [{k}]"),
         None => name.to_string(),
     };
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &full));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &full));
     resp.on_hover_text(name)
 }
 
@@ -228,7 +185,7 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
         Some(k) => format!("{text} [{k}]"),
         None => text.to_string(),
     };
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &name));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
     let hovered = resp.hovered() && enabled;
     let held = resp.is_pointer_button_down_on() && enabled;
     let p = ui.painter();

@@ -35,6 +35,8 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
     crate::items_serde::LEGACY.with(|l| l.set(legacy));
     let r = if version == FORMAT_VERSION {
         postcard::from_bytes(payload)
+    } else if version == PRE_FACING_VERSION {
+        postcard::from_bytes::<SaveDataV24>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_CHUNK_VERSION {
         postcard::from_bytes::<SaveDataV23>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_NUTRITION_VERSION {
@@ -622,6 +624,17 @@ mod tests {
         let b = World::from_bytes(&framed(PRE_WEAR_VERSION, &old)).expect("format 21 loads");
         assert_eq!(b.settings.season_days, 9);
         assert!(b.agents.iter().all(|a| a.wear.is_empty()));
+    }
+
+    /// A format-24 save (no building facing) loads with everything facing the same way.
+    #[test]
+    fn a_format_24_save_is_upgraded() {
+        let w = played_world();
+        let d = payload_of(&w.to_bytes());
+        let e = &d.ext;
+        let old = postcard::to_allocvec(&(&d.core, &d.air, &d.bodies, (&e.settings, &e.recipe_ids, &e.custom_rules, &e.buildings, &e.generations, &e.wear, &e.nutrition, &e.chunks))).unwrap();
+        let b = World::from_bytes(&framed(PRE_FACING_VERSION, &old)).expect("format 24 loads");
+        assert_eq!(b.hash(), w.hash());
     }
 
     /// A format-23 save (no chunk list) loads as it was.

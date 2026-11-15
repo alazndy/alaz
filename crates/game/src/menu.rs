@@ -51,7 +51,7 @@ fn segmented(ui: &mut Ui, id: &str, names: &[&str], idx: &mut usize) {
     for (k, name) in names.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(sr.left() + k as f32 * seg_w, sr.top()), vec2(seg_w, sr.height()));
         let resp = ui.interact(cell, egui::Id::NULL.with((id, k)), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *name));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *name));
         if resp.clicked() {
             *idx = k;
         }
@@ -365,7 +365,7 @@ enum Look {
 /// One painted button for the whole menu: hover slides a warm fill across, press sinks it.
 fn button(ui: &mut Ui, text: &str, size: egui::Vec2, look: Look) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text));
     let hov = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.14);
     let t = ui.input(|i| i.time) as f32;
     let down = resp.is_pointer_button_down_on();
@@ -608,7 +608,7 @@ impl Menu {
                     for i in 0..self.slots.len() {
                         let n = i as u8 + 1;
                         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
-                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Yuva {n}")));
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Yuva {n}")));
                         if resp.clicked() {
                             self.slot = n;
                         }
@@ -668,7 +668,7 @@ impl Menu {
                     ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, "TOHUM", FontId::proportional(11.0), Color32::from_rgb(160, 140, 104));
                     let er = Rect::from_min_max(pos2(rect.left() + 64.0, rect.top() + 4.0), pos2(rect.right() - 8.0, rect.bottom() - 4.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(er), |ui| {
-                        ui.add_sized(er.size(), egui::TextEdit::singleline(&mut self.seed_text).frame(egui::Frame::NONE).hint_text("boş = rastgele").vertical_align(egui::Align::Center));
+                        ui.add_sized(er.size(), egui::TextEdit::singleline(&mut self.seed_text).frame(egui::Frame::NONE).hint_text("boş = rastgele").align(egui::Align2::LEFT_CENTER));
                     });
                     ui.add_space(4.0);
                     // size: a segmented control whose highlight glides to the chosen part
@@ -680,7 +680,7 @@ impl Menu {
                     for (k, (name, _)) in SIZES.iter().enumerate() {
                         let cell = Rect::from_min_size(pos2(sr.left() + k as f32 * seg_w, sr.top()), vec2(seg_w, sr.height()));
                         let resp = ui.interact(cell, egui::Id::NULL.with(("size", k)), Sense::click());
-                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *name));
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *name));
                         if resp.clicked() {
                             self.size_idx = k;
                         }
@@ -703,7 +703,7 @@ impl Menu {
                     ui.add_space(6.0);
                     // hardcore: a switch whose knob slides, and a skull that warms up when it is on
                     let (hr, hresp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
-                    hresp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hardcore"));
+                    hresp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Hardcore"));
                     if hresp.clicked() {
                         self.hardcore = !self.hardcore;
                     }
