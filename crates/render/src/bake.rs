@@ -3,22 +3,18 @@
 //! into two textures instead, in blocks of 8x8 tiles within a small per-frame budget, and the ground shader only looks
 //! it up and adds what moves (wind, rain, snow fall, sea, light).
 //!
-//! The textures are a ring of RING x RING chunks at the ground's own 27 texels per metre: a world texel lives at its
+//! The textures are a ring of RING x RING chunks at the ground's own 27 (or 21) texels per metre: a world texel lives at its
 //! coordinates modulo the ring, so a chunk keeps its place while the camera stays near and nothing is copied when it
 //! moves. A chunk is drawn from the bake only once all 16 of its blocks are done (until then the shader that works
 //! the colour out on the spot draws it), and a chunk the ring has no room for is drawn that way for good.
 use crate::renderer::CHUNK_TILES;
 use std::collections::HashSet;
 
-/// Ground texels per metre; the shader's number.
-const TEXELS_PER_TILE: i32 = crate::sprites::GT;
-/// Chunks on a side of the ring (shader.wgsl's RING_TEXELS is this times CHUNK_TEXELS).
+/// Chunks on a side of the ring (the shader's RING_TEXELS, put in front of it by quality.rs, is this times a chunk's
+/// texels).
 pub(crate) const RING: i32 = 4;
-pub(crate) const CHUNK_TEXELS: i32 = CHUNK_TILES * TEXELS_PER_TILE;
-pub(crate) const RING_TEXELS: u32 = (RING * CHUNK_TEXELS) as u32;
-/// A block is the unit of baking: 8x8 tiles, 216x216 texels, 16 to a chunk.
+/// A block is the unit of baking: 8x8 tiles, 216x216 texels (168 when coarse), 16 to a chunk.
 const BLOCK_TILES: i32 = 8;
-const BLOCK_TEXELS: i32 = BLOCK_TILES * TEXELS_PER_TILE;
 const BLOCKS_SIDE: i32 = CHUNK_TILES / BLOCK_TILES;
 const FULL: u32 = (1 << (BLOCKS_SIDE * BLOCKS_SIDE)) - 1;
 /// How many blocks one frame bakes at most (shader.wgsl's `bake_params` holds 32).
@@ -34,6 +30,9 @@ pub(crate) struct Job {
 }
 
 pub(crate) struct GroundBake {
+    chunk_texels: i32,
+    ring_texels: u32,
+    block_texels: i32,
     _col: wgpu::Texture,
     _nrm: wgpu::Texture,
     pub(crate) col_view: wgpu::TextureView,
@@ -55,10 +54,13 @@ fn slot_of(c: (i32, i32)) -> usize {
 
 impl GroundBake {
     pub(crate) fn new(device: &wgpu::Device, globals: &wgpu::Buffer, atlas: &wgpu::TextureView, height: &wgpu::TextureView, tiles: &wgpu::TextureView) -> GroundBake {
+        let texels = crate::quality::ground_texels();
+        let chunk_texels = CHUNK_TILES * texels;
+        let ring_texels = (RING * chunk_texels) as u32;
         let make = |label, format| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d { width: RING_TEXELS, height: RING_TEXELS, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d { width: ring_texels, height: ring_texels, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -97,7 +99,7 @@ impl GroundBake {
             ],
         });
         let slots = (RING * RING) as usize;
-        GroundBake { _col: col, _nrm: nrm, col_view, nrm_view, params, layout, group, owner: vec![None; slots], done: vec![0; slots], seed: None, baked: 0 }
+        GroundBake { chunk_texels, ring_texels, block_texels: BLOCK_TILES * texels, _col: col, _nrm: nrm, col_view, nrm_view, params, layout, group, owner: vec![None; slots], done: vec![0; slots], seed: None, baked: 0 }
     }
 
     /// Forgets everything baked (a new world, or the shader that bakes it was changed).
@@ -161,8 +163,8 @@ impl GroundBake {
                     continue;
                 }
                 let (bx, by) = (b % BLOCKS_SIDE, b / BLOCKS_SIDE);
-                let origin = [c.0 * CHUNK_TEXELS + bx * BLOCK_TEXELS, c.1 * CHUNK_TEXELS + by * BLOCK_TEXELS];
-                let dest = [origin[0].rem_euclid(RING_TEXELS as i32), origin[1].rem_euclid(RING_TEXELS as i32)];
+                let origin = [c.0 * self.chunk_texels + bx * self.block_texels, c.1 * self.chunk_texels + by * self.block_texels];
+                let dest = [origin[0].rem_euclid(self.ring_texels as i32), origin[1].rem_euclid(self.ring_texels as i32)];
                 jobs.push(Job { origin, dest });
                 self.done[s] |= 1 << b;
                 self.baked += 1;
@@ -196,9 +198,9 @@ impl GroundBake {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, Some(&self.group), &[]);
         for (i, j) in jobs.iter().enumerate() {
-            let (x, y, s) = (j.dest[0] as f32, j.dest[1] as f32, BLOCK_TEXELS as f32);
+            let (x, y, s) = (j.dest[0] as f32, j.dest[1] as f32, self.block_texels as f32);
             pass.set_viewport(x, y, s, s, 0.0, 1.0);
-            pass.set_scissor_rect(j.dest[0] as u32, j.dest[1] as u32, BLOCK_TEXELS as u32, BLOCK_TEXELS as u32);
+            pass.set_scissor_rect(j.dest[0] as u32, j.dest[1] as u32, self.block_texels as u32, self.block_texels as u32);
             pass.draw(0..3, i as u32..i as u32 + 1);
         }
     }

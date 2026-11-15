@@ -17,6 +17,7 @@ mod portrait;
 mod pxpanel;
 mod pxui;
 mod fx;
+mod gfxcfg;
 mod saveio;
 mod story;
 mod ui_art;
@@ -1401,6 +1402,27 @@ impl App {
         }
         // the swoop into a new world is only how it is drawn: the game's own camera is left alone
         fx.camera(&mut cam);
+        // graphics settings chosen in the panels reach the renderer here (dev aid: ALAZ_DEMO_GFX_AT=n ALAZ_DEMO_GFX=pixels=coarse,shadows=low
+        // changes them on frame n, to check a change while playing)
+        {
+            static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if std::env::var("ALAZ_DEMO_GFX_AT").ok().and_then(|v| v.parse::<u64>().ok()) == Some(n) {
+                let mut q = gfxcfg::current();
+                for kv in std::env::var("ALAZ_DEMO_GFX").unwrap_or_default().split(',') {
+                    match kv.split_once('=') {
+                        Some(("pixels", v)) => q.pixels = alaz_render::PixelDetail::parse(v).unwrap_or(q.pixels),
+                        Some(("shadows", v)) => q.shadows = alaz_render::ShadowQuality::parse(v).unwrap_or(q.shadows),
+                        Some(("decor", v)) => q.decor = v != "0",
+                        _ => {}
+                    }
+                }
+                gfxcfg::set(q);
+            }
+            if let Some(q) = gfxcfg::take_change() {
+                g.renderer.set_quality(q);
+            }
+        }
         g.renderer.render(world, &cam, ghost, self.me, &route_of, |ctx| {
             if flash > 0.0 {
                 hud::hurt_vignette(ctx, flash);
@@ -1996,7 +2018,7 @@ impl ApplicationHandler for App {
             _ => attrs,
         };
         let window = Arc::new(el.create_window(attrs).expect("window"));
-        let renderer = Renderer::new(window.clone());
+        let renderer = Renderer::with_quality(window.clone(), gfxcfg::current());
         self.gfx = Some(Gfx { window, renderer });
         self.last = Instant::now();
     }

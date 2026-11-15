@@ -7,9 +7,12 @@ pub type Rgb = [u8; 3];
 pub const PPM: f32 = 16.0;
 pub const ATLAS: u32 = 1024;
 pub const TILE: i32 = 16;
-/// Ground tiles are finer than the painted sprites: 27 texels to the metre, as close as whole texels get to the
-/// picture's own 16 * 5/3, so a ground texel is one picture texel and they all come out the same width.
-pub const GT: i32 = 27;
+/// Ground tiles are finer than the painted sprites: 27 texels to the metre (21 in the coarse picture), as close as
+/// whole texels get to the picture's own 16 * 5/3 (16 * 4/3), so a ground texel is one picture texel and they all
+/// come out the same width.
+pub fn gt() -> i32 {
+    crate::quality::ground_texels()
+}
 /// Material tiles (modulation textures for the 3D models) live in a fixed strip at the bottom of the atlas:
 /// tile i (0 wood, 1 leaves, 2 stone, 3 skin and cloth) at x = 16 * i. A texel is a multiplier, 128 = 1.0.
 pub const MAT_Y: u32 = 1008;
@@ -271,21 +274,21 @@ fn tuft(b: &mut Bmp, x: i32, y: i32, dark: Rgb, mid: Rgb, light: Rgb) {
 fn tile_grass(seed: u32) -> Bmp {
     let mut rng = Rng(seed.wrapping_mul(7919).wrapping_add(13));
     let r = ramp([88, 136, 62]);
-    let mut b = Bmp::new(GT, GT);
+    let mut b = Bmp::new(gt(), gt());
     fill(&mut b, r.base);
     // broad soft patches: a slightly deeper green and a sunlit one
     patches(&mut b, &mut rng, mix(r.base, r.sh, 0.55), 2, 34);
     patches(&mut b, &mut rng, mix(r.base, r.hi, 0.45), 2, 22);
     // a few tufts, each a readable little shape instead of loose specks
     for _ in 0..3 + seed as i32 % 2 {
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         tuft(&mut b, x, y, r.dk, r.sh, r.hi);
     }
     match seed % 4 {
         // wild flowers: a few heads of one colour
         1 => {
             let col = [[240, 226, 120], [236, 238, 232], [214, 120, 180]][(seed / 4 % 3) as usize];
-            let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+            let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
             for (dx, dy) in [(0, 0), (3, 2), (-2, 4)] {
                 wput(&mut b, x + dx, y + dy + 1, r.sh);
                 wput(&mut b, x + dx, y + dy, col);
@@ -293,7 +296,7 @@ fn tile_grass(seed: u32) -> Bmp {
         }
         // clover
         3 => {
-            let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+            let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
             for (dx, dy) in [(0, 0), (1, 0), (0, 1), (2, 1), (1, 2)] {
                 wput(&mut b, x + dx, y + dy, [70, 120, 54]);
             }
@@ -306,7 +309,7 @@ fn tile_grass(seed: u32) -> Bmp {
 fn tile_forest(seed: u32) -> Bmp {
     let mut rng = Rng(seed.wrapping_mul(104729).wrapping_add(7));
     let r = ramp([56, 96, 50]);
-    let mut b = Bmp::new(GT, GT);
+    let mut b = Bmp::new(gt(), gt());
     fill(&mut b, r.base);
     // moss and bare earth under the trees
     patches(&mut b, &mut rng, mix(r.base, r.sh, 0.7), 3, 30);
@@ -314,14 +317,14 @@ fn tile_forest(seed: u32) -> Bmp {
     patches(&mut b, &mut rng, mix(r.base, r.hi, 0.4), 2, 14);
     // fallen leaves: two-texel leaves in autumn colours
     for _ in 0..5 {
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         let c = [[150, 104, 46], [176, 128, 52], [120, 80, 40]][rng.below(3) as usize];
         wput(&mut b, x, y, c);
         wput(&mut b, x + 1, y, mul(c, 0.8));
     }
     if seed % 2 == 0 {
         // a fallen twig with a fork
-        let (x, y) = (rng.below(12) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(12) as i32, rng.below(gt() as u32) as i32);
         for i in 0..7 {
             wput(&mut b, x + i, y + i / 3, [96, 70, 42]);
         }
@@ -329,7 +332,7 @@ fn tile_forest(seed: u32) -> Bmp {
         wput(&mut b, x + 5, y - 1, [96, 70, 42]);
     } else {
         // a little mushroom
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         wput(&mut b, x, y, [228, 220, 200]);
         wput(&mut b, x - 1, y - 1, [196, 64, 48]);
         wput(&mut b, x, y - 1, [214, 84, 60]);
@@ -341,15 +344,15 @@ fn tile_forest(seed: u32) -> Bmp {
 fn tile_sand(seed: u32) -> Bmp {
     let mut rng = Rng(seed.wrapping_mul(15485863).wrapping_add(3));
     let r = ramp([210, 188, 134]);
-    let mut b = Bmp::new(GT, GT);
+    let mut b = Bmp::new(gt(), gt());
     fill(&mut b, r.base);
     // wind ripples: two smooth waves that wrap around the tile
     let tau = std::f32::consts::TAU;
     let ph = rng.below(100) as f32 / 100.0 * tau;
     for row in 0..2 {
         let y0 = 4 + row * 10 + rng.below(3) as i32;
-        for x in 0..GT {
-            let wob = ((x as f32 / GT as f32) * tau + ph + row as f32).sin() * 1.6;
+        for x in 0..gt() {
+            let wob = ((x as f32 / gt() as f32) * tau + ph + row as f32).sin() * 1.6;
             let y = y0 + wob.round() as i32;
             wput(&mut b, x, y, r.hi);
             wput(&mut b, x, y + 1, mix(r.base, r.sh, 0.6));
@@ -357,13 +360,13 @@ fn tile_sand(seed: u32) -> Bmp {
     }
     // pebbles: a lit texel over a shadow
     for _ in 0..3 {
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         wput(&mut b, x, y, [176, 158, 128]);
         wput(&mut b, x, y + 1, [140, 120, 92]);
     }
     if seed % 3 == 0 {
         // a shell
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         wput(&mut b, x, y, [242, 232, 218]);
         wput(&mut b, x + 1, y, [226, 200, 186]);
         wput(&mut b, x, y + 1, [180, 160, 150]);
@@ -374,12 +377,12 @@ fn tile_sand(seed: u32) -> Bmp {
 fn tile_rock(seed: u32) -> Bmp {
     let mut rng = Rng(seed.wrapping_mul(32452843).wrapping_add(11));
     let r = ramp([128, 126, 122]);
-    let mut b = Bmp::new(GT, GT);
+    let mut b = Bmp::new(gt(), gt());
     fill(&mut b, r.base);
     patches(&mut b, &mut rng, mix(r.base, r.sh, 0.6), 2, 26);
     // flat slabs set in the ground: lit top edge, shaded lower edge, a gap around them
     for _ in 0..3 {
-        let (x, y) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32);
+        let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         let (w, h) = (4 + rng.below(4) as i32, 3 + rng.below(2) as i32);
         for dy in 0..h {
             for dx in 0..w {
@@ -397,7 +400,7 @@ fn tile_rock(seed: u32) -> Bmp {
     }
     if seed % 2 == 1 {
         // a crack with a speck of lichen
-        let (mut x, mut y) = (rng.below(GT as u32) as i32, rng.below(8) as i32);
+        let (mut x, mut y) = (rng.below(gt() as u32) as i32, rng.below(8) as i32);
         for _ in 0..11 {
             wput(&mut b, x, y, r.dk);
             x += rng.below(3) as i32 - 1;
@@ -411,12 +414,12 @@ fn tile_rock(seed: u32) -> Bmp {
 fn tile_water(seed: u32) -> Bmp {
     let mut rng = Rng(seed.wrapping_mul(49979687).wrapping_add(5));
     let r = ramp([42, 98, 148]);
-    let mut b = Bmp::new(GT, GT);
+    let mut b = Bmp::new(gt(), gt());
     fill(&mut b, r.base);
     patches(&mut b, &mut rng, mix(r.base, r.sh, 0.6), 2, 26);
     patches(&mut b, &mut rng, [52, 112, 162], 2, 16);
     for _ in 0..2 {
-        let (x, y, len) = (rng.below(GT as u32) as i32, rng.below(GT as u32) as i32, 3 + rng.below(4) as i32);
+        let (x, y, len) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32, 3 + rng.below(4) as i32);
         for i in 0..len {
             wput(&mut b, x + i, y, [118, 176, 212]);
             wput(&mut b, x + i + 1, y + 1, r.sh);

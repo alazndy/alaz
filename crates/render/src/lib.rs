@@ -9,6 +9,7 @@ mod hotreload;
 mod mesh;
 mod pipelines;
 mod prof;
+mod quality;
 mod renderer;
 pub mod sprites;
 #[cfg(test)]
@@ -17,6 +18,7 @@ mod tests;
 pub use camera::Camera;
 pub use egui;
 pub use glam;
+pub use quality::{PixelDetail, Quality, ShadowQuality};
 pub use mesh::{ground_height, look, node_bounds, outfit_bits, Look};
 pub use mesh::{OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_HELM, OUT_HOOD, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
 pub use renderer::{RenderStats, Renderer};
@@ -28,13 +30,6 @@ pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 /// Depth format of the sun's shadow maps: 16 bits are plenty over their 500 m range (a step is under a centimetre,
 /// the shader's bias is 40 cm) and halve what the per-frame copy of the static map moves.
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
-
-/// Texels on a side of the sun's shadow map.
-pub(crate) const SHADOW_RES: u32 = 2048;
-
-/// Texels on a side of the static shadow map (what stands still: drawn only when something changes, over a box a
-/// little larger than the dynamic one, so its texels are about as fine).
-pub(crate) const SHADOW_STATIC_RES: u32 = 3072;
 
 /// Placement preview: footprint + translucent-looking tinted model at a ground position (meters).
 #[derive(Clone, Copy, Debug)]

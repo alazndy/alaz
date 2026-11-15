@@ -23,19 +23,23 @@ impl Camera {
     /// Lowest tilt the player can orbit down to.
     pub const PITCH_MIN: f32 = 28.0;
     /// How much finer the picture is than the painted art's 16 texels per metre: the world keeps its size on screen,
-    /// only the texels get smaller.
-    pub const RES: f32 = 5.0 / 3.0;
+    /// only the texels get smaller (5/3 or 4/3, by the pixel detail chosen).
+    pub fn res() -> f32 {
+        crate::quality::res()
+    }
     /// Texels per meter.
-    pub const PPM: f32 = 16.0 * Self::RES;
+    pub fn ppm() -> f32 {
+        16.0 * Self::res()
+    }
     const DIST: f32 = 150.0;
 
     pub fn new() -> Self {
         Self { target: Vec3::ZERO, pitch_deg: Self::PITCH_ISO, yaw_deg: 45.0, zoom: 1.0, win: (1280, 720) }
     }
 
-    /// Screen pixels per texel (zoom 1 = 3 / RES = 1.8). Zoom still moves in whole steps of the old scale.
+    /// Screen pixels per texel (zoom 1 = 3 / RES = 1.8 when fine). Zoom still moves in whole steps of the old scale.
     pub fn scale(&self) -> f32 {
-        ((self.zoom * 3.0).round()).clamp(2.0, 6.0) / Self::RES
+        ((self.zoom * 3.0).round()).clamp(2.0, 6.0) / Self::res()
     }
 
     /// Size of the picture in texels (even, so the centre is a texel corner).
@@ -62,7 +66,7 @@ impl Camera {
     /// (right, up). Everything drawn from the snapped camera is locked to the pixel grid while the camera slides;
     /// the remainder is applied when the small picture is enlarged.
     pub fn snapped(&self) -> (Camera, [f32; 2]) {
-        let u = 1.0 / Self::PPM;
+        let u = 1.0 / Self::ppm();
         let (f, up) = self.basis();
         let r = f.cross(up);
         let (tr, tu) = (self.target.dot(r), self.target.dot(up));
@@ -84,7 +88,7 @@ impl Camera {
         let eye = self.target - f * Self::DIST;
         let view = glam::camera::rh::view::look_to_mat4(eye, f, u);
         let (sw, sh) = self.tex_dims();
-        let (hw, hh) = (sw as f32 / (2.0 * Self::PPM), sh as f32 / (2.0 * Self::PPM));
+        let (hw, hh) = (sw as f32 / (2.0 * Self::ppm()), sh as f32 / (2.0 * Self::ppm()));
         let proj = glam::camera::rh::proj::directx::orthographic(-hw, hw, -hh, hh, 0.1, Self::DIST * 3.0);
         proj * view
     }

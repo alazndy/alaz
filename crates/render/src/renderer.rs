@@ -2,7 +2,8 @@ use crate::bake::GroundBake;
 use crate::mesh::*;
 use crate::prof::GpuProf;
 use crate::sprites::{self, Art};
-use crate::{hotreload, pipelines, Camera, DEPTH_FORMAT, NIGHT_TINT, SHADOW_FORMAT, SHADOW_RES, SHADOW_STATIC_RES};
+use crate::quality::{self, scene_source, Quality, ShadowQuality};
+use crate::{hotreload, pipelines, Camera, DEPTH_FORMAT, NIGHT_TINT, SHADOW_FORMAT};
 use alaz_sim::time::daylight_permille;
 use alaz_sim::{rules, AgentKind, BuildingKind, Terrain, World};
 use std::collections::HashMap;
@@ -78,7 +79,7 @@ pub(crate) struct StaticShadow {
     /// Light-space view-projection it was drawn with, and the sun direction it was drawn along.
     pub(crate) vp: glam::Mat4,
     pub(crate) dir: [f32; 3],
-    /// Half the dynamic box's width in metres (so the texel is `radius / 1024`), the box centre in whole texels
+    /// Half the dynamic box's width in metres (so the texel is `radius / (shadow_res / 2)`), the box centre in whole texels
     /// of the sun's view, and the centre's depth (the dynamic map shares the depth range).
     pub(crate) radius: f32,
     pub(crate) tex: [i64; 2],
@@ -161,6 +162,15 @@ pub struct Renderer {
     pub(crate) bake: GroundBake,
     /// Shader files watched for changes (ALAZ_HOTRELOAD).
     pub(crate) hot: Option<hotreload::HotReload>,
+    /// What the player chose (and the environment forced): see `set_quality`.
+    pub(crate) quality: Quality,
+    pub(crate) layouts: pipelines::Layouts,
+    pub(crate) atlas_view: wgpu::TextureView,
+    pub(crate) height_view: wgpu::TextureView,
+    pub(crate) tile_view: wgpu::TextureView,
+    /// Texels on a side of the dynamic and the static shadow map.
+    pub(crate) shadow_res: u32,
+    pub(crate) shadow_static_res: u32,
     /// The player's body marked in the picture's alpha (all of it, then the hidden part), for the outline pass to
     /// draw a bright line round whatever of it stands behind something.
     pub(crate) mark_pipeline: wgpu::RenderPipeline,
@@ -217,6 +227,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(window: Arc<Window>) -> Self {
+        Self::with_quality(window, Quality::default())
+    }
+
+    /// `quality` is what the player saved; the `ALAZ_PIXELS`, `ALAZ_SHADOWS` and `ALAZ_DECOR` variables override it.
+    pub fn with_quality(window: Arc<Window>, quality: Quality) -> Self {
+        let quality = quality.with_env();
+        quality::set_pixels(quality.pixels);
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())));
         let surface = instance.create_surface(window.clone()).expect("create surface");
@@ -243,26 +260,11 @@ impl Renderer {
 
         // --- the painted atlas
         let (art, atlas) = sprites::build();
-        let atlas_tex = device.create_texture_with_data(
-            &queue,
-            &wgpu::TextureDescriptor {
-                label: Some("atlas"),
-                size: wgpu::Extent3d { width: sprites::ATLAS, height: sprites::ATLAS, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            },
-            wgpu::util::TextureDataOrder::default(),
-            &atlas.data,
-        );
-        let atlas_view = atlas_tex.create_view(&Default::default());
+        let atlas_view = Self::upload_atlas(&device, &queue, &atlas);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
-            source: wgpu::ShaderSource::Wgsl(hotreload::SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(scene_source(hotreload::SHADER, quality).into()),
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
@@ -327,38 +329,8 @@ impl Renderer {
         // sun shadows: depth seen from the sun, over the part of the world around the camera. The static map (what
         // stands still) is drawn rarely, over a box 1.5 times as wide with the same texel size; every frame its window
         // for the current box is copied into the dynamic map, and what moves is drawn over that.
-        let shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sun shadow"),
-            size: wgpu::Extent3d { width: SHADOW_RES, height: SHADOW_RES, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SHADOW_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_view = shadow_tex.create_view(&Default::default());
-        let shadow_static_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sun shadow, static"),
-            size: wgpu::Extent3d { width: SHADOW_STATIC_RES, height: SHADOW_STATIC_RES, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SHADOW_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_static_view = shadow_static_tex.create_view(&Default::default());
-        // the shadow pass binds everything but the shadow map it is drawing into
-        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow pass"),
-            layout: &bgl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&height_view) },
-            ],
-        });
+        let (shadow_res, shadow_static_res) = quality.shadows.sizes();
+        let (shadow_view, shadow_static_view) = Self::make_shadow_maps(&device, quality.shadows);
         let bgl_main = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("main"),
             entries: &[
@@ -406,22 +378,7 @@ impl Renderer {
                 },
             ],
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bgl_main,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&atlas_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&height_view) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&shadow_view) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&tile_view) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&bake.col_view) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&bake.nrm_view) },
-            ],
-        });
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("shadow"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
-        let shadow_pipeline = pipelines::shadow(&device, &shader, &shadow_layout, "vs_shadow");
-        let shadow_static_pipeline = pipelines::shadow(&device, &shader, &shadow_layout, "vs_shadow_static");
         let copy_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow copy"),
             entries: &[
@@ -439,25 +396,9 @@ impl Renderer {
                 },
             ],
         });
-        let shadow_copy_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow copy"),
-            layout: &copy_bgl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&shadow_static_view) },
-            ],
-        });
         let copy_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("shadow copy"), bind_group_layouts: &[Some(&copy_bgl)], immediate_size: 0 });
-        let shadow_copy_pipeline = pipelines::shadow_copy(&device, &shader, &copy_layout);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_main)], immediate_size: 0 });
-        let tri_pipeline = pipelines::scene(&device, &shader, &layout, config.format);
-        let ground_pipeline = pipelines::ground(&device, &shader, &layout, config.format, "fs_ground");
-        let ground_live_pipeline = pipelines::ground(&device, &shader, &layout, config.format, "fs_ground_live");
         let bake_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ground bake"), bind_group_layouts: &[Some(&bake.layout)], immediate_size: 0 });
-        let bake_pipeline = pipelines::bake(&device, &shader, &bake_layout);
-        // the player drawn again into the picture's alpha only: where its body is, and where something hides it
-        let mark_pipeline = pipelines::mark(&device, &layout, &shader, config.format, "vs", "fs_mark", wgpu::CompareFunction::Always);
-        let hidden_pipeline = pipelines::mark(&device, &layout, &shader, config.format, "vs_hidden", "fs_hidden", wgpu::CompareFunction::Greater);
         let (w, h) = (config.width, config.height);
         let depth = Self::make_depth(&device, w, h);
         let scene = Self::make_color(&device, config.format, w, h);
@@ -521,7 +462,10 @@ impl Renderer {
             (PixelPass { pipeline, layout, uniform, group, cinema }, pl)
         };
 
-        let hot = hotreload::HotReload::new(shadow_layout, copy_layout, layout, bake_layout, outline_pl, pixel_pl);
+        let layouts = pipelines::Layouts { shadow_bgl: bgl, main_bgl: bgl_main, copy_bgl, shadow: shadow_layout, copy: copy_layout, scene: layout, bake: bake_layout, outline: outline_pl, pixel: pixel_pl };
+        let set = pipelines::SceneSet::build(&device, &shader, &layouts, config.format);
+        let (bind_group, shadow_bind_group, shadow_copy_group) = Self::make_groups(&device, &layouts, &globals, &atlas_view, &height_view, &tile_view, &shadow_view, &shadow_static_view, &bake);
+        let hot = hotreload::HotReload::new();
         let egui_ctx = egui::Context::default();
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
@@ -544,14 +488,21 @@ impl Renderer {
             inked,
             outline,
             pixel,
-            tri_pipeline,
-            ground_pipeline,
-            ground_live_pipeline,
-            bake_pipeline,
+            tri_pipeline: set.tri,
+            ground_pipeline: set.ground,
+            ground_live_pipeline: set.ground_live,
+            bake_pipeline: set.bake,
             bake,
             hot,
-            mark_pipeline,
-            hidden_pipeline,
+            quality,
+            layouts,
+            atlas_view,
+            height_view,
+            tile_view,
+            shadow_res,
+            shadow_static_res,
+            mark_pipeline: set.mark,
+            hidden_pipeline: set.hidden,
             chunks: HashMap::new(),
             anim: HashMap::new(),
             wild_anim: HashMap::new(),
@@ -577,10 +528,10 @@ impl Renderer {
             bind_group,
             shadow_view,
             shadow_bind_group,
-            shadow_pipeline,
+            shadow_pipeline: set.shadow,
             shadow_static_view,
-            shadow_static_pipeline,
-            shadow_copy_pipeline,
+            shadow_static_pipeline: set.shadow_static,
+            shadow_copy_pipeline: set.shadow_copy,
             shadow_copy_group,
             shadow_static: StaticShadow { every_frame: std::env::var_os("ALAZ_SHADOW_EVERY").is_some(), ..Default::default() },
             chunk_gen: 0,
@@ -589,6 +540,153 @@ impl Renderer {
             egui_state,
             egui_renderer,
         }
+    }
+
+    /// The painted atlas on the GPU.
+    fn upload_atlas(device: &wgpu::Device, queue: &wgpu::Queue, atlas: &sprites::Atlas) -> wgpu::TextureView {
+        let tex = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("atlas"),
+                size: wgpu::Extent3d { width: sprites::ATLAS, height: sprites::ATLAS, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::default(),
+            &atlas.data,
+        );
+        tex.create_view(&Default::default())
+    }
+
+    /// The sun's shadow maps: depth seen from the sun, over the part of the world around the camera. The static map
+    /// (what stands still) is drawn rarely, over a box 1.5 times as wide with the same texel size; every frame its
+    /// window for the current box is copied into the dynamic map, and what moves is drawn over that. (Dynamic, static.)
+    fn make_shadow_maps(device: &wgpu::Device, q: ShadowQuality) -> (wgpu::TextureView, wgpu::TextureView) {
+        let (dynamic, stat) = q.alloc();
+        let make = |label, side| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d { width: side, height: side, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: SHADOW_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        (make("sun shadow", dynamic), make("sun shadow, static", stat))
+    }
+
+    /// The bind groups over the textures that a change of quality replaces: (main pass, shadow passes, shadow copy).
+    #[allow(clippy::too_many_arguments)]
+    fn make_groups(
+        device: &wgpu::Device,
+        l: &pipelines::Layouts,
+        globals: &wgpu::Buffer,
+        atlas: &wgpu::TextureView,
+        height: &wgpu::TextureView,
+        tiles: &wgpu::TextureView,
+        shadow: &wgpu::TextureView,
+        shadow_static: &wgpu::TextureView,
+        bake: &GroundBake,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
+        let tv = wgpu::BindingResource::TextureView;
+        let main = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &l.main_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: tv(atlas) },
+                wgpu::BindGroupEntry { binding: 2, resource: tv(height) },
+                wgpu::BindGroupEntry { binding: 3, resource: tv(shadow) },
+                wgpu::BindGroupEntry { binding: 4, resource: tv(tiles) },
+                wgpu::BindGroupEntry { binding: 5, resource: tv(&bake.col_view) },
+                wgpu::BindGroupEntry { binding: 6, resource: tv(&bake.nrm_view) },
+            ],
+        });
+        // the shadow pass binds everything but the shadow map it is drawing into
+        let shadow_pass = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow pass"),
+            layout: &l.shadow_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: tv(atlas) },
+                wgpu::BindGroupEntry { binding: 2, resource: tv(height) },
+            ],
+        });
+        let copy = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow copy"),
+            layout: &l.copy_bgl,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }, wgpu::BindGroupEntry { binding: 7, resource: tv(shadow_static) }],
+        });
+        (main, shadow_pass, copy)
+    }
+
+    pub fn quality(&self) -> Quality {
+        self.quality
+    }
+
+    /// Applies graphics quality while the game runs (the environment's `ALAZ_*` overrides still win). A change of pixel
+    /// detail repaints the ground tiles, re-allocates the bake and drops every built chunk; a change of shadows
+    /// re-allocates the shadow maps. Shaders are rebuilt in both cases. A few hundred ms of hitch, once.
+    pub fn set_quality(&mut self, q: Quality) {
+        let q = q.with_env();
+        if q == self.quality {
+            return;
+        }
+        let old = self.quality;
+        self.quality = q;
+        let pixels_changed = q.pixels != old.pixels;
+        let shadows_changed = q.shadows != old.shadows;
+        if pixels_changed {
+            quality::set_pixels(q.pixels);
+            let (art, atlas) = sprites::build();
+            self.atlas_view = Self::upload_atlas(&self.device, &self.queue, &atlas);
+            self.art = Arc::new(art);
+            self.bake = GroundBake::new(&self.device, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view);
+            self.layouts.bake = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("ground bake"), bind_group_layouts: &[Some(&self.bake.layout)], immediate_size: 0 });
+            // (meshes carry atlas positions, and the tile window holds them too)
+            self.chunks.clear();
+            self.height_at = None;
+            self.chunk_gen += 1;
+        }
+        if shadows_changed {
+            (self.shadow_res, self.shadow_static_res) = q.shadows.sizes();
+            (self.shadow_view, self.shadow_static_view) = Self::make_shadow_maps(&self.device, q.shadows);
+            self.shadow_static.valid = false;
+        }
+        if pixels_changed || shadows_changed {
+            let (main, shadow_pass, copy) = Self::make_groups(&self.device, &self.layouts, &self.globals, &self.atlas_view, &self.height_view, &self.tile_view, &self.shadow_view, &self.shadow_static_view, &self.bake);
+            self.bind_group = main;
+            self.shadow_bind_group = shadow_pass;
+            self.shadow_copy_group = copy;
+            // the scene shader's constants follow both (the file on disk when it is being watched)
+            let body = self.hot.as_ref().and_then(|h| h.scene_source()).unwrap_or_else(|| hotreload::SHADER.to_string());
+            let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shader"), source: wgpu::ShaderSource::Wgsl(scene_source(&body, q).into()) });
+            self.apply_scene(pipelines::SceneSet::build(&self.device, &module, &self.layouts, self.config.format));
+        }
+    }
+
+    /// Swaps in freshly built scene pipelines. What was drawn with the old shader is out of date.
+    pub(crate) fn apply_scene(&mut self, set: pipelines::SceneSet) {
+        self.shadow_pipeline = set.shadow;
+        self.shadow_static_pipeline = set.shadow_static;
+        self.shadow_copy_pipeline = set.shadow_copy;
+        self.shadow_static.valid = false;
+        self.tri_pipeline = set.tri;
+        self.ground_pipeline = set.ground;
+        self.ground_live_pipeline = set.ground_live;
+        self.bake_pipeline = set.bake;
+        self.bake.invalidate();
+        self.mark_pipeline = set.mark;
+        self.hidden_pipeline = set.hidden;
     }
 
     fn make_color(device: &wgpu::Device, format: wgpu::TextureFormat, w: u32, h: u32) -> wgpu::TextureView {

@@ -1489,8 +1489,7 @@ pub fn ui_zoom_controls(ui: &mut egui::Ui) {
 fn set_ui_zoom(ctx: &egui::Context, z: f32) {
     let z = ((z * 10.0).round() / 10.0).clamp(0.6, 2.0);
     ctx.set_zoom_factor(z * UI_BASE);
-    let _ = std::fs::create_dir_all(crate::saveio::base_dir());
-    let _ = std::fs::write(crate::saveio::base_dir().join("ui.cfg"), format!("zoom={z:.2}\n"));
+    crate::gfxcfg::save_cfg(Some(z));
 }
 
 /// Ctrl + / Ctrl - / Ctrl 0 change the interface size like the buttons do. egui's own keys are off: they know nothing
@@ -1532,6 +1531,8 @@ pub fn saved_ui_zoom() -> f32 {
 fn tab_help(ui: &mut egui::Ui, binds: &Keybinds) {
     ui_zoom_controls(ui);
     ui.label(RichText::new("Ctrl + 0 da arayüzü normal boyuta döndürür.").small().weak());
+    ui.add_space(4.0);
+    crate::gfxcfg::controls(ui);
     ui.add_space(6.0);
     ui.label(RichText::new("Fare").strong());
     ui.label("Sol tık: yürü, bina ya da işçi aç, yerleştir. Sağ tık: topla / evcilleştir / ava git / balık tut / inşayı iptal et");

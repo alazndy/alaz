@@ -298,13 +298,14 @@ impl Renderer {
             // the same texel size; it is redrawn only when the sun stepped, the box size changed, the camera nears the edge
             // of its margin, or a chunk's models changed. Each frame the window of it that the picture needs is copied
             // into the dynamic map (same texels, same depth range), and what moves is drawn over that.
+            let shadows_on = self.quality.shadows != crate::ShadowQuality::Off;
             let redraw_static = {
                 let st = &mut self.shadow_static;
                 // (a size one step larger than wanted is kept: the box does not flicker between two sizes)
                 let r = if st.valid && st.radius >= box_want && st.radius <= box_want + 8.0 { st.radius } else { box_want };
-                let texel = r / (SHADOW_RES / 2) as f32;
+                let texel = r / (self.shadow_res / 2) as f32;
                 let tex = [(box_mid.x / texel).round() as i64, (box_mid.y / texel).round() as i64];
-                let half_margin = ((SHADOW_STATIC_RES - SHADOW_RES) / 2) as i64;
+                let half_margin = ((self.shadow_static_res - self.shadow_res) / 2) as i64;
                 let mut redraw = !st.valid || st.every_frame || st.dir != self.shadow_dir || st.radius != r;
                 if !redraw {
                     let (ox, oy) = (tex[0] - st.tex[0], tex[1] - st.tex[1]);
@@ -319,7 +320,7 @@ impl Renderer {
                     });
                 }
                 if redraw {
-                    let half = (SHADOW_STATIC_RES / 2) as f32 * texel;
+                    let half = (self.shadow_static_res / 2) as f32 * texel;
                     let (sx, sy) = (tex[0] as f32 * texel, tex[1] as f32 * texel);
                     let proj = glam::camera::rh::proj::directx::orthographic(sx - half, sx + half, sy - half, sy + half, -box_mid.z - 250.0, -box_mid.z + 250.0);
                     st.vp = proj * sun_view;
@@ -339,7 +340,8 @@ impl Renderer {
                 // where the picture's window starts in the static map (y runs the other way in texture rows)
                 let (ox, oy) = (tex[0] - st.tex[0], tex[1] - st.tex[1]);
                 self.queue.write_buffer(&self.globals, 101 * 4, bytemuck::cast_slice(&[(half_margin + ox) as f32, (half_margin - oy) as f32]));
-                redraw
+                // (with the shadows off nothing is drawn: the shader never looks at the maps)
+                redraw && shadows_on
             };
             // the ground's static colour: bake a few blocks of the chunks in view (and just beyond) this frame
             let jobs = {
@@ -594,7 +596,7 @@ impl Renderer {
                 p.static_ran = redraw_static;
                 p.static_draws += redraw_static as u32;
             }
-            {
+            if shadows_on {
                 // what the sun sees of what moves, over the copied static shadow: people, animals, buildings, the ghost
                 // (the ground and flat decals just receive)
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -623,7 +625,7 @@ impl Renderer {
             // normally; three when profiling, so each part gets its own GPU time (0 ground, 1 models, 2 what moves).
             // zoomed all the way out, grass tufts and flowers are a texel or two of noise over far more ground: they are
             // left out there (a third of the scene's vertices)
-            let decor_shown = (cam.zoom * 3.0).round() > 2.0;
+            let decor_shown = self.quality.decor && (cam.zoom * 3.0).round() > 2.0;
             let parts: &[&[usize]] = if self.prof.is_some() { &[&[1], &[0], &[2]] } else { &[&[1, 0, 2]] };
             let mut verts = 0u64;
             for (pi, &part) in parts.iter().enumerate() {

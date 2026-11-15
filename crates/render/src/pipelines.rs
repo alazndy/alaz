@@ -165,3 +165,49 @@ pub fn fullscreen(device: &wgpu::Device, label: &str, module: &wgpu::ShaderModul
         cache: None,
     })
 }
+
+/// The bind group layouts and pipeline layouts the pipelines are built against. They do not change while the game runs
+/// (the bake's follows its ring, which a change of pixel detail replaces).
+pub struct Layouts {
+    /// Globals, atlas, heights: what the shadow passes bind.
+    pub shadow_bgl: wgpu::BindGroupLayout,
+    /// Everything the main pass reads.
+    pub main_bgl: wgpu::BindGroupLayout,
+    /// Globals and the static shadow map: the copy that starts the dynamic one.
+    pub copy_bgl: wgpu::BindGroupLayout,
+    pub shadow: wgpu::PipelineLayout,
+    pub copy: wgpu::PipelineLayout,
+    pub scene: wgpu::PipelineLayout,
+    pub bake: wgpu::PipelineLayout,
+    pub outline: wgpu::PipelineLayout,
+    pub pixel: wgpu::PipelineLayout,
+}
+
+/// Every pipeline built from shader.wgsl.
+pub struct SceneSet {
+    pub shadow: wgpu::RenderPipeline,
+    pub shadow_static: wgpu::RenderPipeline,
+    pub shadow_copy: wgpu::RenderPipeline,
+    pub tri: wgpu::RenderPipeline,
+    pub ground: wgpu::RenderPipeline,
+    pub ground_live: wgpu::RenderPipeline,
+    pub bake: wgpu::RenderPipeline,
+    pub mark: wgpu::RenderPipeline,
+    pub hidden: wgpu::RenderPipeline,
+}
+
+impl SceneSet {
+    pub fn build(device: &wgpu::Device, m: &wgpu::ShaderModule, l: &Layouts, format: wgpu::TextureFormat) -> SceneSet {
+        SceneSet {
+            shadow: shadow(device, m, &l.shadow, "vs_shadow"),
+            shadow_static: shadow(device, m, &l.shadow, "vs_shadow_static"),
+            shadow_copy: shadow_copy(device, m, &l.copy),
+            tri: scene(device, m, &l.scene, format),
+            ground: ground(device, m, &l.scene, format, "fs_ground"),
+            ground_live: ground(device, m, &l.scene, format, "fs_ground_live"),
+            bake: bake(device, m, &l.bake),
+            mark: mark(device, &l.scene, m, format, "vs", "fs_mark", wgpu::CompareFunction::Always),
+            hidden: mark(device, &l.scene, m, format, "vs_hidden", "fs_hidden", wgpu::CompareFunction::Greater),
+        }
+    }
+}

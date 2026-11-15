@@ -39,23 +39,22 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
     let lit = |x: f32, y: f32| 1.0 - 0.16 * ((x - 6.0) / 10.0).clamp(0.0, 1.0) - 0.08 * ((y - 6.0) / 18.0).clamp(0.0, 1.0);
     let shade = |c: [f32; 3]| Some(col(c, lit(fx, fy)));
     let (hx, hy) = (10.0, 9.5);
-    let (hrx, hry) = if ape { (5.6, 6.0) } else { (5.0, 6.3) };
-    let in_head = ell(fx, fy, hx, hy, hrx, hry) || (ape && ell(fx, fy, hx, hy + 3.2, 4.2, 3.4));
+    let in_head = !ape && ell(fx, fy, hx, hy, 5.0, 6.3);
     let face_box = ell(fx, fy, hx, hy + 0.6, 4.1, 5.3);
 
     // face details first: they sit on top of the head
     let helm = o & OUT_HELM != 0;
     let hood = o & OUT_HOOD != 0;
     if in_head {
-        let (ex, ey) = (if ape { 2.4 } else { 2.3 }, 9.0);
+        let (ex, ey) = (2.3, 9.0);
         // eyes in a dark band under the brows
         for s in [-1.0f32, 1.0] {
             let cx = hx + s * ex;
             if fx > cx - 0.9 && fx < cx + 0.9 && fy > ey + 0.5 && fy < ey + 1.6 && !helm_covers(helm, fy) {
                 return Some(Color32::from_rgb(14, 11, 11));
             }
-            if fx > cx - 1.6 && fx < cx + 1.6 && fy > ey - 1.0 && fy < ey + (if ape { 0.6 } else { -0.2 }) && !helm_covers(helm, fy) {
-                return shade(if ape { [skin[0] * 0.55, skin[1] * 0.5, skin[2] * 0.5] } else { hair.map(|c| c * 0.55) });
+            if fx > cx - 1.6 && fx < cx + 1.6 && fy > ey - 1.0 && fy < ey - 0.2 && !helm_covers(helm, fy) {
+                return shade(hair.map(|c| c * 0.55));
             }
         }
         if !helm_covers(helm, fy) {
@@ -87,21 +86,21 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
     if hood && ell(fx, fy, hx, 9.2, 6.6, 7.6) && !face_box {
         return shade(linen);
     }
+    if ape && !helm {
+        if let Some(c) = ape_head(lk, skin, stage, x, y) {
+            return shade(c);
+        }
+    }
     if in_head {
-        let style = if ape { 3 } else { lk.style };
+        let style = lk.style;
         let hair_cap = fy < 5.6 + if style == 5 { 0.4 } else { 0.0 } || (fy < 7.4 && (fx - hx).abs() > 3.6);
-        let shag = ape && !face_box && (fy < 10.5 || (fx - hx).abs() > 4.0);
-        if !helm && ((hair_cap && !hood) || shag) {
+        if !helm && hair_cap && !hood {
             return shade(hair);
         }
-        if !helm && !hood && lk.beard && !ape && fy > 12.6 {
+        if !helm && !hood && lk.beard && fy > 12.6 {
             return shade(hair);
         }
-        if ape && fy > 11.5 && fy < 12.4 && (fx - hx).abs() < 3.6 {
-            return shade([skin[0] * 0.8, skin[1] * 0.76, skin[2] * 0.74]);
-        }
-        // an ape's face is bare and darker, in the shadow of the brow
-        return shade(if ape { [skin[0] * 0.82, skin[1] * 0.78, skin[2] * 0.76] } else { skin });
+        return shade(skin);
     }
     // hair hanging beside the head and neck
     if !helm && !hood {
@@ -109,18 +108,25 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
         let long = style == 1 && fy > 6.0 && fy < 19.0 && ((fx - hx).abs() > 4.4 && (fx - hx).abs() < 6.6);
         let braid = style == 4 && fx > hx + lk.braid_side * 5.0 - 0.9 && fx < hx + lk.braid_side * 5.0 + 0.9 && fy > 10.0 && fy < 21.0;
         let knot = style == 2 && ell(fx, fy, hx, 2.0, 2.0, 1.8);
-        let bushy = style == 3 && !ape && ell(fx, fy, hx, 8.0, 6.3, 6.0) && fy < 10.0;
+        let bushy = style == 3 && ell(fx, fy, hx, 8.0, 6.3, 6.0) && fy < 10.0;
         if long || braid || knot || bushy {
             return shade(hair);
         }
     }
     // neck
-    if fx > hx - 1.8 && fx < hx + 1.8 && fy >= 14.5 && fy < 19.0 {
+    if !ape && fx > hx - 1.8 && fx < hx + 1.8 && fy >= 14.5 && fy < 19.0 {
         return shade([skin[0] * 0.86, skin[1] * 0.8, skin[2] * 0.78]);
     }
     // shoulders and chest
     let sh = lk.frame.0;
-    if ell(fx, fy, hx, 25.0, 9.6 * sh, 7.6) && fy > 16.5 {
+    // an ape has no neck to speak of: the jaw sits on humped shoulders
+    let body = if ape {
+        (ell(fx, fy, hx, 24.4, 10.4 * sh, 8.0) && fy > 16.0)
+            || [-1.0f32, 1.0].iter().any(|s| ell(fx, fy, hx + s * 6.0 * sh, 19.2, 4.6 * sh, 3.5))
+    } else {
+        ell(fx, fy, hx, 25.0, 9.6 * sh, 7.6) && fy > 16.5
+    };
+    if body {
         if o & OUT_PLATE != 0 {
             let pauldron = (fx - hx).abs() > 6.0 * sh && fy < 21.5;
             return shade(if pauldron { [bronze[0] * 0.8, bronze[1] * 0.8, bronze[2] * 0.8] } else { bronze });
@@ -145,9 +151,112 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
         if o & OUT_WRAP != 0 && fy > 20.0 {
             return shade([0.66, 0.70, 0.36]);
         }
-        return shade(if ape { fur } else { skin });
+        if ape {
+            return shade(ape_chest(lk, stage, x, y));
+        }
+        return shade(skin);
     }
     None
+}
+
+/// A steady pseudo-random 0..1 per cell, so fur looks tufted but never shimmers between frames.
+fn noise(x: i32, y: i32) -> f32 {
+    let mut h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA77) ^ 0x2C1B_3C6D;
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    (h & 0xFFFF) as f32 / 65535.0
+}
+
+/// How ape-like the face still is: 1 at stage 0, fading to 0.33 at stage 2 (the human look starts at stage 3).
+fn apeness(stage: u8) -> f32 {
+    (3 - stage.min(3)) as f32 / 3.0
+}
+
+/// A tuft of fur: the base colour with the odd darker or lighter strand.
+fn tuft(c: [f32; 3], x: i32, y: i32) -> [f32; 3] {
+    let n = noise(x, y);
+    let k = if n < 0.2 { 0.82 } else if n > 0.86 { 1.1 } else { 1.0 };
+    c.map(|v| v * k)
+}
+
+/// The head of an ape-man, bare only in the middle of the face and shaggy all round it: a low brow with a heavy
+/// ridge over deep sockets, broad flat nostrils, a muzzle that juts out, big ears at the sides. The more the
+/// stages go on, the less fur, the smaller the muzzle, the higher the brow.
+fn ape_head(lk: &Look, skin: [f32; 3], stage: u8, x: i32, y: i32) -> Option<[f32; 3]> {
+    let a = apeness(stage);
+    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+    let dx = fx - 10.0;
+    let ax = dx.abs();
+    let bare = skin.map(|c| c * 0.82);
+    // a lighter, pinker patch for the muzzle than the rest of the skin
+    let muzzle = lk.skin.map(|c| (c * 0.8 + 0.07).min(1.0));
+    let dark = |k: f32| skin.map(|c| c * k);
+    let hw = 3.4 + (1.0 - a) * 0.7;
+    // ears first: they stick out beyond the fur
+    for s in [-1.0f32, 1.0] {
+        let ecx = s * (5.5 + 0.4 * a);
+        if ell(dx, fy, ecx, 10.2, 1.5 + 0.3 * a, 1.7 + 0.4 * a) {
+            return Some(if ell(dx, fy, ecx + s * -0.2, 10.4, 0.7, 1.0) { dark(0.6) } else { bare });
+        }
+    }
+    // the fur outline is ragged, most of all in the first stage
+    let j = (noise(x, y) - 0.5) * (0.4 + 0.7 * a);
+    let skull = ell(dx, fy, 0.0, 8.5, 4.8 + 0.8 * a + j, 4.7 + j);
+    let jaw = ell(dx, fy, 0.0, 12.3, 4.3 + 0.6 * a + j, 4.4 + j);
+    if !skull && !jaw {
+        return None;
+    }
+    let fur = tuft(lk.hair.map(|c| c * 0.92), x, y);
+    let yi = y;
+    // the bare middle of the face, row by row
+    if ax < hw + 1.0 && yi == 8 && ax < hw + 0.4 + 0.5 * a {
+        // brow ridge: one dark shelf across both eyes
+        return Some(dark(0.44 + 0.2 * (1.0 - a)));
+    }
+    if yi == 7 && a < 0.8 && ax < 2.5 {
+        return Some(bare);
+    }
+    if yi == 6 && a < 0.5 && ax < 2.0 {
+        return Some(bare);
+    }
+    if ax < hw {
+        match yi {
+            9 => return Some(if ax < 1.0 { dark(0.7) } else { dark(0.5 + 0.12 * (1.0 - a)) }),
+            10 => {
+                if (ax - 1.5).abs() < 0.1 {
+                    return Some([0.055, 0.043, 0.043]);
+                }
+                return Some(if ax > 2.0 { dark(0.58 + 0.12 * (1.0 - a)) } else { bare });
+            }
+            11 if ax < 2.1 => return Some(if ax > 1.0 { dark(0.34) } else { skin.map(|c| c * 0.7) }),
+            _ => {}
+        }
+        // the muzzle: broad, jutting, with a long mouth and a chin below it
+        let mrx = 2.9 + 0.8 * a;
+        if yi >= 12 && ell(dx, fy, 0.0, 13.7, mrx, 2.5 + 0.2 * a) {
+            if yi == 14 && ax < mrx - 1.1 {
+                return Some(dark(0.36));
+            }
+            return Some(if yi >= 15 { muzzle.map(|c| c * 0.9) } else { muzzle });
+        }
+        if (11..14).contains(&yi) {
+            return Some(bare);
+        }
+    }
+    Some(fur)
+}
+
+/// Shoulders and chest of an ape-man: shaggy, with a bare patch on the breast that grows as the fur thins.
+fn ape_chest(lk: &Look, stage: u8, x: i32, y: i32) -> [f32; 3] {
+    let a = apeness(stage);
+    let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+    if a < 1.0 && ell(fx - 10.0, fy, 0.0, 20.6, 1.4 + 2.2 * (1.0 - a), 2.8) {
+        return lk.skin.map(|c| c * 0.74);
+    }
+    let fur = [0.33, 0.23, 0.15];
+    let body: [f32; 3] = [0, 1, 2].map(|i| fur[i] + (lk.hair[i] * 0.9 - fur[i]) * 0.4);
+    tuft(body, x, y)
 }
 
 fn helm_covers(helm: bool, fy: f32) -> bool {

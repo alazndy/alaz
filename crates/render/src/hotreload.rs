@@ -25,16 +25,10 @@ struct Watched {
     seen: Option<SystemTime>,
 }
 
-/// The unchanging pipeline layouts plus the files being watched.
+/// The files being watched.
 pub struct HotReload {
     files: Vec<Watched>,
     next_check: Instant,
-    pub shadow_layout: wgpu::PipelineLayout,
-    pub copy_layout: wgpu::PipelineLayout,
-    pub scene_layout: wgpu::PipelineLayout,
-    pub bake_layout: wgpu::PipelineLayout,
-    pub outline_layout: wgpu::PipelineLayout,
-    pub pixel_layout: wgpu::PipelineLayout,
 }
 
 fn enabled() -> bool {
@@ -49,14 +43,7 @@ fn mtime(path: &PathBuf) -> Option<SystemTime> {
 }
 
 impl HotReload {
-    pub fn new(
-        shadow_layout: wgpu::PipelineLayout,
-        copy_layout: wgpu::PipelineLayout,
-        scene_layout: wgpu::PipelineLayout,
-        bake_layout: wgpu::PipelineLayout,
-        outline_layout: wgpu::PipelineLayout,
-        pixel_layout: wgpu::PipelineLayout,
-    ) -> Option<HotReload> {
+    pub fn new() -> Option<HotReload> {
         if !enabled() {
             return None;
         }
@@ -69,13 +56,13 @@ impl HotReload {
         Some(HotReload {
             files: vec![watch(Which::Scene, "shader.wgsl"), watch(Which::Outline, "outline.wgsl"), watch(Which::Pixel, "pixel.wgsl")],
             next_check: Instant::now() + POLL,
-            shadow_layout,
-            copy_layout,
-            scene_layout,
-            bake_layout,
-            outline_layout,
-            pixel_layout,
         })
+    }
+
+    /// The scene shader as it stands on disk (a change of quality rebuilds from it, not from the embedded copy).
+    pub fn scene_source(&self) -> Option<String> {
+        let f = self.files.iter().find(|f| f.which == Which::Scene)?;
+        std::fs::read_to_string(&f.path).ok()
     }
 }
 
@@ -134,43 +121,20 @@ impl Renderer {
     fn rebuild(&mut self, which: Which, name: &str, src: &str) -> Result<(), String> {
         let device = &self.device;
         let format = self.config.format;
-        let hot = self.hot.as_ref().expect("hot reload on");
-        let module = |label| device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(src.into()) });
+        let l = &self.layouts;
+        let module = |label, src: &str| device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(src.into()) });
         match which {
             Which::Scene => {
-                let (shadow, shadow_static, shadow_copy, tri, ground, ground_live, bake, mark, hidden) = guarded(device, || {
-                    let m = module(name);
-                    (
-                        pipelines::shadow(device, &m, &hot.shadow_layout, "vs_shadow"),
-                        pipelines::shadow(device, &m, &hot.shadow_layout, "vs_shadow_static"),
-                        pipelines::shadow_copy(device, &m, &hot.copy_layout),
-                        pipelines::scene(device, &m, &hot.scene_layout, format),
-                        pipelines::ground(device, &m, &hot.scene_layout, format, "fs_ground"),
-                        pipelines::ground(device, &m, &hot.scene_layout, format, "fs_ground_live"),
-                        pipelines::bake(device, &m, &hot.bake_layout),
-                        pipelines::mark(device, &hot.scene_layout, &m, format, "vs", "fs_mark", wgpu::CompareFunction::Always),
-                        pipelines::mark(device, &hot.scene_layout, &m, format, "vs_hidden", "fs_hidden", wgpu::CompareFunction::Greater),
-                    )
-                })?;
-                self.shadow_pipeline = shadow;
-                self.shadow_static_pipeline = shadow_static;
-                self.shadow_copy_pipeline = shadow_copy;
-                // (the static map was drawn with the old shader)
-                self.shadow_static.valid = false;
-                self.tri_pipeline = tri;
-                self.ground_pipeline = ground;
-                self.ground_live_pipeline = ground_live;
-                self.bake_pipeline = bake;
-                self.bake.invalidate();
-                // (the static colour is shader code, so what was baked is out of date)
-                self.mark_pipeline = mark;
-                self.hidden_pipeline = hidden;
+                let q = self.quality;
+                let set = guarded(device, || pipelines::SceneSet::build(device, &module(name, &crate::quality::scene_source(src, q)), l, format))?;
+                // (the static map was drawn with the old shader, and so was what the bake holds)
+                self.apply_scene(set);
             }
             Which::Outline => {
-                self.outline.pipeline = guarded(device, || pipelines::fullscreen(device, "outline", &module(name), &hot.outline_layout, format))?;
+                self.outline.pipeline = guarded(device, || pipelines::fullscreen(device, "outline", &module(name, src), &l.outline, format))?;
             }
             Which::Pixel => {
-                self.pixel.pipeline = guarded(device, || pipelines::fullscreen(device, "pixel", &module(name), &hot.pixel_layout, format))?;
+                self.pixel.pipeline = guarded(device, || pipelines::fullscreen(device, "pixel", &module(name, src), &l.pixel, format))?;
             }
         }
         Ok(())

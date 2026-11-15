@@ -29,6 +29,8 @@ pub struct Menu {
     confirm_delete: Option<u8>,
     /// The key bindings screen is open.
     keys_screen: bool,
+    /// The graphics settings screen is open.
+    gfx_screen: bool,
     /// Waiting for a key press to bind to (action, slot).
     capturing: Option<(Action, usize)>,
     pub error: Option<String>,
@@ -83,6 +85,7 @@ impl Menu {
             hardcore: false,
             confirm_delete: None,
             keys_screen: std::env::var_os("ALAZ_DEMO_KEYS").is_some(),
+            gfx_screen: std::env::var_os("ALAZ_DEMO_GFXSCREEN").is_some(),
             capturing: None,
             error: None,
             born: None,
@@ -517,10 +520,56 @@ impl Menu {
         });
     }
 
+    /// Pixel size, shadows and far decor, applied while the menu is up (the world behind is not drawn at the start screen,
+    /// but the pause menu shows the change at once).
+    fn draw_graphics(&mut self, ctx: &egui::Context) {
+        use crate::gfxcfg::{DECOR_NAMES, PIXEL_NAMES, SHADOW_NAMES};
+        let t = self.intro(ctx);
+        let screen = ctx.content_rect();
+        let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
+        bg.rect_filled(screen, 0.0, Color32::from_black_alpha(205));
+        let e = ease(t / 0.35);
+        let mut q = crate::gfxcfg::current();
+        let note = Color32::from_rgb(190, 176, 150);
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
+            ui.set_opacity(e);
+            card(ui, 470.0, |ui| {
+                ui.label(egui::RichText::new("Grafik").size(33.0).strong().color(GOLD));
+                ui.label(egui::RichText::new("Zayıf bir ekran kartında oyun takılırsa daha hafif bir ayar seç. Hemen uygulanır.").small().color(note));
+                ui.add_space(8.0);
+                section(ui, "Piksel inceliği");
+                let mut i = PIXEL_NAMES.iter().position(|p| p.0 == q.pixels).unwrap_or(0);
+                segmented(ui, "gfx_pixels", &PIXEL_NAMES.map(|p| p.1), &mut i);
+                q.pixels = PIXEL_NAMES[i].0;
+                ui.label(egui::RichText::new("Kaba: pikseller büyür, ekran kartı daha az çalışır.").small().color(note));
+                ui.add_space(6.0);
+                section(ui, "Gölge kalitesi");
+                let mut i = SHADOW_NAMES.iter().position(|p| p.0 == q.shadows).unwrap_or(0);
+                segmented(ui, "gfx_shadows", &SHADOW_NAMES.map(|p| p.1), &mut i);
+                q.shadows = SHADOW_NAMES[i].0;
+                ui.label(egui::RichText::new("Düşük: gölgeler köşeli olur. Kapalı: gölge çizilmez, en hafifi.").small().color(note));
+                ui.add_space(6.0);
+                section(ui, "Uzak çim ve süs");
+                let mut i = DECOR_NAMES.iter().position(|p| p.0 == q.decor).unwrap_or(0);
+                segmented(ui, "gfx_decor", &DECOR_NAMES.map(|p| p.1), &mut i);
+                q.decor = DECOR_NAMES[i].0;
+                ui.add_space(10.0);
+                if button(ui, "Geri", vec2(110.0, 34.0), Look::Primary).clicked() {
+                    self.gfx_screen = false;
+                }
+            });
+        });
+        crate::gfxcfg::set(q);
+    }
+
     pub fn draw(&mut self, ctx: &egui::Context, binds: &mut Keybinds) -> Option<MenuAction> {
         crate::hud::apply_style(ctx);
         if self.keys_screen {
             self.draw_keys(ctx, binds);
+            return None;
+        }
+        if self.gfx_screen {
+            self.draw_graphics(ctx);
             return None;
         }
         let t = self.intro(ctx);
@@ -681,12 +730,19 @@ impl Menu {
                     }
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        let w = (ui.available_width() - 12.0) / if self.paused { 3.0 } else { 2.0 };
-                        if self.paused && button(ui, "Kaydet ve çık", vec2(w, 34.0), Look::Plain).clicked() {
-                            act = Some(MenuAction::SaveQuit);
-                        }
+                        let w = (ui.available_width() - 12.0) / 2.0;
                         if button(ui, "Tuşlar", vec2(w, 34.0), Look::Plain).clicked() {
                             self.keys_screen = true;
+                        }
+                        if button(ui, "Grafik", vec2(w, 34.0), Look::Plain).clicked() {
+                            self.gfx_screen = true;
+                        }
+                    });
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        let w = if self.paused { (ui.available_width() - 12.0) / 2.0 } else { ui.available_width() };
+                        if self.paused && button(ui, "Kaydet ve çık", vec2(w, 34.0), Look::Plain).clicked() {
+                            act = Some(MenuAction::SaveQuit);
                         }
                         if button(ui, "Çık", vec2(w, 34.0), Look::Danger).clicked() {
                             act = Some(MenuAction::Quit);
