@@ -5,15 +5,18 @@
 use alaz_render::egui::{self, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Ui, Vec2};
 
 /// One pixel of the minigame art, in points: 2 at scale 1, and a whole number of screen pixels at any other scale
-/// (`set_unit` is called once per frame from the interface scale).
-static UNIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x4000_0000); // 2.0f32
+/// (`set_unit` is called once per frame from the interface scale). Kept per thread: the interface runs on one, and
+/// tests that build interfaces of other sizes side by side must not change each other's unit.
+thread_local! {
+    static UNIT: std::cell::Cell<f32> = const { std::cell::Cell::new(2.0) };
+}
 
 pub fn unit() -> f32 {
-    f32::from_bits(UNIT.load(std::sync::atomic::Ordering::Relaxed))
+    UNIT.with(|u| u.get())
 }
 
 pub fn set_unit(u: f32) {
-    UNIT.store(u.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    UNIT.with(|c| c.set(u));
 }
 
 pub const INK: Color32 = Color32::from_rgb(24, 17, 11);
