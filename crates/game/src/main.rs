@@ -298,6 +298,36 @@ fn demo_setup(w: &mut World) -> Selection {
             .unwrap_or((ax + 1_800, ay + 600));
         w.buildings.push(alaz_sim::Building { fuel: 100_000, ..alaz_sim::Building::new(alaz_sim::BuildingKind::Campfire, x, y) });
     }
+    if let Ok(list) = std::env::var("ALAZ_DEMO_BUILD") {
+        // machines in rows beside the player, each with its first recipe running, and what they need set up beside
+        // them: a windmill for the powered ones, a bellows and a windmill for the converter, a boiler under steam for
+        // the hammer (ALAZ_DEMO_BUILD=lathe,press,... by file name)
+        let kinds: Vec<BuildingKind> = list.split(',').filter_map(|n| BuildingKind::ALL.iter().copied().find(|k| alaz_render::assets::snake(&format!("{k:?}")) == n.trim())).collect();
+        let (ax, ay) = (w.agents[0].x, w.agents[0].y);
+        for (i, kind) in kinds.iter().enumerate() {
+            let (x, y) = (ax - 8_000 + (i % 4) as i64 * 6_000, ay - 8_000 + (i / 4) as i64 * 7_000);
+            let mut b = alaz_sim::Building::new(*kind, x, y);
+            let def = rules().building(*kind);
+            if let Some(ri) = rules().recipes.iter().position(|r| r.station == Some(*kind)) {
+                b.job = Some(alaz_sim::Job { recipe: ri as u16, remaining: rules().recipes[ri].ticks.max(60) * 100 });
+                b.temp = def.heat_max;
+            }
+            w.buildings.push(b);
+            let aid = |w: &mut World, k: BuildingKind, dx: i64, dy: i64| w.buildings.push(alaz_sim::Building::new(k, x + dx, y + dy));
+            if kind.needs_power() || matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
+                aid(w, BuildingKind::Windmill, 0, -3_800);
+            }
+            if matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
+                aid(w, BuildingKind::Bellows, 1_800, 0);
+            }
+            if *kind == BuildingKind::SteamHammer {
+                let mut boiler = alaz_sim::Building::new(BuildingKind::Boiler, x + 3_500, y);
+                boiler.job = Some(alaz_sim::Job { recipe: rules().recipes.iter().position(|r| r.id == "boiler_coal").unwrap() as u16, remaining: 1_000_000 });
+                boiler.temp = 300;
+                w.buildings.push(boiler);
+            }
+        }
+    }
     if std::env::var_os("ALAZ_DEMO_MOVE").is_some() {
         // walking instead: shows the route line and the walk animation
         let (x, y) = (w.agents[0].x + 14_000, w.agents[0].y + 9_000);
@@ -736,6 +766,12 @@ impl App {
         }
         if args.demo {
             app.selected = Some(demo_setup(&mut app.world));
+            // ALAZ_DEMO_SELECT=<building file name>: show that building's panel instead of the bot's
+            if let Ok(n) = std::env::var("ALAZ_DEMO_SELECT") {
+                if let Some(i) = app.world.buildings.iter().position(|b| alaz_render::assets::snake(&format!("{:?}", b.kind)) == n) {
+                    app.selected = Some(hud::Selection::Building(i));
+                }
+            }
         }
         app.last_save_tick = app.world.tick;
         app.center_camera();
@@ -1900,7 +1936,7 @@ impl App {
         }
         self.world.can_place(kind, x, y).is_ok()
             && dist2(a.x, a.y, x, y) <= BUILD_RADIUS_MM * BUILD_RADIUS_MM
-            && a.inventory.has(&rules().building(kind).cost)
+            && rules().building(kind).cost_for(|c| a.inventory.has(c)).is_some()
             && rules().building(kind).needs.iter().all(|&k| a.inventory.get(k) > 0)
             && self.world.knows(rules().building(kind).discovery)
     }

@@ -28,7 +28,7 @@ pub(crate) struct Chunk {
     pub(crate) decor: Option<(wgpu::Buffer, u32)>,
     pub(crate) nodes_version: (u64, u64),
     /// What had been seen when the nodes were built (unknown things look plain).
-    pub(crate) seen: u128,
+    pub(crate) seen: (u128, u128),
     pub(crate) level: u8,
     pub(crate) used: u64,
     /// Which build of the meshes this is (unique per build): the static shadow map is redrawn when it differs.
@@ -43,7 +43,7 @@ pub(crate) struct BuiltChunk {
     pub(crate) nodes: Option<(wgpu::Buffer, u32)>,
     pub(crate) decor: Option<(wgpu::Buffer, u32)>,
     pub(crate) nodes_version: (u64, u64),
-    pub(crate) seen: u128,
+    pub(crate) seen: (u128, u128),
     pub(crate) level: u8,
 }
 

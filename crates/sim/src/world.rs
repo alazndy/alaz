@@ -1,5 +1,5 @@
 use crate::agents::{AgentKind, RouteStep};
-use crate::buildings::{Building, BuildingKind, Job};
+use crate::buildings::{Requirement, Building, BuildingKind, Job};
 use crate::command::{AgentId, Command, CommandKind, NodeId};
 use crate::nav::{advance, walk_free, Free, Nav, Obstacles, Step, PATHS_PER_TICK};
 use crate::map::{ItemKind, Map, NodeKind, Terrain, MAP_H, MAP_W, MAX_MAP_SIDE, MIN_MAP_SIDE, TILE_MM};
@@ -429,6 +429,17 @@ pub enum Discovery {
     Geology,
     /// A spear in hand by the water: fish can be had, with a spear or better with a rod.
     Fishing,
+    // --- Industry (wave 1) ---
+    /// Steel known, limestone or fire clay in hand: the lime kiln and the brick kiln.
+    Masonry,
+    /// Lime in hand among masons: the cement kiln, cement and concrete.
+    Cement,
+    /// Steel known, pig iron in hand: the puddling furnace, the cupola and the moulding bench.
+    Foundry,
+    /// Steam and a foundry, steel in hand: the Bessemer converter.
+    Converter,
+    /// Steam known, a cast-iron part in hand: lathe, drill, press, power loom, steam hammer, rolling line.
+    Machining,
 }
 
 impl Discovery {
@@ -973,6 +984,15 @@ impl Agent {
     }
 }
 
+/// A building that turns machines around it: a water wheel, a windmill, a steaming engine or boiler, or an engine
+/// that a steaming boiler within 6 m feeds (so a boiler carries its power out to engines set round it).
+fn is_power_source(bs: &[Building], i: usize) -> bool {
+    let w = &bs[i];
+    matches!(w.kind, BuildingKind::WaterWheel | BuildingKind::Windmill)
+        || w.steaming()
+        || (w.kind == BuildingKind::SteamEngine && bs.iter().any(|b| b.kind == BuildingKind::Boiler && b.steaming() && dist2(b.x, b.y, w.x, w.y) <= 6_000 * 6_000))
+}
+
 /// Put everything a building accepts into it. Depots take all but tools; stations take recipe inputs.
 fn deposit_into(rules: &crate::rules::Rules, inv: &mut Inventory, b: &mut Building) {
     if matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar) {
@@ -1121,6 +1141,8 @@ pub struct World {
     pub(crate) known: u64,
     /// Items any human has ever held (bit per `ItemKind`): you can only name what you have handled.
     pub(crate) seen: u128,
+    /// Items beyond the first 128 that have been seen (bit = index - 128).
+    pub(crate) seen_hi: u128,
     /// Total of each item ever made by recipes or stations (not gathered).
     pub produced: [u32; ItemKind::COUNT],
     pub(crate) milestones: u64,
@@ -1228,6 +1250,7 @@ impl World {
             produced: [0; ItemKind::COUNT],
             milestones: 0,
             seen: 0,
+            seen_hi: 0,
             hardcore: false,
             air: Vec::new(),
             bodies: Vec::new(),
@@ -1514,7 +1537,7 @@ impl World {
             self.milestones |= m.bit();
         }
         for k in ItemKind::ALL {
-            self.seen |= 1u128 << k as u32;
+            self.mark_seen(k);
         }
     }
 
@@ -1522,6 +1545,7 @@ impl World {
     pub fn forget_everything(&mut self) {
         self.known = 0;
         self.seen = 0;
+        self.seen_hi = 0;
         self.milestones = 0;
     }
 
@@ -1576,24 +1600,34 @@ impl World {
     }
 
     /// Bit set of items ever held (for caches that depend on what is recognised).
-    pub fn seen_bits(&self) -> u128 {
-        self.seen
+    pub fn seen_bits(&self) -> (u128, u128) {
+        (self.seen, self.seen_hi)
     }
 
     /// Developer aid and tests: pretend this item has been held.
     pub fn mark_seen(&mut self, k: ItemKind) {
-        self.seen |= 1u128 << k as u32;
+        let i = k as u32;
+        if i < 128 {
+            self.seen |= 1u128 << i;
+        } else {
+            self.seen_hi |= 1u128 << (i - 128);
+        }
     }
 
     /// Has anyone held this item yet?
     pub fn has_seen(&self, k: ItemKind) -> bool {
-        self.seen & (1u128 << k as u32) != 0
+        let i = k as u32;
+        if i < 128 {
+            self.seen & (1u128 << i) != 0
+        } else {
+            self.seen_hi & (1u128 << (i - 128)) != 0
+        }
     }
 
     /// How much the tribe understands of the world, 0..=1000, from what it has discovered, achieved and handled.
     /// It sharpens how things look and how they are named. Derived, never stored.
     pub fn perception_permille(&self) -> u32 {
-        let score = self.known.count_ones() + 2 * self.milestones.count_ones() + self.seen.count_ones() / 2;
+        let score = self.known.count_ones() + 2 * self.milestones.count_ones() + (self.seen.count_ones() + self.seen_hi.count_ones()) / 2;
         (score * 1000 / PERCEPTION_FULL_SCORE).min(1000)
     }
 
@@ -2220,7 +2254,8 @@ impl World {
                     return self.reject(id, Reject::TooFar);
                 }
                 let free = self.settings.difficulty == Difficulty::Creative;
-                if !free && !self.agents[idx].inventory.has(&def.cost) {
+                let cost: Vec<ItemCount> = def.cost_for(|c| self.agents[idx].inventory.has(c)).map(|c| c.to_vec()).unwrap_or_else(|| def.cost.clone());
+                if !free && !self.agents[idx].inventory.has(&cost) {
                     return self.reject(id, Reject::NoMaterials);
                 }
                 if !free && def.needs.iter().any(|&k| self.agents[idx].inventory.get(k) == 0) {
@@ -2230,7 +2265,7 @@ impl World {
                     return self.reject(id, why);
                 }
                 if !free {
-                    self.agents[idx].inventory.take(&def.cost);
+                    self.agents[idx].inventory.take(&cost);
                 }
                 // wet earth is hard to light on: the fire starts with half the fuel
                 let damp = self.surface_at((x.div_euclid(TILE_MM)) as i32, (y.div_euclid(TILE_MM)) as i32) == crate::surface::Surface::Mud;
@@ -2243,7 +2278,7 @@ impl World {
                 if human && self.settings.difficulty == Difficulty::Creative {
                     let inv = &mut self.agents[idx].inventory;
                     inv.give(&[ItemCount { item: *item, n: (*n).min(999) as _ }]);
-                    self.seen |= 1u128 << *item as u32;
+                    self.mark_seen(*item);
                 }
             }
             CommandKind::SetClock { minute } => {
@@ -3107,7 +3142,9 @@ impl World {
         let mut spawns: Vec<(AgentKind, i64, i64, u8)> = Vec::new();
         let gins: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.kind == BuildingKind::AnimalGin).map(|b| (b.x, b.y)).collect();
         let mut mills: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.kind == BuildingKind::Windmill).map(|b| (b.x, b.y)).collect();
-        let steam: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.steaming()).map(|b| (b.x, b.y)).collect();
+        // steam: engines and boilers under steam, and the engines a boiler feeds
+        let steam: Vec<(i64, i64)> = self.buildings.iter().enumerate().filter(|(i, b)| b.steaming() || (b.kind == BuildingKind::SteamEngine && is_power_source(&self.buildings, *i))).map(|(_, b)| (b.x, b.y)).collect();
+        let steam_only: Vec<(i64, i64)> = steam.clone();
         // electric motors on a live grid drive machines like a wheel does
         let live = self.electric_live();
         let motors: Vec<(i64, i64)> = self.buildings.iter().zip(&live).filter(|(b, on)| **on && b.kind == BuildingKind::ElectricMotor).map(|(b, _)| (b.x, b.y)).collect();
@@ -3139,7 +3176,21 @@ impl World {
             .filter(|bl| {
                 let near = |px: i64, py: i64, r: i64| dist2(px, py, bl.x, bl.y) <= r * r;
                 self.agents.iter().any(|a| a.kind == AgentKind::Human && near(a.x, a.y, 2_500))
-                    || self.buildings.iter().any(|w| (matches!(w.kind, BuildingKind::WaterWheel | BuildingKind::Windmill) || w.steaming()) && near(w.x, w.y, 8_000))
+                    || self.buildings.iter().enumerate().any(|(wi, w)| is_power_source(&self.buildings, wi) && near(w.x, w.y, 8_000))
+                    || motors.iter().any(|&(mx, my)| near(mx, my, 8_000))
+                    || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
+            })
+            .map(|b| (b.x, b.y))
+            .collect();
+        // bellows driven by machinery (never by hand): the strong blast a converter needs
+        let strong_blown: Vec<(i64, i64)> = self
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Bellows)
+            .filter(|bl| {
+                let near = |px: i64, py: i64, r: i64| dist2(px, py, bl.x, bl.y) <= r * r;
+                self.buildings.iter().enumerate().any(|(wi, w)| is_power_source(&self.buildings, wi) && near(w.x, w.y, 8_000))
+                    || motors.iter().any(|&(mx, my)| near(mx, my, 8_000))
                     || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
             })
             .map(|b| (b.x, b.y))
@@ -3161,8 +3212,13 @@ impl World {
             let lit = !b.kind.burns() || b.fuel > 0;
             // heat: a source climbs toward its ceiling while it burns or works, and cools toward the air otherwise
             let bdef = (&*rules_now).building(b.kind);
-            // a bloomery without air from a working bellows within 3 m never gets past 1000 °C
-            let ceiling = if matches!(b.kind, BuildingKind::Bloomery | BuildingKind::BlastFurnace) && !blown.iter().any(|&(x, y)| dist2(x, y, b.x, b.y) <= 3_000 * 3_000) { bdef.heat_max.min(1000) } else { bdef.heat_max };
+            // a bloomery without air from a working bellows within 3 m never gets past 1000 °C; a converter needs a bellows
+            // driven by machinery
+            let ceiling = match b.kind.requirement() {
+                Some(Requirement::Blast) if !blown.iter().any(|&(x, y)| dist2(x, y, b.x, b.y) <= 3_000 * 3_000) => bdef.heat_max.min(1000),
+                Some(Requirement::StrongBlast) if !strong_blown.iter().any(|&(x, y)| dist2(x, y, b.x, b.y) <= 3_000 * 3_000) => bdef.heat_max.min(1000),
+                _ => bdef.heat_max,
+            };
             if second && bdef.heat_max > 0 {
                 let working = if b.kind.burns() { b.fuel > 0 } else { b.job.is_some() };
                 if working && b.temp < ceiling {
@@ -3225,10 +3281,14 @@ impl World {
                 by_water = water > 0;
                 mill_power = (hands + 3 * animals + 3 * water).min(3);
             }
-            if matches!(b.kind, BuildingKind::TripHammer | BuildingKind::RollingMill) {
+            if matches!(b.kind, BuildingKind::TripHammer | BuildingKind::RollingMill) || b.kind.needs_power() {
                 let (_, animals, water) = power_at(b.x, b.y, false);
                 by_water = water > 0;
                 mill_power = (3 * animals + 3 * water).min(3);
+            }
+            // a steam hammer wants steam itself: a wheel or the wind will not lift it
+            if b.kind == BuildingKind::SteamHammer {
+                mill_power = if steam_only.iter().any(|&(sx, sy)| dist2(sx, sy, b.x, b.y) <= 8_000 * 8_000) { 3 } else { 0 };
             }
             if let Some(job) = b.job.as_mut().filter(|_| lit && hot_enough && growing && mill_power > 0) {
                 job.remaining = job.remaining.saturating_sub(if powered { 2 } else { 1 } * if ploughed { 2 } else { 1 } * mill_power);
@@ -3239,7 +3299,7 @@ impl World {
                     water_forged = true;
                 }
                 // a machine finished its work with a windmill driving it (directly, or through its bellows)
-                let machine = matches!(b.kind, BuildingKind::HandMill | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::Bloomery | BuildingKind::BlastFurnace);
+                let machine = matches!(b.kind, BuildingKind::HandMill | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::Bloomery | BuildingKind::BlastFurnace) || b.kind.needs_power();
                 if job.remaining == 0 && machine && wind_only.iter().any(|&(mx, my)| dist2(mx, my, b.x, b.y) <= 12_000 * 12_000) {
                     wind_worked = true;
                 }
@@ -3678,7 +3738,7 @@ impl World {
         }
         for (i, c) in best.iter().enumerate() {
             if *c > 0 {
-                self.seen |= 1u128 << i;
+                self.mark_seen(ItemKind::ALL[i]);
             }
         }
         let n = |k: ItemKind| best[k as usize];
@@ -3781,6 +3841,22 @@ impl World {
         }
         if n(ItemKind::Fiber) >= 6 && self.knows(Discovery::Clothing) && self.knows(Discovery::Farming) {
             self.discover(Discovery::Weaving);
+        }
+        // industry: each opens when its raw stuff is in hand among people who can use it
+        if self.knows(Discovery::Steelmaking) && (n(ItemKind::Limestone) >= 1 || n(ItemKind::FireClay) >= 1) {
+            self.discover(Discovery::Masonry);
+        }
+        if self.knows(Discovery::Masonry) && n(ItemKind::Lime) >= 1 {
+            self.discover(Discovery::Cement);
+        }
+        if self.knows(Discovery::Steelmaking) && n(ItemKind::PigIron) >= 1 {
+            self.discover(Discovery::Foundry);
+        }
+        if self.knows(Discovery::Steam) && self.knows(Discovery::Foundry) && n(ItemKind::Steel) >= 1 {
+            self.discover(Discovery::Converter);
+        }
+        if self.knows(Discovery::Steam) && n(ItemKind::CastIronPart) >= 1 {
+            self.discover(Discovery::Machining);
         }
         let has_animal = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Dog | AgentKind::Ox | AgentKind::Horse));
         let has_draught = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse));
@@ -3915,6 +3991,22 @@ impl World {
         self.buildings.iter().zip(&live).any(|(b, &on)| on && b.kind == BuildingKind::ElectricMotor && dist2(b.x, b.y, x, y) <= 8_000 * 8_000)
     }
 
+    /// Does the machine at `i` have what it needs round it (see `BuildingKind::requirement`)? Machines without a
+    /// requirement are always ready. The panel reads this to say why a machine stands still.
+    pub fn requirement_met(&self, i: usize) -> bool {
+        let Some(b) = self.buildings.get(i) else { return false };
+        let near = |px: i64, py: i64, r: i64| dist2(px, py, b.x, b.y) <= r * r;
+        match b.kind.requirement() {
+            None => true,
+            Some(Requirement::Power) => self.powered_at(b.x, b.y),
+            Some(Requirement::Steam) => self.buildings.iter().enumerate().any(|(j, w)| (w.steaming() || w.kind == BuildingKind::SteamEngine) && is_power_source(&self.buildings, j) && near(w.x, w.y, 8_000)),
+            Some(r @ (Requirement::Blast | Requirement::StrongBlast)) => self.buildings.iter().filter(|bl| bl.kind == BuildingKind::Bellows && near(bl.x, bl.y, 3_000)).any(|bl| {
+                self.powered_at(bl.x, bl.y)
+                    || (r == Requirement::Blast && self.agents.iter().any(|a| a.kind == AgentKind::Human && dist2(a.x, a.y, bl.x, bl.y) <= 2_500 * 2_500))
+            }),
+        }
+    }
+
     /// Which buildings are on a live grid: a dynamo turned by mechanical power feeds it, and grid buildings (poles,
     /// motors, lamps, computers, other dynamos) within 12 m of a live one are live too.
     pub fn electric_live(&self) -> Vec<bool> {
@@ -3941,7 +4033,7 @@ impl World {
     /// Mechanical power at (x, y): water wheel, windmill or steam within 8 m, or an animal at a gin within 6 m.
     fn mech_powered_at(&self, x: i64, y: i64) -> bool {
         let near = |px: i64, py: i64, r: i64| dist2(px, py, x, y) <= r * r;
-        self.buildings.iter().any(|w| (matches!(w.kind, BuildingKind::WaterWheel | BuildingKind::Windmill) || w.steaming()) && near(w.x, w.y, 8_000))
+        self.buildings.iter().enumerate().any(|(i, w)| is_power_source(&self.buildings, i) && near(w.x, w.y, 8_000))
             || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
     }
 
@@ -3955,7 +4047,7 @@ impl World {
         let mut moved_any = false;
         for (cx, cy) in belts {
             let near = |x: i64, y: i64, r: i64| dist2(x, y, cx, cy) <= r * r;
-            let water = self.buildings.iter().any(|w| (matches!(w.kind, BuildingKind::WaterWheel | BuildingKind::Windmill) || w.steaming()) && near(w.x, w.y, 8_000));
+            let water = self.buildings.iter().enumerate().any(|(i, w)| is_power_source(&self.buildings, i) && near(w.x, w.y, 8_000));
             let animal = self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM));
             if !water && !animal {
                 continue;
@@ -4222,6 +4314,10 @@ impl World {
         feed(self.seen as u64);
         if self.seen >> 64 != 0 {
             feed((self.seen >> 64) as u64);
+        }
+        if self.seen_hi != 0 {
+            feed(self.seen_hi as u64);
+            feed((self.seen_hi >> 64) as u64);
         }
         for p in self.produced {
             feed(p as u64);

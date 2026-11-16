@@ -1673,7 +1673,7 @@ fn perception_grows_with_what_the_tribe_knows() {
     learn_all(&mut w);
     w.milestones = u64::MAX;
     for k in ItemKind::ALL {
-        w.seen |= 1 << k as u32;
+        w.mark_seen(k);
     }
     assert_eq!(w.perception_permille(), 1000);
     assert_eq!(w.perception_level(), 5);
@@ -3466,13 +3466,23 @@ fn widened_fields_read_older_saves() {
         let auto: Option<u8> = Some(r);
         assert_eq!(postcard::from_bytes::<Option<u16>>(&postcard::to_allocvec(&auto).unwrap()).unwrap(), Some(r as u16));
     }
-    assert!(rules().recipes.len() < 128, "recipe ids must stay below 128 until every save has been rewritten with u16 ids");
+    // ids of 128 and up take two bytes in a new save; an old save only ever held ids below 128 (the list only grows at the end)
+    for r in [128u16, 147, 300] {
+        assert_eq!(postcard::from_bytes::<u16>(&postcard::to_allocvec(&r).unwrap()).unwrap(), r);
+        let auto: Option<u16> = Some(r);
+        assert_eq!(postcard::from_bytes::<Option<u16>>(&postcard::to_allocvec(&auto).unwrap()).unwrap(), auto);
+    }
+    assert!(rules().recipes.len() < u16::MAX as usize);
+    assert!(ItemKind::COUNT < 255, "item indexes travel as bytes (255 = an empty hand)");
     // a state with nothing seen beyond 64 items hashes as before the widening
     let (mut w, _) = with_agent(1);
     w.mark_seen(ItemKind::Stone);
     let h = w.hash();
     w.seen |= 1u128 << 100;
     assert_ne!(w.hash(), h);
+    let h = w.hash();
+    w.mark_seen(ItemKind::Beam);
+    assert_ne!(w.hash(), h, "items past the 128th count in the hash");
 }
 
 /// S1: tools are keys. Bare hands take the loose stones on top of an outcrop and nothing more; the seam below
@@ -4595,11 +4605,18 @@ fn sweep_every_building_and_recipe() {
         }
         // what a station needs around it to work: bellows for the furnaces, wind for the machines and the bellows
         if let Some(st) = r.station {
-            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace) {
+            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer) {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Bellows, ax + 1_500, ay + 2_000));
             }
-            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill) {
+            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill) || st.needs_power() {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Windmill, ax + 1_500, ay + 6_000));
+            }
+            // a steam hammer wants steam: a boiler under steam beside it
+            if st == BuildingKind::SteamHammer {
+                let mut boiler = crate::buildings::Building::new(BuildingKind::Boiler, ax + 1_500, ay + 5_000);
+                boiler.job = Some(crate::buildings::Job { recipe: recipe("boiler_coal").0, remaining: u32::MAX / 2 });
+                boiler.temp = 300;
+                w.buildings.push(boiler);
             }
         }
         let before: Vec<u32> = r.outputs.iter().map(|o| count(&w, 0, o.item) as u32 + w.buildings.iter().map(|b| b.output[o.item as usize] as u32).sum::<u32>()).collect();
@@ -5103,4 +5120,427 @@ fn the_apron_makes_tools_last_longer() {
     let wear = |apron: bool| (0..8).map(|k| wear1(apron, k * 37)).sum::<u16>();
     let (plain, aproned) = (wear(false), wear(true));
     assert!(plain >= 2 && aproned < plain, "{aproned} vs {plain}");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Industry, wave 1: kilns, foundry, machine tools, mills, boiler.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// A world with everything learned and no wolves; `(bx, by)` is a free spot near the spawn where machines go (they are
+/// set down 4 m apart along x, ignoring the placement rules).
+fn industry_world() -> (World, AgentId, i64, i64) {
+    let (mut w, a) = with_agent(3);
+    learn_all(&mut w);
+    w.wild.retain(|x| x.species != WildSpecies::Wolf);
+    let (bx, by) = spot_for(&w, BuildingKind::BlastFurnace, &[]);
+    (w, a, bx, by)
+}
+
+fn topped_up(w: &mut World) {
+    let me = &mut w.agents[0];
+    (me.hunger, me.thirst, me.warmth, me.health) = (MAX_STAT, MAX_STAT, MAX_STAT, MAX_STAT);
+}
+
+/// Stand next to a station, put `inputs` in the pack and start recipe `id`. A recipe that needs heat must not get
+/// anywhere while the station is cold. Then run until the job is done (true) or `max` ticks have passed (false).
+fn run_job(w: &mut World, a: AgentId, st: u32, id: &str, inputs: &[(ItemKind, u16)], max: u64) -> bool {
+    let (x, y) = (w.buildings[st as usize].x, w.buildings[st as usize].y);
+    w.agents[0].x = x + 1_300;
+    w.agents[0].y = y;
+    for &(k, n) in inputs {
+        w.agents[0].inventory.counts[k as usize] += n;
+    }
+    w.step(&[cmd(a, CommandKind::StartJob { building: st, recipe: recipe(id) })]);
+    assert!(w.buildings[st as usize].job.is_some(), "{id}: {:?}", w.take_events());
+    let def = &rules().recipes[recipe(id).0 as usize];
+    if def.heat > 0 && w.buildings[st as usize].temp < def.heat {
+        for _ in 0..120 {
+            topped_up(w);
+            w.step(&[]);
+        }
+        let left = w.buildings[st as usize].job.map(|j| j.remaining);
+        assert_eq!(left, Some(def.ticks), "{id}: a cold station does no work");
+    }
+    for _ in 0..max {
+        topped_up(w);
+        w.step(&[]);
+        if w.buildings[st as usize].job.is_none() {
+            return true;
+        }
+    }
+    false
+}
+
+fn out_of(w: &World, st: u32, k: ItemKind) -> u16 {
+    w.buildings[st as usize].output[k as usize]
+}
+
+#[test]
+fn kilns_and_furnaces_bake_by_the_batch() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    type Case = (BuildingKind, &'static str, Vec<(ItemKind, u16)>, Vec<(ItemKind, u16)>, u64);
+    let cases: Vec<Case> = vec![
+        (BuildingKind::LimeKiln, "burn_lime", vec![(I::Limestone, 3), (I::Charcoal, 1)], vec![(I::Lime, 2)], 8_000),
+        (BuildingKind::LimeKiln, "slake_mortar", vec![(I::Lime, 1), (I::Sand, 2), (I::WaterPot, 1)], vec![(I::Mortar, 3), (I::Pot, 1)], 2_000),
+        (BuildingKind::CementKiln, "burn_cement", vec![(I::Lime, 2), (I::Clay, 2), (I::Charcoal, 1)], vec![(I::Cement, 3)], 12_000),
+        (BuildingKind::CementKiln, "mix_concrete", vec![(I::Cement, 1), (I::Sand, 2), (I::WaterPot, 1)], vec![(I::Concrete, 3), (I::Pot, 1)], 2_000),
+        (BuildingKind::BrickKiln, "fire_bricks", vec![(I::Clay, 6), (I::Charcoal, 2)], vec![(I::Brick, 6)], 12_000),
+        (BuildingKind::BrickKiln, "fire_fire_bricks_batch", vec![(I::FireClay, 6), (I::Charcoal, 2)], vec![(I::FireBrick, 6)], 12_000),
+        (BuildingKind::BrickKiln, "fire_raw_fire_bricks_batch", vec![(I::RawFireBrick, 8), (I::Charcoal, 2)], vec![(I::FireBrick, 8)], 12_000),
+        (BuildingKind::CokeOven, "coke_oven", vec![(I::Coal, 4)], vec![(I::Coke, 3), (I::Tar, 1)], 10_000),
+        (BuildingKind::PuddlingFurnace, "puddle_iron", vec![(I::PigIron, 4), (I::Charcoal, 2)], vec![(I::IronBloom, 4)], 10_000),
+        (BuildingKind::PuddlingFurnace, "puddle_iron_coal", vec![(I::PigIron, 4), (I::Coal, 1)], vec![(I::IronBloom, 4)], 10_000),
+    ];
+    for (kind, id, inputs, outputs, max) in cases {
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        assert!(run_job(&mut w, a, st, id, &inputs, max), "{kind:?} {id} did not finish");
+        for (k, n) in outputs {
+            assert_eq!(out_of(&w, st, k), n, "{kind:?} {id}: {k:?}");
+        }
+    }
+}
+
+#[test]
+fn the_converter_needs_a_blast_driven_by_machinery() {
+    let (base, a, bx, by) = industry_world();
+    let load = |w: &mut World, st: u32| {
+        w.agents[0].inventory.counts[ItemKind::PigIron as usize] = 3;
+        let (x, y) = (w.buildings[st as usize].x, w.buildings[st as usize].y);
+        w.agents[0].x = x + 1_300;
+        w.agents[0].y = y;
+        w.step(&[cmd(a, CommandKind::StartJob { building: st, recipe: recipe("bessemer_steel") })]);
+        assert!(w.buildings[st as usize].job.is_some());
+        for _ in 0..9_000 {
+            topped_up(w);
+            w.step(&[]);
+        }
+    };
+    // no bellows: the vessel never gets past 1000 degrees, the steel is never made
+    let mut w = base.clone();
+    let conv = push_building(&mut w, BuildingKind::Bessemer, bx + 4_000, by);
+    load(&mut w, conv);
+    assert!(w.buildings[conv as usize].job.is_some() && w.buildings[conv as usize].temp <= 1000, "{} °C", w.buildings[conv as usize].temp);
+    assert!(!w.requirement_met(conv as usize));
+    // a bellows worked by hand is not enough either
+    let mut w = base.clone();
+    let conv = push_building(&mut w, BuildingKind::Bessemer, bx + 4_000, by);
+    push_building(&mut w, BuildingKind::Bellows, bx + 5_500, by);
+    load(&mut w, conv);
+    assert!(w.buildings[conv as usize].job.is_some() && w.buildings[conv as usize].temp <= 1000);
+    assert!(!w.requirement_met(conv as usize), "a hand bellows is not a strong blast");
+    // a windmill turning the bellows: steel, two for three pig
+    let mut w = base.clone();
+    let conv = push_building(&mut w, BuildingKind::Bessemer, bx + 4_000, by);
+    push_building(&mut w, BuildingKind::Bellows, bx + 5_500, by);
+    push_building(&mut w, BuildingKind::Windmill, bx + 9_500, by);
+    assert!(w.requirement_met(conv as usize));
+    assert!(run_job(&mut w, a, conv, "bessemer_steel", &[(ItemKind::PigIron, 3)], 9_000));
+    assert_eq!(out_of(&w, conv, ItemKind::Steel), 2);
+}
+
+#[test]
+fn the_cupola_pours_into_a_mould_that_comes_back() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    let mut w = base.clone();
+    let bench = push_building(&mut w, BuildingKind::MoldingBench, bx - 4_000, by);
+    assert!(run_job(&mut w, a, bench, "pack_sand_mold", &[(I::Sand, 4), (I::Clay, 1), (I::Wood, 1)], 2_000));
+    assert_eq!(out_of(&w, bench, I::SandMold), 2);
+    w.step(&[cmd(a, CommandKind::Collect { building: bench, item: None })]);
+    assert_eq!(count(&w, 0, I::SandMold), 2);
+    // without a bellows the cupola stays cool and pours nothing
+    let cupola = push_building(&mut w, BuildingKind::Cupola, bx + 4_000, by);
+    let mut cold = w.clone();
+    cold.agents[0].inventory.counts[I::PigIron as usize] = 2;
+    cold.agents[0].inventory.counts[I::Charcoal as usize] = 1;
+    cold.agents[0].x = bx + 5_300;
+    cold.agents[0].y = by;
+    cold.step(&[cmd(a, CommandKind::StartJob { building: cupola, recipe: recipe("cupola_cast_part") })]);
+    for _ in 0..9_000 {
+        topped_up(&mut cold);
+        cold.step(&[]);
+    }
+    assert!(cold.buildings[cupola as usize].job.is_some(), "no blast, no pour");
+    // with a bellows (a hand will do) every pour gives the mould back: the same mould casts part, pipe, cylinder, wheel
+    push_building(&mut w, BuildingKind::Bellows, bx + 5_500, by);
+    w.agents[0].inventory.counts[I::Charcoal as usize] = 8;
+    w.agents[0].inventory.counts[I::PigIron as usize] = 10;
+    for (id, out, n) in [("cupola_cast_part", I::CastIronPart, 2), ("cupola_cast_pipe", I::Pipe, 2), ("cupola_cast_cylinder", I::IronCylinder, 1), ("cupola_cast_wheel", I::IronWheel, 1)] {
+        assert!(run_job(&mut w, a, cupola, id, &[], 12_000), "{id}");
+        assert_eq!(out_of(&w, cupola, out), n, "{id}");
+        w.step(&[cmd(a, CommandKind::Collect { building: cupola, item: None })]);
+        assert_eq!(count(&w, 0, I::SandMold), 2, "{id}: the mould is back");
+    }
+}
+
+#[test]
+fn machine_tools_and_mills_stand_still_without_power() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    type Case = (BuildingKind, &'static str, Vec<(ItemKind, u16)>, Vec<(ItemKind, u16)>);
+    let cases: Vec<Case> = vec![
+        (BuildingKind::Lathe, "turn_shaft", vec![(I::IronBloom, 2)], vec![(I::Shaft, 1)]),
+        (BuildingKind::Lathe, "turn_bolts", vec![(I::IronBloom, 1)], vec![(I::BoltNut, 4)]),
+        (BuildingKind::Lathe, "turn_piston", vec![(I::CastIronPart, 1), (I::IronBloom, 1)], vec![(I::Piston, 1)]),
+        (BuildingKind::Lathe, "lathe_gear", vec![(I::IronBloom, 1)], vec![(I::Gear, 2)]),
+        (BuildingKind::DrillMill, "mill_precision_gear", vec![(I::Steel, 1), (I::IronBloom, 1)], vec![(I::PrecisionGear, 2)]),
+        (BuildingKind::DrillMill, "bore_cylinder_block", vec![(I::IronCylinder, 1), (I::BoltNut, 2), (I::Steel, 1)], vec![(I::CylinderBlock, 1)]),
+        (BuildingKind::Press, "press_sheet_steel", vec![(I::Steel, 1)], vec![(I::Sheet, 3)]),
+        (BuildingKind::Press, "press_sheet_iron", vec![(I::IronBloom, 2)], vec![(I::Sheet, 2)]),
+        (BuildingKind::Press, "stamp_sheet_part", vec![(I::Sheet, 1), (I::BoltNut, 1)], vec![(I::SheetPart, 2)]),
+        (BuildingKind::Sawmill, "saw_logs", vec![(I::Wood, 1)], vec![(I::Plank, 4)]),
+        (BuildingKind::PowerLoom, "weave_thread", vec![(I::Thread, 4)], vec![(I::Cloth, 3)]),
+        (BuildingKind::RollingLine, "roll_rail", vec![(I::Steel, 2)], vec![(I::Rail, 4)]),
+        (BuildingKind::RollingLine, "roll_beam", vec![(I::Steel, 2)], vec![(I::Beam, 3)]),
+    ];
+    for (kind, id, inputs, outputs) in cases {
+        assert!(kind.needs_power());
+        let ticks = rules().recipes[recipe(id).0 as usize].ticks;
+        // no power: the job is loaded and waits
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        assert!(!w.requirement_met(st as usize), "{kind:?}");
+        assert!(!run_job(&mut w, a, st, id, &inputs, ticks as u64 + 600), "{kind:?} {id} ran without power");
+        assert_eq!(w.buildings[st as usize].job.map(|j| j.remaining), Some(ticks), "{kind:?} {id}: no progress without power");
+        // a windmill within 8 m turns it
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        push_building(&mut w, BuildingKind::Windmill, bx + 9_000, by);
+        assert!(w.requirement_met(st as usize), "{kind:?}");
+        assert!(run_job(&mut w, a, st, id, &inputs, ticks as u64 + 600), "{kind:?} {id} did not finish under power");
+        for (k, n) in outputs {
+            assert_eq!(out_of(&w, st, k), n, "{kind:?} {id}: {k:?}");
+        }
+    }
+}
+
+#[test]
+fn the_spinning_wheel_needs_no_power() {
+    use ItemKind as I;
+    let (mut w, a, bx, by) = industry_world();
+    let st = push_building(&mut w, BuildingKind::SpinningWheel, bx + 4_000, by);
+    assert!(w.requirement_met(st as usize));
+    assert!(run_job(&mut w, a, st, "spin_fiber", &[(I::Fiber, 3)], 2_000));
+    assert_eq!(out_of(&w, st, I::Thread), 2);
+    assert!(run_job(&mut w, a, st, "spin_flax", &[(I::Flax, 2)], 2_000));
+    assert_eq!(out_of(&w, st, I::Thread), 5);
+}
+
+#[test]
+fn a_boiler_carries_steam_to_engines_and_the_hammer_wants_it() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    // a windmill alone does not lift the steam hammer
+    let mut w = base.clone();
+    let hammer = push_building(&mut w, BuildingKind::SteamHammer, bx + 4_000, by);
+    push_building(&mut w, BuildingKind::Windmill, bx + 9_000, by);
+    assert!(!w.requirement_met(hammer as usize), "wind is not steam");
+    assert!(!run_job(&mut w, a, hammer, "forge_heavy_shaft", &[(I::Steel, 2), (I::Coke, 1)], 3_000));
+    // a boiler raises steam on coal and water
+    let mut w = base.clone();
+    let boiler = push_building(&mut w, BuildingKind::Boiler, bx, by);
+    w.agents[0].x = bx + 1_300;
+    w.agents[0].y = by;
+    give(&mut w, I::Coal, 2);
+    give(&mut w, I::WaterPot, 2);
+    w.step(&[cmd(a, CommandKind::StartJob { building: boiler, recipe: recipe("boiler_coal") })]);
+    for _ in 0..60 * 15 {
+        topped_up(&mut w);
+        w.step(&[]);
+    }
+    assert!(w.buildings[boiler as usize].steaming(), "{} °C", w.buildings[boiler as usize].temp);
+    // an engine beside it (no fire of its own) is fed, and carries the power 8 m on to a lathe out of the boiler's own reach
+    let engine = push_building(&mut w, BuildingKind::SteamEngine, bx + 5_000, by);
+    let lathe = push_building(&mut w, BuildingKind::Lathe, bx + 12_000, by);
+    assert!(w.buildings[engine as usize].job.is_none());
+    assert!(w.requirement_met(lathe as usize), "the boiler-fed engine drives the lathe");
+    let far_lathe = push_building(&mut w, BuildingKind::Lathe, bx + 20_000, by);
+    assert!(!w.requirement_met(far_lathe as usize));
+    // and the hammer within 8 m of the boiler works
+    let hammer = push_building(&mut w, BuildingKind::SteamHammer, bx - 4_000, by);
+    assert!(w.requirement_met(hammer as usize));
+    assert!(run_job(&mut w, a, hammer, "forge_heavy_shaft", &[(I::Steel, 2), (I::Coke, 1)], 3_000));
+    assert_eq!(out_of(&w, hammer, I::HeavyShaft), 1);
+    // the engine fed by the boiler lets the lathe work
+    assert!(run_job(&mut w, a, lathe, "turn_bolts", &[(I::IronBloom, 1)], 2_000));
+    assert_eq!(out_of(&w, lathe, I::BoltNut), 4);
+}
+
+#[test]
+fn industry_discoveries_open_from_what_the_tribe_holds() {
+    use ItemKind as I;
+    let (mut w, _) = with_agent(5);
+    w.forget_everything();
+    w.wild.retain(|x| x.species != WildSpecies::Wolf);
+    // nothing of the new age before steel is known
+    give(&mut w, I::Limestone, 1);
+    w.step(&[]);
+    assert!(!w.knows(Discovery::Masonry));
+    w.learn(Discovery::Steelmaking);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Masonry), "limestone in hand among steel-makers: kilns for lime and brick");
+    assert!(!w.knows(Discovery::Cement));
+    give(&mut w, I::Lime, 1);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Cement), "lime in hand: cement");
+    assert!(!w.knows(Discovery::Foundry));
+    give(&mut w, I::PigIron, 1);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Foundry));
+    give(&mut w, I::Steel, 1);
+    w.step(&[]);
+    assert!(!w.knows(Discovery::Converter), "the converter wants steam too");
+    w.learn(Discovery::Steam);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Converter));
+    assert!(!w.knows(Discovery::Machining));
+    give(&mut w, I::CastIronPart, 1);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Machining));
+    // fire clay opens masonry too, for those who never found limestone
+    let (mut w, _) = with_agent(5);
+    w.forget_everything();
+    w.learn(Discovery::Steelmaking);
+    give(&mut w, I::FireClay, 1);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Masonry));
+    // every machine is opened by a discovery that something in play teaches
+    for def in &rules().buildings {
+        assert!(def.discovery != Discovery::Retired || def.kind == BuildingKind::Ruin, "{:?} is locked for good", def.kind);
+    }
+}
+
+#[test]
+fn machined_parts_are_a_second_way_to_pay_for_machines() {
+    use ItemKind as I;
+    let (mut w, a, ..) = industry_world();
+    w.settings.difficulty = Difficulty::Forgiving;
+    let engine = rules().building(BuildingKind::SteamEngine);
+    assert!(!engine.alt_cost.is_empty());
+    let build = |w: &mut World, kind: BuildingKind| -> bool {
+        let before = w.buildings.len();
+        let (x, y) = spot_for(w, kind, &w.buildings.iter().map(|b| (b.x, b.y)).collect::<Vec<_>>());
+        w.step(&[cmd(a, CommandKind::Build { kind, x, y })]);
+        w.buildings.len() > before
+    };
+    // nothing in the pack: refused
+    assert!(!build(&mut w, BuildingKind::SteamEngine));
+    // the cast parts the old way
+    for c in &engine.cost {
+        give(&mut w, c.item, c.n);
+    }
+    assert!(build(&mut w, BuildingKind::SteamEngine));
+    assert_eq!(w.agents[0].inventory.total(), 0, "the old cost is spent in full");
+    // the machined parts the new way
+    for c in &engine.alt_cost {
+        give(&mut w, c.item, c.n);
+    }
+    assert!(build(&mut w, BuildingKind::SteamEngine));
+    assert_eq!(w.agents[0].inventory.total(), 0, "the new cost is spent in full");
+    // a steam hammer on a concrete footing, or on plain stone
+    let hammer = rules().building(BuildingKind::SteamHammer);
+    for c in &hammer.alt_cost {
+        give(&mut w, c.item, c.n);
+    }
+    assert!(build(&mut w, BuildingKind::SteamHammer));
+    assert_eq!(count(&w, 0, I::Stone), 0);
+    for c in &hammer.cost {
+        give(&mut w, c.item, c.n);
+    }
+    assert!(build(&mut w, BuildingKind::SteamHammer));
+    assert_eq!(w.agents[0].inventory.total(), 0);
+}
+
+/// Raw iron to a steam engine the machine-tool way: pig iron cast in a mould, bored, turned, and the parts paid for
+/// the engine instead of cast-iron parts and steel.
+#[test]
+fn a_steam_engine_can_be_built_from_machined_parts() {
+    use ItemKind as I;
+    let (mut w, a, bx, by) = industry_world();
+    push_building(&mut w, BuildingKind::Windmill, bx, by);
+    let bench = push_building(&mut w, BuildingKind::MoldingBench, bx - 4_000, by + 4_000);
+    let cupola = push_building(&mut w, BuildingKind::Cupola, bx + 2_000, by + 5_500);
+    push_building(&mut w, BuildingKind::Bellows, bx + 3_500, by + 5_500);
+    let lathe = push_building(&mut w, BuildingKind::Lathe, bx + 5_000, by);
+    let drill = push_building(&mut w, BuildingKind::DrillMill, bx - 5_000, by);
+    assert!(run_job(&mut w, a, bench, "pack_sand_mold", &[(I::Sand, 4), (I::Clay, 1), (I::Wood, 1)], 2_000));
+    w.step(&[cmd(a, CommandKind::Collect { building: bench, item: None })]);
+    give(&mut w, I::PigIron, 8);
+    give(&mut w, I::Charcoal, 4);
+    assert!(run_job(&mut w, a, cupola, "cupola_cast_cylinder", &[], 12_000));
+    assert!(run_job(&mut w, a, cupola, "cupola_cast_part", &[], 12_000));
+    w.step(&[cmd(a, CommandKind::Collect { building: cupola, item: None })]);
+    assert_eq!((count(&w, 0, I::IronCylinder), count(&w, 0, I::CastIronPart)), (1, 2));
+    give(&mut w, I::IronBloom, 6);
+    give(&mut w, I::Steel, 1);
+    assert!(run_job(&mut w, a, lathe, "turn_bolts", &[], 3_000));
+    assert!(run_job(&mut w, a, lathe, "turn_piston", &[], 3_000));
+    assert!(run_job(&mut w, a, lathe, "turn_shaft", &[], 3_000));
+    w.step(&[cmd(a, CommandKind::Collect { building: lathe, item: None })]);
+    assert!(run_job(&mut w, a, drill, "bore_cylinder_block", &[], 4_000));
+    w.step(&[cmd(a, CommandKind::Collect { building: drill, item: None })]);
+    for c in &rules().building(BuildingKind::SteamEngine).alt_cost {
+        assert!(count(&w, 0, c.item) >= c.n || c.item == I::FireClay || c.item == I::FireBrick, "{:?}: {} of {}", c.item, count(&w, 0, c.item), c.n);
+    }
+    give(&mut w, I::FireBrick, 4);
+    let before = w.buildings.len();
+    let (x, y) = spot_for(&w, BuildingKind::SteamEngine, &w.buildings.iter().map(|b| (b.x, b.y)).collect::<Vec<_>>());
+    w.agents[0].x = x;
+    w.agents[0].y = y + 1_500;
+    w.step(&[cmd(a, CommandKind::Build { kind: BuildingKind::SteamEngine, x, y })]);
+    assert_eq!(w.buildings.len(), before + 1, "{:?}", w.take_events());
+}
+
+#[test]
+fn the_old_routes_still_work_beside_the_new_ones() {
+    // iron, steel, planks, cloth, coke and fire brick are each still made the way they were
+    let r = rules();
+    for (id, station) in [("bloom_sponge", BuildingKind::Bloomery), ("trip_refine_iron", BuildingKind::TripHammer), ("pig_iron", BuildingKind::BlastFurnace), ("cast_iron_part", BuildingKind::BlastFurnace), ("coke", BuildingKind::Furnace), ("cloth", BuildingKind::Loom), ("fire_fire_brick", BuildingKind::PitKiln)] {
+        let d = &r.recipes[recipe(id).0 as usize];
+        assert_eq!(d.station, Some(station), "{id}");
+        assert_ne!(d.discovery, Discovery::Retired, "{id}");
+    }
+    for id in ["plank", "forge_high_carbon", "forge_steel", "gear", "refine_iron", "cart", "wheel"] {
+        assert!(r.recipes.iter().any(|d| d.id == id && d.discovery != Discovery::Retired), "{id}");
+    }
+    // every new machine has at least one recipe, or is a power source
+    for k in [BuildingKind::CokeOven, BuildingKind::LimeKiln, BuildingKind::CementKiln, BuildingKind::BrickKiln, BuildingKind::PuddlingFurnace, BuildingKind::Bessemer, BuildingKind::Cupola, BuildingKind::MoldingBench, BuildingKind::Lathe, BuildingKind::DrillMill, BuildingKind::Press, BuildingKind::Sawmill, BuildingKind::SpinningWheel, BuildingKind::PowerLoom, BuildingKind::Boiler, BuildingKind::SteamHammer, BuildingKind::RollingLine] {
+        assert!(r.recipes.iter().any(|d| d.station == Some(k)), "{k:?} has no recipe");
+        assert!(r.building(k).discovery != Discovery::Retired);
+    }
+}
+
+#[test]
+fn new_stations_take_deposits_and_run_on_auto_like_the_old_ones() {
+    use ItemKind as I;
+    let (mut w, a, bx, by) = industry_world();
+    let mill = push_building(&mut w, BuildingKind::Sawmill, bx + 4_000, by);
+    push_building(&mut w, BuildingKind::Windmill, bx + 9_000, by);
+    let wheel = push_building(&mut w, BuildingKind::SpinningWheel, bx - 4_000, by);
+    // a person loads wood into the sawmill once and sets it to saw by itself
+    w.agents[0].x = bx + 5_300;
+    w.agents[0].y = by;
+    give(&mut w, I::Wood, 3);
+    w.step(&[cmd(a, CommandKind::Deposit { building: mill })]);
+    assert_eq!(w.buildings[mill as usize].input[I::Wood as usize], 3);
+    w.step(&[cmd(a, CommandKind::SetAuto { building: mill, recipe: Some(recipe("saw_logs")) })]);
+    for _ in 0..3_000 {
+        topped_up(&mut w);
+        w.step(&[]);
+    }
+    assert_eq!(out_of(&w, mill, I::Plank), 12, "three logs, three runs, no one at the saw");
+    // a worker on a route carries fibre to the wheel and takes the thread away
+    let bot = w.spawn_worker(AgentKind::Bot, bx - 2_000, by);
+    w.agents[bot.0 as usize].inventory.counts[I::Fiber as usize] = 6;
+    w.step(&[cmd(a, CommandKind::SetAuto { building: wheel, recipe: Some(recipe("spin_fiber")) })]);
+    w.step(&[cmd(a, CommandKind::SetRoute { worker: bot, route: vec![RouteStep::Deposit { building: wheel }, RouteStep::Wait { ticks: 900 }, RouteStep::Collect { building: wheel, item: Some(I::Thread) }] })]);
+    for _ in 0..4_000 {
+        topped_up(&mut w);
+        let b = &mut w.agents[bot.0 as usize];
+        b.hunger = MAX_STAT as _;
+        w.step(&[]);
+    }
+    assert!(w.agents[bot.0 as usize].inventory.get(I::Thread) >= 2, "the worker brought thread out of the wheel: {}", w.agents[bot.0 as usize].inventory.get(I::Thread));
 }

@@ -57,6 +57,13 @@ Dosya adı = oyundaki şeyin adı (küçük harf, `_` ile):
   `water_wheel`, `field`, `loom`, `pen`, `pit_kiln`, `anvil`, `hand_mill`, `animal_gin`, `bloomery`, `bellows`,
   `trip_hammer`, `iron_anvil`, `blast_furnace`, `steel_anvil`, `windmill`, `conveyor`, `steam_engine`, `pump`,
   `rolling_mill`, `dynamo`, `pole`, `electric_motor`, `electric_lamp`, `computer`, `ruin`, `cellar`, `mine_shaft`.
+  * **Sanayi makineleri** (1. dalga): `coke_oven`, `lime_kiln`, `cement_kiln`, `brick_kiln`, `puddling_furnace`,
+    `bessemer`, `cupola`, `molding_bench`, `lathe`, `drill_mill`, `press`, `sawmill`, `spinning_wheel`, `power_loom`,
+    `boiler`, `steam_hammer`, `rolling_line`. Bunların modelleri `crates/render/src/mesh/machines.rs`'te kodla yazılır
+    ama diğer yapılarla aynı kancadan geçer: `models/<ad>.vox|.glb` varsa o kullanılır. Dönen ve inip kalkan parçalar
+    (tornanın aynası, presin kolu, çekicin başı, haddelerin silindirleri, çarklar) dışa aktarmada `spin_` / `spinx_` /
+    `spinz_` / `piston_` adlı düğümler olarak yazılır (hız ve genlik `extras` içinde), yani dışa aktarılan dosya
+    aynı kuralla oynar; kendi modelinde de aynı adları ver. Çalışırken parlayan ağızlar `lit_extra` içindedir.
 * **Doğa** (`NodeKind`): `stone_outcrop`, `iron_outcrop`, `copper_outcrop`, `tin_outcrop`, `berry_bush`,
   `clay_deposit`, `herb_patch`, `cave_mouth`, `fiber_plant`, `deadwood`, `tree`.
   * Ağaçlar için tür adları da var, bulunursa `tree`'den önce onlar kullanılır:
@@ -139,7 +146,9 @@ offset = [0.0, 0.0, 0.0]  # metre, modeli kaydır
 ## İkonlar (`assets/icons/<eşya_id>.png`)
 
 `<eşya_id>` eşyanın snake_case adı: `stone`, `sharp_stone`, `stone_axe`, `iron_ore` ... Tam liste için
-`alaz --export-assets` çıktısındaki `icons/` klasörüne bak (her eşyaya bir dosya).
+`alaz --export-assets` çıktısındaki `icons/` klasörüne bak (her eşyaya bir dosya). Sanayi eşyaları da dahil:
+`tar`, `lime`, `mortar`, `cement`, `concrete`, `brick`, `pipe`, `iron_cylinder`, `iron_wheel`, `sand_mold`, `shaft`,
+`bolt_nut`, `piston`, `precision_gear`, `cylinder_block`, `sheet`, `sheet_part`, `thread`, `heavy_shaft`, `rail`, `beam`.
 
 * Biçim: PNG, RGBA (şeffaflık olur). Boyut serbest ama **kare**; 32×32 ya da 64×64 öneriyoruz.
 * Çizim: **nearest** (piksel piksel, yumuşatma yok), yuvaya sığacak kare boyutuna ölçeklenir.
@@ -179,6 +188,10 @@ resimde 8 piksellik köşeler.
   düğümünde. (Ağaçlar tür başına `tree_pine.glb` vb.; maden damarları tanınmamış hâliyle `_unknown.glb`.)
 * `icons/<id>.png` (64×64) ve `icons_32/<id>.png` (32×32) — her eşya ikonu.
 * `tiles/<zemin>_<n>.png` — zemin dokuları.
+
+Makinelerin hareketli parçaları ayrı düğümlerdir: `spin_<ad>` (y ekseni), `spinx_<ad>`, `spinz_<ad>`, `piston_<ad>`;
+düğümün orijini (translation) dönme noktasıdır. Örnek: `lathe.glb` içinde `spinx_chuck` (aynanın dönmesi) ve
+`spinz_pulley`, `press.glb` içinde `piston_ram`. Bunları Blender'da yeniden adlandırmadan kullanabilirsin.
 
 Çıktıyı `assets/` altına olduğu gibi bırakırsan oyun **aynı görüntüyü** verir (testle doğrulanır: dışa aktar → yükle →
 aynı üçgenler). Sonra istediğin dosyayı değiştir.

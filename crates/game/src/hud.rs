@@ -184,6 +184,27 @@ pub fn item_name(k: ItemKind) -> &'static str {
         ItemKind::RawFish => "Çiğ balık",
         ItemKind::CookedFish => "Pişmiş balık",
         ItemKind::FishingRod => "Olta",
+        ItemKind::Tar => "Katran",
+        ItemKind::Lime => "Kireç",
+        ItemKind::Mortar => "Harç",
+        ItemKind::Cement => "Çimento",
+        ItemKind::Concrete => "Beton",
+        ItemKind::Brick => "Tuğla",
+        ItemKind::Pipe => "Boru",
+        ItemKind::IronCylinder => "Döküm silindir",
+        ItemKind::IronWheel => "Döküm çark",
+        ItemKind::SandMold => "Kum kalıp",
+        ItemKind::Shaft => "Mil",
+        ItemKind::BoltNut => "Cıvata ve somun",
+        ItemKind::Piston => "Piston",
+        ItemKind::PrecisionGear => "Hassas dişli",
+        ItemKind::CylinderBlock => "Silindir bloğu",
+        ItemKind::Sheet => "Sac",
+        ItemKind::SheetPart => "Sac parça",
+        ItemKind::Thread => "İplik",
+        ItemKind::HeavyShaft => "Büyük mil",
+        ItemKind::Rail => "Ray",
+        ItemKind::Beam => "Kiriş",
 
 
 
@@ -363,6 +384,11 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Discovered(Discovery::Steam) => "Kaynayan su kapağı kaldırır. Dökme demir silindirli bir buhar makinesi kömür ve suyla makineleri çevirir; bir pompa su basmış madeni boşaltır. Kum ocakta cama döner. Kumaşa dişli kopçalar takıp makine işçisinin önlüğünü dikebilirsin.".into(),
         Event::Discovered(Discovery::Steelmaking) => "Ateş kili büyük ısıya dayanır, kireçtaşı cürufu taşır. Ateş tuğlasından körüklü bir yüksek fırın pik demir verir; pik demir demir örste dövülünce çelik olur; çelikten miğfer de dövülür.".into(),
         Event::Discovered(Discovery::Casting) => "Bu yeşilimsi taş ateşte erir. Kilden bir pota ve kalıplar yap, çukur fırında bakırı erit, kalıba dök: ilk metal aletin olur.".into(),
+        Event::Discovered(Discovery::Masonry) => "Kireçtaşı ve ateş kili bir fırında partilerle pişer. Kireç ocağı taştan kireç yakar, kireç kumla ve suyla harç olur; tuğla fırını kilden tuğla, ateş kilinden ateş tuğlası pişirir.".into(),
+        Event::Discovered(Discovery::Cement) => "Kireç kille birlikte çok sıcak yakılırsa çimento olur; çimento kum ve suyla beton verir. Çimento fırını kur.".into(),
+        Event::Discovered(Discovery::Foundry) => "Pik demir yeniden eritilip kalıba dökülür. Kupol ocağı pik demiri kum kalıplara döker (kalıp her dökümden sonra geri gelir); kum kalıp tezgahı kalıpları hazırlar. Pudlaj fırını pik demiri toplu dövme demire çevirir.".into(),
+        Event::Discovered(Discovery::Converter) => "Erimiş pik demirin içinden güçlü hava üflenirse karbonu yanar, çelik kalır. Bessemer konvertörü bunu toplu yapar; ama makineyle çalışan bir körük ister.".into(),
+        Event::Discovered(Discovery::Machining) => "Dökme demir parçalar artık tezgahta işlenir. Torna mil, cıvata ve piston; matkap ve freze hassas dişli ve silindir bloğu; pres sac verir. Buhar çekici büyük mil ve ray döver, haddeleme hattı ray ve kiriş çeker, mekanik tezgah ipliği toplu kumaşa dokur. Hepsi güç ister.".into(),
         Event::Discovered(Discovery::Medicine) => "Acı otlar karın ve yara için iyidir. Çiğneyebilir ya da iki otu sargıya çevirebilirsin.".into(),
         Event::Struck { .. } => return None,
         Event::Broke { agent, item } => {
@@ -518,6 +544,52 @@ fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::w
     });
 }
 
+/// What a machine of the industrial age does, in a sentence (the build list and the machine's panel show it).
+pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
+    Some(match kind {
+        BuildingKind::CokeOven => "Maden kömürünü havasız pişirir: 4 kömürden 3 kok ve 1 katran. Kok en sıcak yakıttır; katran kazanda yanar.",
+        BuildingKind::LimeKiln => "Kireçtaşını yakıp kireç yapar; kireç, kum ve su harç olur.",
+        BuildingKind::CementKiln => "Kireç ve kil çok sıcakta çimento olur; çimento, kum ve su beton verir.",
+        BuildingKind::BrickKiln => "Tuğlayı toplu pişirir: kilden tuğla, ateş kilinden (ya da ham ateş tuğlasından) ateş tuğlası.",
+        BuildingKind::PuddlingFurnace => "Pik demiri alevde karıştırıp toplu dövme demire çevirir: 4 pik, 4 dövme demir.",
+        BuildingKind::Bessemer => "Erimiş pik demirden güçlü hava geçirir: 3 pik demirden 2 çelik. Makineyle çalışan bir körük ister.",
+        BuildingKind::Cupola => "Pik demiri yeniden eritip kum kalıba döker: dökme demir parça, boru, silindir, çark. Kalıp her dökümden sonra geri gelir.",
+        BuildingKind::MoldingBench => "Kumdan, kilden ve odundan dökümde kullanılan kum kalıpları hazırlar.",
+        BuildingKind::Lathe => "Güçle çalışır: mil, cıvata ve somun, piston, dişli tornalar.",
+        BuildingKind::DrillMill => "Güçle çalışır: hassas dişli frezeler, silindir bloğu deşer.",
+        BuildingKind::Press => "Güçle çalışır: çelik ve demirden sac bastırır, sactan parça kalıplar.",
+        BuildingKind::Sawmill => "Güçle çalışır (su çarkı, rüzgâr, buhar): 1 kütükten 4 tahta biçer.",
+        BuildingKind::SpinningWheel => "Lifi ve keteni iplik eğirir. Güç istemez.",
+        BuildingKind::PowerLoom => "Güçle çalışır: 4 iplikten 3 kumaş dokur (el tezgahı 4 lifle 1 kumaş).",
+        BuildingKind::Boiler => "Büyük kazan: kömür, kok, katran ya da petrolle buhar kaldırır. 8 m içindeki makineleri çevirir, 6 m içindeki buhar makinelerine de buhar verir.",
+        BuildingKind::SteamHammer => "8 m içinde buhar isterken: büyük mil ve ray döver.",
+        BuildingKind::RollingLine => "Güçle çalışır: çelikten ray ve kiriş çeker.",
+        _ => return None,
+    })
+}
+
+/// What a machine needs around it, in a few words (the build list).
+fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
+    use alaz_sim::buildings::Requirement as R;
+    match r {
+        R::Power => "Güç ister (su çarkı, yel değirmeni, buhar, motor ya da manej).",
+        R::Steam => "Buhar ister (8 m içinde kazan ya da buhar makinesi).",
+        R::Blast => "Körük ister.",
+        R::StrongBlast => "Makineyle çalışan körük ister (3 m içinde).",
+    }
+}
+
+/// Why a machine stands idle when what it needs is missing.
+fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
+    use alaz_sim::buildings::Requirement as R;
+    match r {
+        R::Power => "Güç yok: 8 m içinde su çarkı, yel değirmeni, çalışan buhar ya da elektrik motoru (ya da 6 m içinde manejde hayvan) gerek.",
+        R::Steam => "Buhar yok: 8 m içinde çalışan bir kazan ya da buhar makinesi gerek.",
+        R::Blast => "Hava yok: 3 m içinde çalışan bir körük gerek (1000 °C'yi geçmez).",
+        R::StrongBlast => "Güçlü hava yok: 3 m içinde, su çarkı/rüzgâr/buhar ya da motorla çalışan bir körük gerek; elle üflenen yetmez.",
+    }
+}
+
 fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
     ui.horizontal_wrapped(|ui| {
         for it in items {
@@ -536,7 +608,7 @@ fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::w
 /// Perception level of the tribe, mirrored here so panels can dress themselves for the era.
 pub(crate) static ERA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
-pub const DISCOVERIES: [Discovery; 34] = [
+pub const DISCOVERIES: [Discovery; 39] = [
     Discovery::SharpStone,
     Discovery::StoneAxe,
     Discovery::Hammer,
@@ -571,6 +643,11 @@ pub const DISCOVERIES: [Discovery; 34] = [
     Discovery::Computing,
     Discovery::Geology,
     Discovery::Fishing,
+    Discovery::Masonry,
+    Discovery::Cement,
+    Discovery::Foundry,
+    Discovery::Converter,
+    Discovery::Machining,
 ];
 
 pub fn discovery_name(d: Discovery) -> &'static str {
@@ -610,6 +687,11 @@ pub fn discovery_name(d: Discovery) -> &'static str {
         Discovery::Computing => "Bilgisayar",
         Discovery::Geology => "Jeoloji",
         Discovery::Fishing => "Balıkçılık",
+        Discovery::Masonry => "Duvarcılık",
+        Discovery::Cement => "Çimento",
+        Discovery::Foundry => "Dökümhane",
+        Discovery::Converter => "Konvertör",
+        Discovery::Machining => "Tezgahçılık",
     }
 }
 
@@ -1385,11 +1467,23 @@ fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: 
                 ui.vertical(|ui| {
                     ui.label(RichText::new(b.name.as_str()).strong());
                     need_row(ui, w, &b.cost, &me.inventory);
+                    if !b.alt_cost.is_empty() {
+                        ui.label(RichText::new("ya da").small().weak());
+                        need_row(ui, w, &b.alt_cost, &me.inventory);
+                    }
                     needs_row(ui, w, &b.needs, &me.inventory);
+                    if let Some(note) = machine_note(b.kind) {
+                        ui.label(RichText::new(note).small().weak());
+                    }
+                    if let Some(req) = b.kind.requirement() {
+                        if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
+                            ui.label(RichText::new(requirement_note(req)).small().color(Color32::from_rgb(220, 180, 110)));
+                        }
+                    }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let on = ui_ctx.build_mode == Some(b.kind);
-                    if ui.add_enabled(me.inventory.has(&b.cost) && has_needs(&b.needs, &me.inventory), egui::Button::new("Yerleştir").selected(on).min_size(egui::vec2(80.0, 28.0))).clicked() {
+                    if ui.add_enabled(b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory), egui::Button::new("Yerleştir").selected(on).min_size(egui::vec2(80.0, 28.0))).clicked() {
                         acts.push(UiAction::BeginBuild(b.kind));
                     }
                 });
@@ -2529,14 +2623,14 @@ fn draw_building(
             ui.set_min_width(280.0);
             // a right-aligned button would otherwise stretch the panel across half the screen
             ui.set_max_width(330.0);
-            ui.horizontal(|ui| {
-                let g = match b.kind {
-                    k if k.burns() => crate::ui_art::Glyph::Flame,
-                    BuildingKind::Shelter => crate::ui_art::Glyph::House,
-                    BuildingKind::Depot => crate::ui_art::Glyph::Bag,
-                    _ => crate::ui_art::Glyph::Hammer,
-                };
-                crate::ui_art::heading(ui, g, &format!("{} #{}", def.name, i + 1), Color32::from_rgb(232, 150, 70));
+            let g = match b.kind {
+                k if k.burns() => crate::ui_art::Glyph::Flame,
+                BuildingKind::Shelter => crate::ui_art::Glyph::House,
+                BuildingKind::Depot => crate::ui_art::Glyph::Bag,
+                _ => crate::ui_art::Glyph::Hammer,
+            };
+            let title = format!("{} #{}", def.name, i + 1);
+            let buttons = |ui: &mut egui::Ui, acts: &mut Vec<UiAction>| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.small_button("Kapat").clicked() {
                         acts.push(UiAction::Deselect);
@@ -2548,7 +2642,17 @@ fn draw_building(
                         acts.push(UiAction::MoveBuilding(i));
                     }
                 });
-            });
+            };
+            if title.chars().count() > 14 {
+                // a long name would run under the buttons: it gets a line of its own
+                crate::ui_art::heading(ui, g, &title, Color32::from_rgb(232, 150, 70));
+                ui.horizontal(|ui| buttons(ui, acts));
+            } else {
+                ui.horizontal(|ui| {
+                    crate::ui_art::heading(ui, g, &title, Color32::from_rgb(232, 150, 70));
+                    buttons(ui, acts);
+                });
+            }
             ui.separator();
             if b.kind.burns() {
                 let frac = b.fuel as f32 / FIRE_FUEL_MAX as f32;
@@ -2571,6 +2675,16 @@ fn draw_building(
                     }
                 }
             }
+            if let Some(note) = machine_note(b.kind) {
+                ui.label(RichText::new(note).small().weak());
+            }
+            if let Some(req) = b.kind.requirement() {
+                if !w.requirement_met(i) {
+                    ui.label(RichText::new(requirement_missing(req)).small().color(Color32::from_rgb(235, 140, 90)));
+                } else if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
+                    ui.label(RichText::new("Çalışmaya hazır.").small().color(Color32::from_rgb(130, 200, 130)));
+                }
+            }
             if b.kind == BuildingKind::Shelter {
                 ui.label("Yakınında durunca gece soğuğundan korunursun.");
             }
@@ -2587,8 +2701,11 @@ fn draw_building(
                     design_table(ui, w, acts);
                 }
             }
+            if b.kind == BuildingKind::Boiler {
+                ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor, 6 m içindeki buhar makineleri de buhar alıyor." } else { "Kömür, kok, katran ya da petrol ve iki dolu çömlek yükle: kazan 120 °C'yi geçince çalışır." }).small().weak());
+            }
             if b.kind == BuildingKind::SteamEngine {
-                ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor." } else { "Kömür (ya da kok) ve dolu bir çömlek yükle, buhar kaldır: kazan 120 °C'yi geçince çalışır." }).small().weak());
+                ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor." } else { "Kömür (kok ya da katran) ve dolu bir çömlek yükle, buhar kaldır: kazan 120 °C'yi geçince çalışır. 6 m içinde çalışan bir kazan varsa yakıt gerekmez." }).small().weak());
             }
             if b.kind == BuildingKind::Pump {
                 ui.label(RichText::new("Güç varken 15 m içindeki mağaranın en dip odasını kuru tutar.").small().weak());

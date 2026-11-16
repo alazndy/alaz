@@ -22,6 +22,9 @@ pub struct BuildingDef {
     pub radius_mm: i64,
     pub discovery: Discovery,
     pub cost: Vec<ItemCount>,
+    /// Another way to pay for it (machined parts instead of cast ones): either list builds it. Empty = none.
+    #[serde(default)]
+    pub alt_cost: Vec<ItemCount>,
     /// Things that must be carried to build it but are not used up (flint to light a fire).
     #[serde(default)]
     pub needs: Vec<ItemKind>,
@@ -30,6 +33,19 @@ pub struct BuildingDef {
     pub heat_max: i16,
     #[serde(default)]
     pub heat_rate: i16,
+}
+
+impl BuildingDef {
+    /// The list of items that pays for this building from what is `has` (the plain cost first, then the other way).
+    pub fn cost_for(&self, has: impl Fn(&[ItemCount]) -> bool) -> Option<&[ItemCount]> {
+        if has(&self.cost) {
+            Some(&self.cost)
+        } else if !self.alt_cost.is_empty() && has(&self.alt_cost) {
+            Some(&self.alt_cost)
+        } else {
+            None
+        }
+    }
 }
 
 /// A hand-craft played as a timing game: a marker sweeps back and forth and each strike must land

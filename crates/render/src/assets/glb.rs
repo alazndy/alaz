@@ -198,6 +198,8 @@ pub struct GlbPart<'a> {
     pub name: &'a str,
     pub pivot: [f32; 3],
     pub verts: &'a [MV],
+    /// The `speed` and `amp` extras of a moving part (read back by `role_of`), if it has them.
+    pub extras: Option<[f32; 2]>,
 }
 
 /// A .glb with one mesh per part: positions, flat normals, `COLOR_0`, and the game's `_LIGHT`, `_GLOW`, `_MAT`.
@@ -256,7 +258,11 @@ pub fn write_glb(parts: &[GlbPart]) -> Vec<u8> {
         let a_glow = push(&mut bin, &glow, "SCALAR", n, None);
         let a_mat = push(&mut bin, &mat, "SCALAR", n, None);
         meshes.push(json!({"name": part.name, "primitives": [{"attributes": {"POSITION": a_pos, "NORMAL": a_nor, "COLOR_0": a_col, "_LIGHT": a_light, "_GLOW": a_glow, "_MAT": a_mat}, "material": 0, "mode": 4}]}));
-        nodes.push(json!({"name": part.name, "mesh": meshes.len() - 1, "translation": part.pivot}));
+        let mut node = json!({"name": part.name, "mesh": meshes.len() - 1, "translation": part.pivot});
+        if let Some([speed, amp]) = part.extras {
+            node["extras"] = json!({"speed": speed, "amp": amp});
+        }
+        nodes.push(node);
         let _ = pi;
     }
     let root = json!({

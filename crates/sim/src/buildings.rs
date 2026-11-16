@@ -64,10 +64,45 @@ pub enum BuildingKind {
     Cellar,
     /// A shaft sunk on a hidden deposit: brings up its ore (or oil).
     MineShaft,
+    // --- Industry (wave 1) ---
+    /// A brick oven that bakes coal to coke and gives up its tar.
+    CokeOven,
+    /// A shaft kiln: limestone burns to lime, and lime slakes to mortar.
+    LimeKiln,
+    /// A hot rotating kiln: lime and clay burn to cement; cement makes concrete.
+    CementKiln,
+    /// A kiln for bricks by the batch: common brick from clay, fire brick from fire clay.
+    BrickKiln,
+    /// A reverberatory furnace: pig iron stirred in the flame becomes wrought iron, a batch at a time.
+    PuddlingFurnace,
+    /// A tilting vessel: a strong blast through molten pig iron blows it to steel.
+    Bessemer,
+    /// A small shaft furnace for remelting pig iron: pours cast parts into sand moulds.
+    Cupola,
+    /// A bench with a sand box: packs the sand moulds the cupola pours into.
+    MoldingBench,
+    /// A powered lathe: shafts, bolts and nuts, pistons.
+    Lathe,
+    /// A powered drill and miller: precision gears, cylinder blocks.
+    DrillMill,
+    /// A powered press: sheet, and parts stamped from it.
+    Press,
+    /// A powered saw frame: one log, four planks.
+    Sawmill,
+    /// A wheel and a spindle: fibre spun to thread.
+    SpinningWheel,
+    /// A powered loom: thread to cloth by the bolt.
+    PowerLoom,
+    /// A great fired boiler: steam for steam engines around it, and for the machines near it.
+    Boiler,
+    /// A steam-driven hammer: the heavy forgings, great shafts and rails.
+    SteamHammer,
+    /// Powered rolls: steel to rail and girder.
+    RollingLine,
 }
 
 impl BuildingKind {
-    pub const ALL: [BuildingKind; 34] = [
+    pub const ALL: [BuildingKind; 51] = [
         BuildingKind::Campfire,
         BuildingKind::Shelter,
         BuildingKind::CharcoalKiln,
@@ -102,6 +137,23 @@ impl BuildingKind {
         BuildingKind::Ruin,
         BuildingKind::Cellar,
         BuildingKind::MineShaft,
+        BuildingKind::CokeOven,
+        BuildingKind::LimeKiln,
+        BuildingKind::CementKiln,
+        BuildingKind::BrickKiln,
+        BuildingKind::PuddlingFurnace,
+        BuildingKind::Bessemer,
+        BuildingKind::Cupola,
+        BuildingKind::MoldingBench,
+        BuildingKind::Lathe,
+        BuildingKind::DrillMill,
+        BuildingKind::Press,
+        BuildingKind::Sawmill,
+        BuildingKind::SpinningWheel,
+        BuildingKind::PowerLoom,
+        BuildingKind::Boiler,
+        BuildingKind::SteamHammer,
+        BuildingKind::RollingLine,
     ];
 
     /// Part of the electric grid (generates, carries or uses electricity).
@@ -109,10 +161,39 @@ impl BuildingKind {
         matches!(self, BuildingKind::Dynamo | BuildingKind::Pole | BuildingKind::ElectricMotor | BuildingKind::ElectricLamp | BuildingKind::Computer)
     }
 
+    /// Machines that do nothing without mechanical power (a wheel, wind, steam or a motor within reach, or an animal at a gin).
+    pub fn needs_power(self) -> bool {
+        matches!(self, BuildingKind::Lathe | BuildingKind::DrillMill | BuildingKind::Press | BuildingKind::Sawmill | BuildingKind::PowerLoom | BuildingKind::RollingLine)
+    }
+
+    /// What the machine has to have around it to work, beyond its inputs.
+    pub fn requirement(self) -> Option<Requirement> {
+        match self {
+            k if k.needs_power() => Some(Requirement::Power),
+            BuildingKind::SteamHammer => Some(Requirement::Steam),
+            BuildingKind::Bessemer => Some(Requirement::StrongBlast),
+            BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola => Some(Requirement::Blast),
+            _ => None,
+        }
+    }
+
     /// Burns fuel (wood) over time and warms people nearby while lit.
     pub fn burns(self) -> bool {
         matches!(self, BuildingKind::Campfire)
     }
+}
+
+/// What a machine needs around it, besides what it is loaded with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Requirement {
+    /// Mechanical power within reach.
+    Power,
+    /// A steaming boiler or engine within 8 m.
+    Steam,
+    /// A bellows within 3 m, worked by anything (a hand will do).
+    Blast,
+    /// A bellows within 3 m driven by mechanical power: the blast a converter needs.
+    StrongBlast,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,9 +242,9 @@ impl Building {
 }
 
 impl Building {
-    /// A steam engine with fire under the boiler and water boiling: it drives machines nearby.
+    /// A steam engine or a boiler with fire under it and water boiling: it drives machines nearby.
     pub fn steaming(&self) -> bool {
-        self.kind == BuildingKind::SteamEngine && self.job.is_some() && self.temp >= 120
+        matches!(self.kind, BuildingKind::SteamEngine | BuildingKind::Boiler) && self.job.is_some() && self.temp >= 120
     }
 
     pub fn output_total(&self) -> u16 {

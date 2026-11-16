@@ -50,22 +50,47 @@ fn split(idle: &[Vertex], busy: &[Vertex]) -> (Vec<Vertex>, Vec<Vertex>, Vec<Ver
 /// A model's .glb from its idle and working poses: the triangles of both are the main part, the ones only a working
 /// machine has are `lit_extra`, the ones only an idle one has are `idle_extra`.
 pub(crate) fn glb_of_poses(idle: &[Vertex], busy: &[Vertex], origin: [f32; 3]) -> Vec<u8> {
+    glb_with_moving(idle, busy, origin, &[])
+}
+
+/// The same, with moving parts (`spin_`, `piston_` nodes) written as parts of their own.
+fn glb_with_moving(idle: &[Vertex], busy: &[Vertex], origin: [f32; 3], moving: &[(String, [f32; 3], f32, f32, Vec<MV>)]) -> Vec<u8> {
     let (both, only_idle, only_busy) = split(idle, busy);
     let conv = |v: &[Vertex]| v.iter().map(|x| to_mv(x, origin)).collect::<Vec<MV>>();
     let (a, b, c) = (conv(&both), conv(&only_idle), conv(&only_busy));
-    let mut parts = vec![GlbPart { name: "model", pivot: [0.0; 3], verts: &a }];
+    let mut parts = vec![GlbPart { name: "model", pivot: [0.0; 3], verts: &a, extras: None }];
     if !b.is_empty() {
-        parts.push(GlbPart { name: "idle_extra", pivot: [0.0; 3], verts: &b });
+        parts.push(GlbPart { name: "idle_extra", pivot: [0.0; 3], verts: &b, extras: None });
     }
     if !c.is_empty() {
-        parts.push(GlbPart { name: "lit_extra", pivot: [0.0; 3], verts: &c });
+        parts.push(GlbPart { name: "lit_extra", pivot: [0.0; 3], verts: &c, extras: None });
+    }
+    for (name, pivot, speed, amp, verts) in moving {
+        parts.push(GlbPart { name, pivot: [pivot[0] - origin[0], pivot[1] - origin[1], pivot[2] - origin[2]], verts, extras: Some([*speed, *amp]) });
     }
     assets::write_glb(&parts)
 }
 
+/// A building's .glb from its two poses: what the building drew at rest and at work, with the moving parts the
+/// machine listed (see `Mesh::marks`) taken out and written as `spin_` / `piston_` nodes.
+pub(crate) fn glb_of_building(idle: &Mesh, busy: &Mesh) -> Vec<u8> {
+    let strip = |m: &Mesh| -> Vec<Vertex> {
+        let marks = m.marks.as_deref().unwrap_or(&[]);
+        m.verts.iter().enumerate().filter(|(i, _)| !marks.iter().any(|p| (p.from..p.to).contains(i))).map(|(_, v)| *v).collect()
+    };
+    let moving: Vec<(String, [f32; 3], f32, f32, Vec<MV>)> = busy
+        .marks
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|p| (p.name.clone(), p.pivot, p.speed, p.amp, busy.verts[p.from..p.to].iter().map(|v| to_mv(v, [0.0; 3])).collect()))
+        .collect();
+    glb_with_moving(&strip(idle), &strip(busy), [0.0; 3], &moving)
+}
+
 pub(crate) fn building_poses(kind: BuildingKind) -> (Mesh, Mesh) {
-    let mut idle = Mesh::new();
-    let mut busy = Mesh::new();
+    let mut idle = Mesh { marks: Some(Vec::new()), ..Mesh::new() };
+    let mut busy = Mesh { marks: Some(Vec::new()), ..Mesh::new() };
     if kind == BuildingKind::Campfire {
         push_campfire(&mut idle, 0.0, 0.0, 0.0, 0.0, None);
         push_campfire(&mut busy, 0.0, 0.0, 1.0, 0.0, None);
@@ -129,7 +154,7 @@ pub fn export_world_assets(dir: &Path) -> std::io::Result<Vec<String>> {
         for kind in BuildingKind::ALL {
             let (idle, busy) = building_poses(kind);
             let name = format!("models/{}.glb", assets::building_name(kind));
-            std::fs::write(dir.join(&name), glb_of_poses(&idle, &busy, [0.0; 3]))?;
+            std::fs::write(dir.join(&name), glb_of_building(&idle, &busy))?;
             done.push(name);
         }
         let known = node_samples(true);
@@ -198,7 +223,7 @@ mod tests {
     fn buildings_round_trip_through_glb() {
         for kind in BuildingKind::ALL {
             let (idle, busy) = building_poses(kind);
-            let glb = glb_of_poses(&idle, &busy, [0.0; 3]);
+            let glb = glb_of_building(&idle, &busy);
             let model = assets::load_glb(&glb, &Default::default()).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
             for (active, want) in [(false, &idle), (true, &busy)] {
                 let mut got = Mesh::new();

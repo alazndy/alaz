@@ -26,11 +26,25 @@ pub(crate) struct Mesh {
     pub(crate) rooted: bool,
     /// This frame's wind, for models that move with it (smoke): (x, z) scaled by strength, and the strength 0..1.
     pub(crate) wind: [f32; 3],
+    /// Set by the exporter: machines then leave their moving parts at rest and list them here, so they can be
+    /// written as `spin_` / `piston_` nodes of a .glb instead of as frozen triangles.
+    pub(crate) marks: Option<Vec<PartMark>>,
+}
+
+/// A moving part of a machine as the exporter sees it: the vertices it drew (a range of the mesh), the point it turns
+/// about and its node name (`spin_drum`, `piston_ram`).
+pub(crate) struct PartMark {
+    pub(crate) name: String,
+    pub(crate) pivot: [f32; 3],
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+    pub(crate) speed: f32,
+    pub(crate) amp: f32,
 }
 
 impl Mesh {
     pub(crate) fn new() -> Mesh {
-        Mesh { verts: Vec::new(), anchor: [0.0, 0.0], foliage: false, rooted: false, wind: [0.0; 3] }
+        Mesh { verts: Vec::new(), anchor: [0.0, 0.0], foliage: false, rooted: false, wind: [0.0; 3], marks: None }
     }
 
     /// An empty mesh for a chunk's fixed scenery.

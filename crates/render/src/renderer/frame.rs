@@ -454,14 +454,16 @@ impl Renderer {
             if let Some(tile) = self.hover_node {
                 push_hover_rim(&mut dynamic, world, tile, world.perception_level(), &cam, secs);
             }
-            for b in world.buildings.iter().filter(|b| inside(b.x as f32 / 1000.0, b.y as f32 / 1000.0)) {
+            for (bi, b) in world.buildings.iter().enumerate().filter(|(_, b)| inside(b.x as f32 / 1000.0, b.y as f32 / 1000.0)) {
                 let (bx, bz) = (b.x as f32 / 1000.0, b.y as f32 / 1000.0);
                 decal(&mut dynamic, art.shadow_l, bx + 0.2, bz + 0.15, WHITE, 0.0);
                 if b.kind == BuildingKind::Campfire {
                     push_campfire(&mut dynamic, bx, bz, b.fuel as f32 / alaz_sim::world::FIRE_FUEL_MAX as f32, secs, None);
                 } else {
                     let start = dynamic.len();
-                    push_building(&mut dynamic, b.kind, bx, bz, b.active(), tick, None);
+                    // a machine with a job but no power (or steam, or blast) stands still instead of pretending to work
+                    let working = b.active() && (!matches!(b.kind.requirement(), Some(alaz_sim::buildings::Requirement::Power | alaz_sim::buildings::Requirement::Steam | alaz_sim::buildings::Requirement::StrongBlast)) || world.requirement_met(bi));
+                    push_building(&mut dynamic, b.kind, bx, bz, working, tick, None);
                     turn_quarters(&mut dynamic, start, bx, bz, b.facing);
                 }
             }

@@ -220,6 +220,49 @@ pub enum ItemKind {
     SteelHelm,
     /// Canvas work clothes for the engine age: trousers, an apron with a brass buckle.
     WorkApron,
+    // --- Industry: kilns, castings, machine tools, mills ---
+    /// Tar from coking coal: burns in a boiler, seals wood and rope.
+    Tar,
+    /// Quicklime, burnt from limestone.
+    Lime,
+    /// Lime, sand and water: binds brick and stone.
+    Mortar,
+    /// Lime and clay burnt together and ground: sets under water.
+    Cement,
+    /// Cement, sand and water: poured, it sets to stone.
+    Concrete,
+    /// A fired clay brick, made by the batch in a brick kiln.
+    Brick,
+    /// A cast-iron pipe.
+    Pipe,
+    /// A cast-iron cylinder, rough from the mould: bored it becomes a cylinder block.
+    IronCylinder,
+    /// A cast-iron wheel: a flywheel, a pulley, a cart wheel that does not wear.
+    IronWheel,
+    /// A sand mould for castings, packed round a pattern: used again after every pour; kept.
+    SandMold,
+    /// A shaft turned true on a lathe.
+    Shaft,
+    /// A bolt and its nut, cut on a lathe.
+    BoltNut,
+    /// A piston turned to fit its cylinder.
+    Piston,
+    /// A gear cut to size on the milling machine.
+    PrecisionGear,
+    /// A cylinder bored out on the drill: the heart of an engine.
+    CylinderBlock,
+    /// Iron or steel pressed into flat sheet.
+    Sheet,
+    /// A part stamped from sheet metal.
+    SheetPart,
+    /// Spun thread, ready for the loom.
+    Thread,
+    /// A great shaft forged under the steam hammer.
+    HeavyShaft,
+    /// A rolled or forged rail.
+    Rail,
+    /// A rolled girder.
+    Beam,
 }
 
 impl ItemKind {
@@ -260,6 +303,7 @@ impl ItemKind {
                 | ItemKind::BronzePlate
                 | ItemKind::SteelHelm
                 | ItemKind::WorkApron
+                | ItemKind::SandMold
         )
     }
 
@@ -273,7 +317,7 @@ impl ItemKind {
         crate::rules::rules().garment(self)
     }
 
-    pub const COUNT: usize = 109;
+    pub const COUNT: usize = 130;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -384,6 +428,27 @@ impl ItemKind {
         ItemKind::BronzePlate,
         ItemKind::SteelHelm,
         ItemKind::WorkApron,
+        ItemKind::Tar,
+        ItemKind::Lime,
+        ItemKind::Mortar,
+        ItemKind::Cement,
+        ItemKind::Concrete,
+        ItemKind::Brick,
+        ItemKind::Pipe,
+        ItemKind::IronCylinder,
+        ItemKind::IronWheel,
+        ItemKind::SandMold,
+        ItemKind::Shaft,
+        ItemKind::BoltNut,
+        ItemKind::Piston,
+        ItemKind::PrecisionGear,
+        ItemKind::CylinderBlock,
+        ItemKind::Sheet,
+        ItemKind::SheetPart,
+        ItemKind::Thread,
+        ItemKind::HeavyShaft,
+        ItemKind::Rail,
+        ItemKind::Beam,
     ];
 }
 

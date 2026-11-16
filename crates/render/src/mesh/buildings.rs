@@ -468,6 +468,24 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             let woven = if active { 0.5 } else { 0.25 };
             bx(out, [x, 1.84 - 2.0 * woven, z + 0.01], [0.6, woven, 0.02], [0.78, 0.72, 0.52], 0.0);
         }
+        // the industrial machines have their own file (moving parts, smoke)
+        BuildingKind::CokeOven
+        | BuildingKind::LimeKiln
+        | BuildingKind::CementKiln
+        | BuildingKind::BrickKiln
+        | BuildingKind::PuddlingFurnace
+        | BuildingKind::Bessemer
+        | BuildingKind::Cupola
+        | BuildingKind::MoldingBench
+        | BuildingKind::Lathe
+        | BuildingKind::DrillMill
+        | BuildingKind::Press
+        | BuildingKind::Sawmill
+        | BuildingKind::SpinningWheel
+        | BuildingKind::PowerLoom
+        | BuildingKind::Boiler
+        | BuildingKind::SteamHammer
+        | BuildingKind::RollingLine => push_machine(out, kind, x, z, active, tick, tint),
         BuildingKind::Furnace => {
             round(out, [x, 0.55, z], [0.7, 0.62, 0.7], [0.55, 0.53, 0.50], tint);
             round(out, [x, 1.0, z], [0.45, 0.35, 0.45], [0.5, 0.48, 0.46], tint);

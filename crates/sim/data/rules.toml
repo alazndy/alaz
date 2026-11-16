@@ -46,6 +46,7 @@ name = "Ambar"
 radius_mm = 900
 discovery = "depot"
 cost = [{ item = "wood", n = 12 }, { item = "stone", n = 4 }]
+alt_cost = [{ item = "concrete", n = 3 }, { item = "plank", n = 6 }]
 
 [[building]]
 kind = "workshop"
@@ -181,6 +182,7 @@ radius_mm = 1200
 discovery = "mechanics"
 # sails of cloth on a wooden frame: power for machines within 8 m, like a water wheel, anywhere
 cost = [{ item = "plank", n = 8 }, { item = "cloth", n = 4 }, { item = "gear", n = 2 }]
+alt_cost = [{ item = "beam", n = 2 }, { item = "cloth", n = 4 }, { item = "precision_gear", n = 1 }]
 
 [[building]]
 kind = "conveyor"
@@ -189,6 +191,7 @@ radius_mm = 600
 discovery = "steelmaking"
 # carries what stations within 3 m have made to the nearest depot within 12 m, while it has power
 cost = [{ item = "plank", n = 4 }, { item = "cloth", n = 2 }, { item = "gear", n = 1 }]
+alt_cost = [{ item = "rail", n = 2 }, { item = "plank", n = 4 }, { item = "cloth", n = 2 }]
 
 [[building]]
 kind = "steam_engine"
@@ -197,6 +200,7 @@ radius_mm = 1000
 discovery = "steam"
 # a boiler on a firebox and a cast-iron cylinder: while it burns coal and water it drives machines within 8 m
 cost = [{ item = "cast_iron_part", n = 3 }, { item = "steel", n = 2 }, { item = "fire_brick", n = 4 }]
+alt_cost = [{ item = "cylinder_block", n = 1 }, { item = "piston", n = 1 }, { item = "shaft", n = 1 }, { item = "fire_brick", n = 4 }]
 heat_max = 400
 heat_rate = 10
 
@@ -207,6 +211,7 @@ radius_mm = 600
 discovery = "steam"
 # a piston pump: with power it keeps the deepest chamber of a cave within 15 m dry
 cost = [{ item = "cast_iron_part", n = 2 }, { item = "plank", n = 4 }]
+alt_cost = [{ item = "pipe", n = 2 }, { item = "piston", n = 1 }, { item = "plank", n = 2 }]
 
 [[building]]
 kind = "rolling_mill"
@@ -215,6 +220,7 @@ radius_mm = 900
 discovery = "electricity"
 # powered rolls (8 m of a wheel, windmill, steam or a motor): copper ingots drawn to wire
 cost = [{ item = "steel", n = 2 }, { item = "cast_iron_part", n = 2 }, { item = "plank", n = 4 }]
+alt_cost = [{ item = "shaft", n = 2 }, { item = "precision_gear", n = 1 }, { item = "sheet", n = 2 }, { item = "plank", n = 2 }]
 
 [[building]]
 kind = "dynamo"
@@ -223,6 +229,7 @@ radius_mm = 700
 discovery = "electricity"
 # turned by mechanical power within 8 m, it feeds the grid
 cost = [{ item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }, { item = "steel", n = 2 }, { item = "cast_iron_part", n = 1 }]
+alt_cost = [{ item = "precision_gear", n = 1 }, { item = "shaft", n = 1 }, { item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }]
 
 [[building]]
 kind = "pole"
@@ -239,6 +246,7 @@ radius_mm = 500
 discovery = "electricity"
 # on a live grid it drives machines within 8 m
 cost = [{ item = "copper_wire", n = 6 }, { item = "magnet", n = 1 }, { item = "steel", n = 1 }]
+alt_cost = [{ item = "shaft", n = 1 }, { item = "copper_wire", n = 6 }, { item = "magnet", n = 1 }]
 
 [[building]]
 kind = "electric_lamp"
@@ -254,6 +262,7 @@ radius_mm = 800
 discovery = "computing"
 # on a live grid it opens the design table: new rules, and the way to a new world
 cost = [{ item = "circuit_board", n = 4 }, { item = "glass", n = 2 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 4 }]
+alt_cost = [{ item = "circuit_board", n = 4 }, { item = "glass", n = 2 }, { item = "sheet_part", n = 2 }, { item = "copper_wire", n = 4 }]
 
 [[building]]
 kind = "ruin"
@@ -270,6 +279,7 @@ radius_mm = 900
 discovery = "pottery"
 # dug into the ground, cool and dark: stores anything like a depot, food spoils five times slower in it
 cost = [{ item = "stone", n = 8 }, { item = "wood", n = 4 }]
+alt_cost = [{ item = "brick", n = 10 }, { item = "mortar", n = 3 }]
 needs = ["shovel"]
 
 [[building]]
@@ -286,6 +296,161 @@ name = "Su çarkı"
 radius_mm = 1300
 discovery = "mechanics"
 cost = [{ item = "wood", n = 10 }, { item = "stone", n = 4 }, { item = "gear", n = 2 }]
+alt_cost = [{ item = "heavy_shaft", n = 1 }, { item = "beam", n = 2 }, { item = "wood", n = 4 }]
+
+[[building]]
+kind = "coke_oven"
+name = "Kok fırını"
+radius_mm = 1000
+discovery = "steam"
+# a brick oven: coal baked away from the air gives coke, and tar
+cost = [{ item = "fire_brick", n = 6 }, { item = "stone", n = 6 }, { item = "plank", n = 2 }]
+heat_max = 1100
+heat_rate = 30
+
+[[building]]
+kind = "lime_kiln"
+name = "Kireç ocağı"
+radius_mm = 900
+discovery = "masonry"
+# a shaft kiln: limestone burns to lime; lime slaked with sand and water is mortar
+cost = [{ item = "stone", n = 10 }, { item = "clay", n = 4 }, { item = "wood", n = 4 }]
+heat_max = 1000
+heat_rate = 30
+
+[[building]]
+kind = "cement_kiln"
+name = "Çimento fırını"
+radius_mm = 1100
+discovery = "cement"
+# lime and clay burnt together to cement; cement, sand and water pour to concrete
+cost = [{ item = "fire_brick", n = 6 }, { item = "stone", n = 6 }, { item = "iron_bloom", n = 2 }]
+heat_max = 1450
+heat_rate = 25
+
+[[building]]
+kind = "brick_kiln"
+name = "Tuğla fırını"
+radius_mm = 1000
+discovery = "masonry"
+# fires bricks by the batch: common brick from clay, fire brick from fire clay
+cost = [{ item = "stone", n = 8 }, { item = "clay", n = 8 }, { item = "plank", n = 2 }]
+heat_max = 1100
+heat_rate = 20
+
+[[building]]
+kind = "puddling_furnace"
+name = "Pudlaj fırını"
+radius_mm = 1000
+discovery = "foundry"
+# pig iron stirred in the flame turns to wrought iron, a batch at a time
+cost = [{ item = "fire_brick", n = 8 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 4 }]
+heat_max = 1400
+heat_rate = 30
+
+[[building]]
+kind = "bessemer"
+name = "Bessemer konvertörü"
+radius_mm = 900
+discovery = "converter"
+# a strong blast blown through molten pig iron makes steel; wants a bellows within 3 m driven by machinery
+cost = [{ item = "fire_brick", n = 6 }, { item = "steel", n = 4 }, { item = "cast_iron_part", n = 3 }]
+heat_max = 1600
+heat_rate = 40
+
+[[building]]
+kind = "cupola"
+name = "Kupol ocağı"
+radius_mm = 900
+discovery = "foundry"
+# remelts pig iron and pours cast parts into sand moulds; needs a bellows within 3 m
+cost = [{ item = "fire_brick", n = 6 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 3 }]
+heat_max = 1500
+heat_rate = 30
+
+[[building]]
+kind = "molding_bench"
+name = "Kum kalıp tezgahı"
+radius_mm = 800
+discovery = "foundry"
+# packs the sand moulds the cupola pours into; a mould is used again after every pour
+cost = [{ item = "plank", n = 6 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "lathe"
+name = "Torna tezgahı"
+radius_mm = 800
+discovery = "machining"
+# powered: turns shafts, bolts and nuts, pistons
+cost = [{ item = "cast_iron_part", n = 3 }, { item = "steel", n = 2 }, { item = "gear", n = 4 }, { item = "plank", n = 4 }]
+
+[[building]]
+kind = "drill_mill"
+name = "Matkap ve freze"
+radius_mm = 800
+discovery = "machining"
+# powered: precision gears, cylinder blocks
+cost = [{ item = "cast_iron_part", n = 3 }, { item = "steel", n = 3 }, { item = "gear", n = 4 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "press"
+name = "Pres"
+radius_mm = 800
+discovery = "machining"
+# powered: sheet, and parts stamped from it
+cost = [{ item = "cast_iron_part", n = 4 }, { item = "steel", n = 3 }, { item = "plank", n = 4 }]
+
+[[building]]
+kind = "sawmill"
+name = "Testere değirmeni"
+radius_mm = 1200
+discovery = "mechanics"
+# powered by a wheel, the wind or steam: one log, four planks
+cost = [{ item = "plank", n = 6 }, { item = "iron_bloom", n = 2 }, { item = "gear", n = 3 }]
+
+[[building]]
+kind = "spinning_wheel"
+name = "Çıkrık"
+radius_mm = 500
+discovery = "weaving"
+# a wheel and a spindle: fibre spun to thread
+cost = [{ item = "plank", n = 3 }, { item = "wood", n = 2 }, { item = "fiber", n = 2 }]
+
+[[building]]
+kind = "power_loom"
+name = "Mekanik dokuma tezgahı"
+radius_mm = 900
+discovery = "machining"
+# powered: thread to cloth by the bolt
+cost = [{ item = "plank", n = 6 }, { item = "gear", n = 4 }, { item = "cast_iron_part", n = 1 }]
+
+[[building]]
+kind = "boiler"
+name = "Kazan"
+radius_mm = 1100
+discovery = "steam"
+# a great fired boiler: steam for the machines near it and for steam engines within 6 m
+cost = [{ item = "brick", n = 8 }, { item = "mortar", n = 4 }, { item = "steel", n = 3 }, { item = "cast_iron_part", n = 2 }]
+alt_cost = [{ item = "fire_brick", n = 6 }, { item = "stone", n = 4 }, { item = "steel", n = 3 }, { item = "cast_iron_part", n = 2 }]
+heat_max = 450
+heat_rate = 15
+
+[[building]]
+kind = "steam_hammer"
+name = "Buhar çekici"
+radius_mm = 1000
+discovery = "machining"
+# needs steam within 8 m: the heavy forgings, great shafts and rails
+cost = [{ item = "cast_iron_part", n = 4 }, { item = "steel", n = 4 }, { item = "concrete", n = 4 }]
+alt_cost = [{ item = "cast_iron_part", n = 4 }, { item = "steel", n = 4 }, { item = "stone", n = 14 }]
+
+[[building]]
+kind = "rolling_line"
+name = "Haddeleme hattı"
+radius_mm = 1000
+discovery = "machining"
+# powered rolls: steel to rail and girder
+cost = [{ item = "cast_iron_part", n = 4 }, { item = "steel", n = 4 }, { item = "gear", n = 4 }, { item = "plank", n = 4 }]
 
 [[recipe]]
 id = "sharp_stone"
@@ -937,6 +1102,373 @@ heat = 100
 
 # --- Spoilage: the share of a stack that goes bad in a day, permille. Rot turns to manure. Winter halves it, each
 # storage jar in a depot slows it there, the realistic setting doubles it. ---
+
+# --- Industry: kilns, castings, machine tools, mills. ---
+[[recipe]]
+id = "coke_oven"
+name = "Kok pişir (fırında)"
+station = "coke_oven"
+inputs = [{ item = "coal", n = 4 }]
+outputs = [{ item = "coke", n = 3 }, { item = "tar", n = 1 }]
+ticks = 2400
+discovery = "steam"
+heat = 900
+
+[[recipe]]
+id = "burn_lime"
+name = "Kireç yak"
+station = "lime_kiln"
+inputs = [{ item = "limestone", n = 3 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "lime", n = 2 }]
+ticks = 1800
+discovery = "masonry"
+heat = 850
+
+[[recipe]]
+id = "slake_mortar"
+name = "Harç karıştır"
+station = "lime_kiln"
+inputs = [{ item = "lime", n = 1 }, { item = "sand", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "mortar", n = 3 }, { item = "pot", n = 1 }]
+ticks = 600
+discovery = "masonry"
+
+[[recipe]]
+id = "burn_cement"
+name = "Çimento yak"
+station = "cement_kiln"
+inputs = [{ item = "lime", n = 2 }, { item = "clay", n = 2 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "cement", n = 3 }]
+ticks = 3000
+discovery = "cement"
+heat = 1300
+
+[[recipe]]
+id = "mix_concrete"
+name = "Beton karıştır"
+station = "cement_kiln"
+inputs = [{ item = "cement", n = 1 }, { item = "sand", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "concrete", n = 3 }, { item = "pot", n = 1 }]
+ticks = 900
+discovery = "cement"
+
+[[recipe]]
+id = "fire_bricks"
+name = "Tuğla pişir"
+station = "brick_kiln"
+inputs = [{ item = "clay", n = 6 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "brick", n = 6 }]
+ticks = 2400
+discovery = "masonry"
+heat = 950
+
+[[recipe]]
+id = "fire_fire_bricks_batch"
+name = "Ateş tuğlasını toplu pişir (ateş kilinden)"
+station = "brick_kiln"
+inputs = [{ item = "fire_clay", n = 6 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "fire_brick", n = 6 }]
+ticks = 3000
+discovery = "masonry"
+heat = 1100
+
+[[recipe]]
+id = "fire_raw_fire_bricks_batch"
+name = "Ham ateş tuğlalarını toplu pişir"
+station = "brick_kiln"
+inputs = [{ item = "raw_fire_brick", n = 8 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "fire_brick", n = 8 }]
+ticks = 3000
+discovery = "masonry"
+heat = 1100
+
+[[recipe]]
+id = "puddle_iron"
+name = "Pik demiri pudla"
+station = "puddling_furnace"
+inputs = [{ item = "pig_iron", n = 4 }, { item = "charcoal", n = 2 }]
+outputs = [{ item = "iron_bloom", n = 4 }]
+ticks = 2400
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "puddle_iron_coal"
+name = "Pik demiri kömürle pudla"
+station = "puddling_furnace"
+inputs = [{ item = "pig_iron", n = 4 }, { item = "coal", n = 1 }]
+outputs = [{ item = "iron_bloom", n = 4 }]
+ticks = 1800
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "bessemer_steel"
+name = "Çelik üfle"
+station = "bessemer"
+inputs = [{ item = "pig_iron", n = 3 }]
+outputs = [{ item = "steel", n = 2 }]
+ticks = 1800
+discovery = "converter"
+heat = 1400
+
+[[recipe]]
+id = "cupola_cast_part"
+name = "Dökme demir parça dök (kupol)"
+station = "cupola"
+inputs = [{ item = "pig_iron", n = 2 }, { item = "charcoal", n = 1 }, { item = "sand_mold", n = 1 }]
+outputs = [{ item = "cast_iron_part", n = 2 }, { item = "sand_mold", n = 1 }]
+ticks = 1500
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "cupola_cast_pipe"
+name = "Boru dök"
+station = "cupola"
+inputs = [{ item = "pig_iron", n = 2 }, { item = "charcoal", n = 1 }, { item = "sand_mold", n = 1 }]
+outputs = [{ item = "pipe", n = 2 }, { item = "sand_mold", n = 1 }]
+ticks = 1500
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "cupola_cast_cylinder"
+name = "Silindir dök"
+station = "cupola"
+inputs = [{ item = "pig_iron", n = 3 }, { item = "charcoal", n = 1 }, { item = "sand_mold", n = 1 }]
+outputs = [{ item = "iron_cylinder", n = 1 }, { item = "sand_mold", n = 1 }]
+ticks = 2100
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "cupola_cast_wheel"
+name = "Döküm çark dök"
+station = "cupola"
+inputs = [{ item = "pig_iron", n = 3 }, { item = "charcoal", n = 1 }, { item = "sand_mold", n = 1 }]
+outputs = [{ item = "iron_wheel", n = 1 }, { item = "sand_mold", n = 1 }]
+ticks = 2100
+discovery = "foundry"
+heat = 1250
+
+[[recipe]]
+id = "pack_sand_mold"
+name = "Kum kalıp hazırla"
+station = "molding_bench"
+inputs = [{ item = "sand", n = 4 }, { item = "clay", n = 1 }, { item = "wood", n = 1 }]
+outputs = [{ item = "sand_mold", n = 2 }]
+ticks = 600
+discovery = "foundry"
+
+[[recipe]]
+id = "turn_shaft"
+name = "Mil tornala"
+station = "lathe"
+inputs = [{ item = "iron_bloom", n = 2 }]
+outputs = [{ item = "shaft", n = 1 }]
+ticks = 900
+discovery = "machining"
+
+[[recipe]]
+id = "turn_bolts"
+name = "Cıvata ve somun tornala"
+station = "lathe"
+inputs = [{ item = "iron_bloom", n = 1 }]
+outputs = [{ item = "bolt_nut", n = 4 }]
+ticks = 600
+discovery = "machining"
+
+[[recipe]]
+id = "turn_piston"
+name = "Piston tornala"
+station = "lathe"
+inputs = [{ item = "cast_iron_part", n = 1 }, { item = "iron_bloom", n = 1 }]
+outputs = [{ item = "piston", n = 1 }]
+ticks = 1200
+discovery = "machining"
+
+[[recipe]]
+id = "lathe_gear"
+name = "Dişli tornala"
+station = "lathe"
+inputs = [{ item = "iron_bloom", n = 1 }]
+outputs = [{ item = "gear", n = 2 }]
+ticks = 600
+discovery = "machining"
+
+[[recipe]]
+id = "mill_precision_gear"
+name = "Hassas dişli frezele"
+station = "drill_mill"
+inputs = [{ item = "steel", n = 1 }, { item = "iron_bloom", n = 1 }]
+outputs = [{ item = "precision_gear", n = 2 }]
+ticks = 900
+discovery = "machining"
+
+[[recipe]]
+id = "bore_cylinder_block"
+name = "Silindir bloğu deş"
+station = "drill_mill"
+inputs = [{ item = "iron_cylinder", n = 1 }, { item = "bolt_nut", n = 2 }, { item = "steel", n = 1 }]
+outputs = [{ item = "cylinder_block", n = 1 }]
+ticks = 1800
+discovery = "machining"
+
+[[recipe]]
+id = "press_sheet_steel"
+name = "Çelik sac bastır"
+station = "press"
+inputs = [{ item = "steel", n = 1 }]
+outputs = [{ item = "sheet", n = 3 }]
+ticks = 600
+discovery = "machining"
+
+[[recipe]]
+id = "press_sheet_iron"
+name = "Demir sac bastır"
+station = "press"
+inputs = [{ item = "iron_bloom", n = 2 }]
+outputs = [{ item = "sheet", n = 2 }]
+ticks = 600
+discovery = "machining"
+
+[[recipe]]
+id = "stamp_sheet_part"
+name = "Sac parça kalıpla"
+station = "press"
+inputs = [{ item = "sheet", n = 1 }, { item = "bolt_nut", n = 1 }]
+outputs = [{ item = "sheet_part", n = 2 }]
+ticks = 600
+discovery = "machining"
+
+[[recipe]]
+id = "saw_logs"
+name = "Kütük biç (testere değirmeni)"
+station = "sawmill"
+inputs = [{ item = "wood", n = 1 }]
+outputs = [{ item = "plank", n = 4 }]
+ticks = 600
+discovery = "mechanics"
+
+[[recipe]]
+id = "spin_fiber"
+name = "Lif eğir"
+station = "spinning_wheel"
+inputs = [{ item = "fiber", n = 3 }]
+outputs = [{ item = "thread", n = 2 }]
+ticks = 600
+discovery = "weaving"
+
+[[recipe]]
+id = "spin_flax"
+name = "Keten eğir"
+station = "spinning_wheel"
+inputs = [{ item = "flax", n = 2 }]
+outputs = [{ item = "thread", n = 3 }]
+ticks = 600
+discovery = "weaving"
+
+[[recipe]]
+id = "weave_thread"
+name = "Mekanik dokuma"
+station = "power_loom"
+inputs = [{ item = "thread", n = 4 }]
+outputs = [{ item = "cloth", n = 3 }]
+ticks = 900
+discovery = "machining"
+
+[[recipe]]
+id = "boiler_coal"
+name = "Kömürle büyük buhar kaldır"
+station = "boiler"
+inputs = [{ item = "coal", n = 2 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 7200
+discovery = "steam"
+
+[[recipe]]
+id = "boiler_coke"
+name = "Kokla büyük buhar kaldır"
+station = "boiler"
+inputs = [{ item = "coke", n = 1 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 10800
+discovery = "steam"
+
+[[recipe]]
+id = "boiler_tar"
+name = "Katranla büyük buhar kaldır"
+station = "boiler"
+inputs = [{ item = "tar", n = 2 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 7200
+discovery = "steam"
+
+[[recipe]]
+id = "boiler_oil"
+name = "Petrolle büyük buhar kaldır"
+station = "boiler"
+inputs = [{ item = "oil", n = 1 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 14400
+discovery = "steam"
+
+[[recipe]]
+id = "raise_steam_tar"
+name = "Katranla buhar kaldır"
+station = "steam_engine"
+inputs = [{ item = "tar", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "pot", n = 1 }]
+ticks = 3600
+discovery = "steam"
+
+[[recipe]]
+id = "forge_heavy_shaft"
+name = "Büyük mil döv"
+station = "steam_hammer"
+inputs = [{ item = "steel", n = 2 }, { item = "coke", n = 1 }]
+outputs = [{ item = "heavy_shaft", n = 1 }]
+ticks = 2400
+discovery = "machining"
+
+[[recipe]]
+id = "hammer_rail"
+name = "Ray döv"
+station = "steam_hammer"
+inputs = [{ item = "steel", n = 2 }, { item = "coke", n = 1 }]
+outputs = [{ item = "rail", n = 2 }]
+ticks = 2400
+discovery = "machining"
+
+[[recipe]]
+id = "roll_rail"
+name = "Ray haddele"
+station = "rolling_line"
+inputs = [{ item = "steel", n = 2 }]
+outputs = [{ item = "rail", n = 4 }]
+ticks = 1500
+discovery = "machining"
+
+[[recipe]]
+id = "roll_beam"
+name = "Kiriş haddele"
+station = "rolling_line"
+inputs = [{ item = "steel", n = 2 }]
+outputs = [{ item = "beam", n = 3 }]
+ticks = 1500
+discovery = "machining"
+
+[[recipe]]
+id = "cart_iron"
+name = "Araba (döküm çarklı)"
+station = "workbench"
+inputs = [{ item = "iron_wheel", n = 2 }, { item = "plank", n = 4 }]
+outputs = [{ item = "cart", n = 1 }]
+ticks = 900
+discovery = "draught"
+
+
 [[perish]]
 item = "raw_meat"
 per_day = 500
