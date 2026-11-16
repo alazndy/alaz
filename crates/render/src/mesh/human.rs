@@ -173,6 +173,8 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     // the moment right after a blow lands: the body gives a little
     let hit = if working && u >= IMPACT { (1.0 - (u - IMPACT) / 0.12).max(0.0) } else { 0.0 };
     let (crouch, lean) = if working { (act.crouch + 0.03 * hit, act.lean + stoop * 0.12) } else { (0.0, (pose.amp - 1.0).max(0.0) * 0.3 + stoop * 0.22) };
+    // sitting at the fire: the hips drop and the back rounds a little
+    let (crouch, lean) = if pose.sit && !working { (0.36, lean + 0.14) } else { (crouch, lean) };
     let twist = act.twist;
     // on steep ground: climbing bends forward and grabs ahead, going down leans back and skids with arms out
     let moving = (pose.amp * 3.0).min(1.0) * if working { 0.0 } else { 1.0 };

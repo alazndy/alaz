@@ -6815,3 +6815,254 @@ fn a_chip_counts_for_the_transistor_and_board_milestones() {
     w.step(&[]);
     assert!(w.milestone_done(crate::world::Milestone::Transistor) && w.milestone_done(crate::world::Milestone::CircuitBoard));
 }
+
+// ---- journal and camp ----
+
+use crate::journal::{Entry, Goal, GoalState, Journal};
+
+fn evening_camp(seed: u64) -> (World, AgentId) {
+    let (mut w, a) = with_agent(seed);
+    w.tick = crate::time::tick_of_minute(19 * 60);
+    let (ax, ay) = (w.agents[0].x, w.agents[0].y);
+    w.buildings.push(Building { fuel: 100_000, ..Building::new(BuildingKind::Campfire, ax + 1_800, ay + 600) });
+    (w, a)
+}
+
+#[test]
+fn the_journal_writes_down_discoveries_first_crafts_and_buildings() {
+    let (mut w, a) = with_agent(1);
+    give(&mut w, ItemKind::Stone, 2);
+    give(&mut w, ItemKind::Wood, 9);
+    give(&mut w, ItemKind::Flint, 1);
+    w.step(&[]);
+    assert!(w.knows(Discovery::SharpStone));
+    craft_perfectly(&mut w, a, "sharp_stone");
+    for _ in 0..120 {
+        w.step(&[]);
+    }
+    let j = &w.journal;
+    let f = j.find(Discovery::SharpStone).expect("the discovery is written down");
+    assert_eq!(f.day, 0);
+    assert!(j.first(ItemKind::SharpStone).is_some(), "the first sharp stone is written down");
+    let page = j.day(0).expect("today's page");
+    assert!(page.entries.iter().any(|(_, e)| matches!(e, Entry::Discovered { d: Discovery::SharpStone, .. })));
+    assert!(page.entries.iter().any(|(_, e)| matches!(e, Entry::FirstMade { item: ItemKind::SharpStone, .. })));
+    assert!(page.made.iter().any(|(k, _)| *k == ItemKind::SharpStone), "the day's tally of what was made");
+    // a second one is not a first
+    let firsts = j.firsts.iter().filter(|f| f.item == ItemKind::SharpStone).count();
+    assert_eq!(firsts, 1);
+    // building
+    let (x, y) = spot_for(&w, BuildingKind::Campfire, &[]);
+    w.step(&[cmd(a, CommandKind::Build { kind: BuildingKind::Campfire, x, y })]);
+    let page = w.journal.day(0).unwrap();
+    assert!(page.entries.iter().any(|(_, e)| matches!(e, Entry::Built { kind: BuildingKind::Campfire, at: None })), "no paper, no place on the page");
+}
+
+#[test]
+fn paper_lets_the_journal_sketch_the_place() {
+    let (mut w, a) = with_agent(1);
+    give(&mut w, ItemKind::Paper, 1);
+    give(&mut w, ItemKind::Wood, 9);
+    give(&mut w, ItemKind::Flint, 1);
+    let (x, y) = spot_for(&w, BuildingKind::Campfire, &[]);
+    w.learn(Discovery::Fire);
+    w.step(&[cmd(a, CommandKind::Build { kind: BuildingKind::Campfire, x, y })]);
+    let page = w.journal.day(0).unwrap();
+    assert!(page.entries.iter().any(|(_, e)| matches!(e, Entry::Built { at: Some(_), .. })), "with paper the place is drawn");
+}
+
+#[test]
+fn the_journal_is_bounded_and_old_days_shrink() {
+    use crate::journal::*;
+    let mut j = Journal::default();
+    // one crowded day: small things stop at the cap, highlights still get in
+    for i in 0..(MAX_ENTRIES * 2) {
+        j.record(0, i as u16 % 1440, Entry::Camp);
+    }
+    assert_eq!(j.day(0).unwrap().entries.len(), MAX_ENTRIES);
+    j.record(0, 5, Entry::Died);
+    assert_eq!(j.day(0).unwrap().entries.len(), MAX_ENTRIES);
+    assert!(j.day(0).unwrap().entries.iter().any(|(_, e)| *e == Entry::Died));
+    // hazards of one kind are added up, not listed
+    j.record(1, 0, Entry::Hazard { kind: Hazard::Bite, n: 1 });
+    j.record(1, 9, Entry::Hazard { kind: Hazard::Bite, n: 2 });
+    assert_eq!(j.day(1).unwrap().entries.iter().filter(|(_, e)| matches!(e, Entry::Hazard { .. })).count(), 1);
+    assert!(j.day(1).unwrap().entries.iter().any(|(_, e)| *e == Entry::Hazard { kind: Hazard::Bite, n: 3 }));
+    // many days: the old ones keep their highlights only, and the oldest go
+    for d in 2..300u32 {
+        j.record(d, 1, Entry::Camp);
+        j.record(d, 2, Entry::Discovered { d: Discovery::Fire, at: None });
+        for k in 0..20 {
+            j.tally_gathered(d, ItemKind::ALL[k], 1 + k as u16);
+        }
+    }
+    assert!(j.days.len() <= MAX_DAYS, "{} days", j.days.len());
+    let old = j.days.iter().find(|p| p.day + (RECENT_DAYS as u32) < 299).expect("an old page");
+    assert!(old.entries.iter().all(|(_, e)| e.highlight()), "old pages keep their highlights");
+    assert!(old.gathered.len() <= COMPACT_TALLY);
+    let new = j.day(299).unwrap();
+    assert!(new.entries.iter().any(|(_, e)| *e == Entry::Camp), "recent pages keep the small things");
+    assert!(new.gathered.len() <= MAX_TALLY);
+    assert!(j.day(2).is_none(), "the oldest days are gone");
+}
+
+#[test]
+fn the_journal_is_deterministic_and_outside_the_state_hash() {
+    let run = || {
+        let (mut w, a) = with_agent(3);
+        give(&mut w, ItemKind::Stone, 2);
+        give(&mut w, ItemKind::Wood, 4);
+        w.step(&[]);
+        craft_perfectly(&mut w, a, "sharp_stone");
+        for _ in 0..300 {
+            w.step(&[]);
+        }
+        w
+    };
+    let (a, b) = (run(), run());
+    assert_eq!(a.journal, b.journal);
+    assert_eq!(a.hash(), b.hash());
+    let mut c = run();
+    c.journal = Journal::default();
+    assert_eq!(c.hash(), a.hash(), "the journal is not part of the simulated state");
+}
+
+#[test]
+fn camp_needs_evening_and_a_lit_fire() {
+    let (mut w, a) = with_agent(2);
+    let (ax, ay) = (w.agents[0].x, w.agents[0].y);
+    w.buildings.push(Building { fuel: 100_000, ..Building::new(BuildingKind::Campfire, ax + 1_800, ay + 600) });
+    // 11:00 (the world starts at 08:00)
+    w.tick = crate::time::tick_of_minute(11 * 60);
+    assert_eq!(w.can_camp(a), Err(Reject::TooBright));
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    assert!(w.take_events().contains(&Event::Rejected(a, Reject::TooBright)));
+    assert!(!w.agents[0].is_seated());
+    // evening but the fire is out
+    w.tick = crate::time::tick_of_minute(19 * 60);
+    w.buildings[0].fuel = 0;
+    assert_eq!(w.can_camp(a), Err(Reject::NoCampfire));
+    w.buildings[0].fuel = 100_000;
+    assert_eq!(w.can_camp(a), Ok(()));
+    // too far from it
+    w.agents[0].x += 20_000;
+    assert_eq!(w.can_camp(a), Err(Reject::NoCampfire));
+}
+
+#[test]
+fn camp_rests_once_an_evening_and_sums_up_the_day() {
+    let (mut w, a) = evening_camp(2);
+    let day = w.day() as u32;
+    w.journal.tally_gathered(day, ItemKind::Wood, 5);
+    w.journal.record(day, 700, Entry::Hazard { kind: crate::journal::Hazard::Bite, n: 1 });
+    w.agents[0].stamina = 100;
+    w.agents[0].warmth = 100;
+    w.agents[0].injury = 1000;
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    assert!(w.agents[0].is_seated());
+    assert_eq!(w.agents[0].stamina, MAX_STAT);
+    assert_eq!(w.agents[0].warmth, MAX_STAT);
+    assert!(w.agents[0].injury <= 800, "a rest mends a little: {}", w.agents[0].injury);
+    let page = w.journal.day(day).unwrap();
+    assert!(page.gathered.contains(&(ItemKind::Wood, 5)), "the summary has what was gathered");
+    assert!(page.entries.iter().any(|(_, e)| matches!(e, Entry::Hazard { .. })), "and the dangers");
+    assert!(page.entries.iter().any(|(_, e)| *e == Entry::Camp));
+    assert!(w.take_events().contains(&Event::Camped(a)));
+    // a second sitting the same evening gives nothing more
+    w.agents[0].stamina = 100;
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    assert!(w.agents[0].stamina < MAX_STAT, "a second sitting the same evening gives nothing more");
+    // the person is up again the moment they move
+    w.step(&[cmd(a, CommandKind::MoveTo { x: w.agents[0].x + 5_000, y: w.agents[0].y })]);
+    assert!(!w.agents[0].is_seated());
+}
+
+#[test]
+fn a_goal_is_chosen_at_camp_and_marked_done_when_reached() {
+    let (mut w, a) = evening_camp(2);
+    // no goal without sitting at the fire first
+    let goals = w.camp_goals();
+    assert!(!goals.is_empty(), "there is always something ahead");
+    w.step(&[cmd(a, CommandKind::SetGoal { goal: Some(goals[0]) })]);
+    assert!(w.journal.goal.is_none());
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    // a goal that is not on the list is refused
+    w.step(&[cmd(a, CommandKind::SetGoal { goal: Some(Goal::Reach(Milestone::ComputerAge)) })]);
+    assert!(w.journal.goal.is_none());
+    w.learn(Discovery::Fire);
+    let g = *w.camp_goals().iter().find(|g| matches!(g, Goal::Make(_))).expect("something never made");
+    let Goal::Make(item) = g else { unreachable!() };
+    w.step(&[cmd(a, CommandKind::SetGoal { goal: Some(g) })]);
+    let gs = w.journal.goal.expect("goal set");
+    assert_eq!(gs.goal, g);
+    assert!(gs.done_day.is_none());
+    assert!(w.journal.day(0).unwrap().entries.iter().any(|(_, e)| *e == Entry::GoalSet(g)));
+    // the next morning it is not done yet, and then it is made
+    w.tick = crate::time::TICKS_PER_DAY + crate::time::tick_of_minute(9 * 60);
+    for _ in 0..120 {
+        w.step(&[]);
+    }
+    assert!(w.journal.goal.unwrap().done_day.is_none());
+    w.produced[item as usize] += 1;
+    for _ in 0..120 {
+        w.step(&[]);
+    }
+    let gs = w.journal.goal.expect("goal kept");
+    assert_eq!(gs.done_day, Some(1));
+    assert!(w.journal.day(1).unwrap().entries.iter().any(|(_, e)| *e == Entry::GoalDone(g)));
+    assert!(w.take_events().contains(&Event::GoalDone(g)));
+    // dropping the goal
+    w.tick = crate::time::tick_of_minute(19 * 60) + crate::time::TICKS_PER_DAY * 2;
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    let day = w.day() as u32;
+    assert!(w.journal.camped(0, day));
+    w.step(&[cmd(a, CommandKind::SetGoal { goal: None })]);
+    assert!(w.journal.goal.is_none());
+    let _ = GoalState { goal: g, set_day: 0, base: 0, done_day: None };
+}
+
+#[test]
+fn the_journal_survives_a_save_and_an_older_save_loads_without_one() {
+    let (mut w, a) = evening_camp(5);
+    give(&mut w, ItemKind::Stone, 2);
+    give(&mut w, ItemKind::Wood, 4);
+    w.step(&[]);
+    craft_perfectly(&mut w, a, "sharp_stone");
+    for _ in 0..120 {
+        w.step(&[]);
+    }
+    w.step(&[cmd(a, CommandKind::Camp)]);
+    w.step(&[cmd(a, CommandKind::SetGoal { goal: Some(Goal::Make(ItemKind::Spear)) })]);
+    assert!(!w.journal.days.is_empty());
+    let b = World::from_bytes(&w.to_bytes()).expect("load");
+    assert_eq!(b.journal, w.journal);
+    assert_eq!(b.hash(), w.hash());
+    assert!(!b.agents[0].is_seated(), "sitting is not saved");
+    // a format-28 save (the same layout without the journal at the end) loads, with an empty journal that starts afresh
+    let mut plain = World::from_bytes(&w.to_bytes()).unwrap();
+    plain.journal = Journal::default();
+    let bytes = plain.to_bytes();
+    let tail = postcard::to_allocvec(&Journal::default()).unwrap().len();
+    let mut old = bytes[..bytes.len() - tail].to_vec();
+    old[4..8].copy_from_slice(&28u32.to_le_bytes());
+    let sum = crate::save::checksum_for_tests(&old[16..]);
+    old[8..16].copy_from_slice(&sum.to_le_bytes());
+    let c = World::from_bytes(&old).expect("format 28 loads");
+    assert!(c.journal.days.is_empty() && !c.journal.started);
+    assert_eq!(c.hash(), w.hash());
+    let mut c = c;
+    c.step(&[]);
+    assert!(c.journal.started, "the journal takes its bearings from the loaded world");
+    assert!(c.journal.find(Discovery::SharpStone).is_some_and(|f| f.day == crate::journal::UNKNOWN_DAY), "what was known before is marked as such");
+    assert_eq!(crate::save::FORMAT_VERSION, 29);
+}
+
+#[test]
+fn a_milestone_and_a_death_are_written_down() {
+    let (mut w, _) = with_agent(3);
+    w.step(&[]);
+    w.produced[ItemKind::Silicon as usize] = 1;
+    w.produced[ItemKind::Chip as usize] = 1;
+    w.step(&[]);
+    assert!(w.journal.days.iter().any(|d| d.entries.iter().any(|(_, e)| matches!(e, Entry::Milestone(Milestone::Transistor)))));
+}

@@ -12,6 +12,7 @@ mod audio;
 mod export;
 mod hud;
 mod icons;
+mod journal_ui;
 mod keys;
 mod lang;
 mod menu;
@@ -489,6 +490,31 @@ fn demo_setup(w: &mut World) -> Selection {
             }
         }
     }
+    // Dev aids for the journal and the camp. ALAZ_DEMO_JOURNAL=1: some days of history and a tribe that knows its
+    // first 21 discoveries (with paper in the bag). ALAZ_DEMO_CAMP=1: dusk, a lit fire, the player sitting at it;
+    // ALAZ_DEMO_CAMP=goal: the morning after, with the goal chosen at the fire.
+    let camp = std::env::var("ALAZ_DEMO_CAMP").ok();
+    if std::env::var_os("ALAZ_DEMO_JOURNAL").is_some() || camp.is_some() {
+        w.learn_first(21);
+        w.agents[0].inventory.counts[ItemKind::Paper as usize] = 2;
+        w.tick += 6 * alaz_sim::time::TICKS_PER_DAY;
+        w.demo_journal(6);
+    }
+    if let Some(mode) = camp {
+        use alaz_sim::time::{minute_of_day, TICKS_PER_DAY};
+        let now = minute_of_day(w.tick) as u64 * TICKS_PER_DAY / 1440;
+        w.tick += (19 * 60 * TICKS_PER_DAY / 1440 + TICKS_PER_DAY - now) % TICKS_PER_DAY;
+        let (ax, ay) = (w.agents[0].x, w.agents[0].y);
+        w.buildings.push(alaz_sim::Building { fuel: 100_000, ..alaz_sim::Building::new(BuildingKind::Campfire, ax + 1_800, ay + 600) });
+        w.step(&[Command { agent: id, kind: CommandKind::Camp }]);
+        if mode == "goal" {
+            if let Some(g) = w.camp_goals().first().copied() {
+                w.step(&[Command { agent: id, kind: CommandKind::SetGoal { goal: Some(g) } }]);
+            }
+            w.tick += 15 * 60 * TICKS_PER_DAY / 1440;
+            w.agents[0].seated = None;
+        }
+    }
     if std::env::var_os("ALAZ_PLAYLOG").is_none() {
         w.take_events();
     }
@@ -769,9 +795,19 @@ impl App {
             Ok("craft") => Some(hud::Tab::Craft),
             Ok("build") => Some(hud::Tab::Build),
             Ok("help") => Some(hud::Tab::Help),
+            Ok("journal") => Some(hud::Tab::Journal),
             Ok("creative") => Some(hud::Tab::Creative),
             _ => None,
         };
+        // ALAZ_DEMO_JOURNAL=days|finds|recipes opens that page of the journal
+        match std::env::var("ALAZ_DEMO_JOURNAL").as_deref() {
+            Ok("finds") => app.knap.journal.section = 1,
+            Ok("recipes") => app.knap.journal.section = 2,
+            _ => {}
+        }
+        if std::env::var_os("ALAZ_DEMO_JOURNAL").is_some() {
+            app.tab = Some(hud::Tab::Journal);
+        }
         if show_menu && app.perf.as_ref().is_none_or(|p| p.bench_secs.is_none()) {
             app.menu = Some(menu::Menu::new(false));
             app.no_save = true;
@@ -954,6 +990,7 @@ impl App {
             A::Craft => self.toggle_tab(hud::Tab::Craft),
             A::Build => self.toggle_tab(hud::Tab::Build),
             A::Goals => self.toggle_tab(hud::Tab::Goals),
+            A::Journal => self.toggle_tab(hud::Tab::Journal),
             // while placing, R turns the building; otherwise it opens the routes
             A::Routes if self.build_mode.is_some() => self.facing = (self.facing + 1) & 3,
             A::Routes => self.toggle_tab(hud::Tab::Routes),
@@ -1384,7 +1421,7 @@ impl App {
                             _ => audio::Sfx::Fail,
                         })
                     }
-                    E::Discovered(_) => a.play(audio::Sfx::Chime),
+                    E::Discovered(_) | E::GoalDone(_) => a.play(audio::Sfx::Chime),
                     E::Milestone(alaz_sim::Milestone::Visitor) => a.play(audio::Sfx::Bark),
                     E::Milestone(_) => a.play(audio::Sfx::Fanfare),
                     E::Died(id) if *id == self.me => a.play(audio::Sfx::Hurt),

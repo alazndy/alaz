@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
     }
 
     fn cases() -> Vec<(String, u64)> {

@@ -18,6 +18,8 @@ pub enum Glyph {
     Plus,
     Leg,
     Skull,
+    /// The journal: an open book.
+    Book,
 }
 
 fn p2(c: Pos2, s: f32, x: f32, y: f32) -> Pos2 {
@@ -83,6 +85,14 @@ pub fn glyph(p: &Painter, c: Pos2, s: f32, g: Glyph, col: Color32) {
         Glyph::Flag => {
             line((-0.28, -0.42), (-0.28, 0.44), 0.07, Color32::from_rgb(190, 160, 120));
             poly(&[(-0.26, -0.4), (0.4, -0.2), (-0.26, 0.06)], col);
+        }
+        Glyph::Book => {
+            poly(&[(-0.44, -0.3), (-0.02, -0.22), (-0.02, 0.34), (-0.44, 0.26)], col);
+            poly(&[(0.44, -0.3), (0.02, -0.22), (0.02, 0.34), (0.44, 0.26)], col);
+            line((-0.32, -0.08), (-0.12, -0.05), 0.05, dark);
+            line((-0.32, 0.08), (-0.12, 0.11), 0.05, dark);
+            line((0.12, -0.05), (0.32, -0.08), 0.05, dark);
+            line((0.12, 0.11), (0.32, 0.08), 0.05, dark);
         }
         Glyph::Route => {
             p.circle_filled(q(-0.32, 0.26), 0.12 * s, col);

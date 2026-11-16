@@ -318,6 +318,9 @@ pub struct Agent {
     /// up counts towards the most health the body can have. Saved in the extension block.
     #[serde(skip, default = "half_fed")]
     pub nutrition: [u16; 3],
+    /// Sitting at the evening fire, where (the sitting ends when the person moves). Not saved.
+    #[serde(skip)]
+    pub seated: Option<(i64, i64)>,
 }
 
 fn half_fed() -> [u16; 3] {
@@ -348,6 +351,11 @@ fn food_groups(k: ItemKind) -> [u16; 3] {
 }
 
 impl Agent {
+    /// Sitting at the fire: set down by camp, and over when the person moves or takes up work.
+    pub fn is_seated(&self) -> bool {
+        self.task == Task::Idle && self.seated == Some((self.x, self.y))
+    }
+
     /// The most health this body can have now: every food group kept up (300‰ or more) raises it.
     pub fn health_cap(&self, settings: &WorldSettings) -> i32 {
         if self.kind != AgentKind::Human {
@@ -399,7 +407,7 @@ impl Node {
 }
 
 /// Things the team has learned by doing (shared across agents).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Discovery {
     SharpStone,
@@ -555,6 +563,10 @@ pub enum Reject {
     NoDeposit,
     /// No fish here: look for a school (dark shapes in the water) and fish next to it.
     NoFish,
+    /// Sitting down at camp needs a lit campfire close by.
+    NoCampfire,
+    /// Camp is made in the evening, once the light goes.
+    TooBright,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -610,6 +622,14 @@ pub enum Event {
     Burned(AgentId),
     /// A fire started by itself (embers off a campfire, dry lightning) here (mm).
     FireStarted { x: i64, y: i64 },
+    /// A building was put up here (mm).
+    Built { kind: BuildingKind, x: i64, y: i64 },
+    /// One unit of a resource gathered by hand (a harvest, a piece picked up off the ground).
+    Gathered { agent: AgentId, item: ItemKind },
+    /// Someone sat down at the evening fire.
+    Camped(AgentId),
+    /// The goal chosen at camp was reached.
+    GoalDone(crate::journal::Goal),
     /// A stone broke off a ledge up here (mm).
     Rockfall { x: i64, y: i64 },
     /// A falling rock struck the ground hard (mm).
@@ -617,7 +637,7 @@ pub enum Event {
 }
 
 /// Goals that together make up the iron age. Completed ones are remembered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Milestone {
     FirstFire,
     Shelter,
@@ -751,6 +771,11 @@ impl Milestone {
 
     pub fn bit(self) -> u64 {
         1 << self as u64
+    }
+
+    /// The age banners: reached by reaching other goals, not worked toward on their own.
+    pub fn is_age(self) -> bool {
+        matches!(self, Milestone::NeolithicAge | Milestone::CopperAge | Milestone::BronzeAge | Milestone::IronAge | Milestone::SteelAge | Milestone::SteamAge | Milestone::ElectricAge | Milestone::ElectronicsAge | Milestone::ComputerAge)
     }
 }
 
@@ -1027,6 +1052,7 @@ impl Agent {
             generation: 0,
             wear: Vec::new(),
             nutrition: half_fed(),
+            seated: None,
         }
     }
 
@@ -1230,6 +1256,10 @@ pub struct World {
     pub bodies: Vec<crate::physics::Body>,
     /// Not part of the deterministic state: drained by the front end for hints and HUD.
     pub events: Vec<Event>,
+    /// The tribe's journal and the goal for the next day (saved in the extension block, not in the state hash).
+    pub journal: crate::journal::Journal,
+    /// How much of `events` the journal has read. Derived, not saved.
+    pub(crate) journal_cursor: usize,
 }
 
 impl World {
@@ -1337,6 +1367,8 @@ impl World {
             air: Vec::new(),
             bodies: Vec::new(),
             events: Vec::new(),
+            journal: Default::default(),
+            journal_cursor: 0,
         };
         w.spawn_mm = w.find_spawn();
         let spawn_tile = ((w.spawn_mm.0 / TILE_MM) as i32, (w.spawn_mm.1 / TILE_MM) as i32);
@@ -1767,6 +1799,9 @@ impl World {
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
+        // what happened since the last step is written down before it is handed over
+        self.run_journal();
+        self.journal_cursor = 0;
         std::mem::take(&mut self.events)
     }
 
@@ -2401,6 +2436,16 @@ impl World {
                 self.buildings.push(Building { fuel, ..Building::new(kind, x, y) });
                 self.obstacles.block_footprint(&self.map, x, y, def.radius_mm);
                 self.obstacles.built_for = self.buildings.len();
+                self.events.push(Event::Built { kind, x, y });
+            }
+            CommandKind::Camp => {
+                if human {
+                    self.do_camp(idx);
+                }
+            }
+            CommandKind::SetGoal { goal } => {
+                let goal = *goal;
+                self.set_goal(idx, goal);
             }
             CommandKind::Give { item, n } => {
                 if human && self.settings.difficulty == Difficulty::Creative {
@@ -2814,6 +2859,9 @@ impl World {
                     } else if progress + 1 >= PICK_TICKS {
                         let item = ItemKind::ALL.get(bodies[bi].item as usize).copied().unwrap_or(ItemKind::Wood);
                         a.inventory.counts[item as usize] += 1;
+                        if a.kind == AgentKind::Human {
+                            events.push(Event::Gathered { agent: a.id, item });
+                        }
                         bodies.remove(bi);
                         a.task = Task::Idle;
                         seek.push(ai);
@@ -2954,6 +3002,9 @@ impl World {
                             _ => n.kind.item(),
                         };
                         a.inventory.counts[item as usize] += 1;
+                        if a.kind == AgentKind::Human {
+                            events.push(Event::Gathered { agent: a.id, item });
+                        }
                         // an apron-wearer's tools last longer: some strokes leave no mark
                         let spared = a.kind == AgentKind::Human && {
                             let save = a.inventory.gear().tool_save as u64;
@@ -4721,6 +4772,7 @@ impl World {
         self.run_discoveries();
         self.run_camp();
         self.run_milestones();
+        self.run_journal();
         self.tick += 1;
     }
 

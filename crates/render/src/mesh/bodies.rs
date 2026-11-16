@@ -355,11 +355,13 @@ pub(crate) struct Pose {
     pub(crate) air: f32,
     /// Far or small on screen: drop what a few texels cannot show (face parts, buckles) and use fewer sides.
     pub(crate) lod: bool,
+    /// Sitting at the evening fire: hips down, a loose slouch.
+    pub(crate) sit: bool,
 }
 
 impl Pose {
     pub(crate) fn idle(t: f32) -> Pose {
-        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, stage: 5, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false }
+        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, stage: 5, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false }
     }
 }
 

@@ -10,7 +10,9 @@ use crate::world::{Agent, World, WorldSettings};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 4] = b"ALAZ";
-pub const FORMAT_VERSION: u32 = 28;
+pub const FORMAT_VERSION: u32 = 29;
+/// The format before the journal: the extension block without it. Still read (formats 27 and 28 share it).
+const PRE_JOURNAL_VERSION: u32 = 28;
 /// The format before the late-age machines: the same layout, but no accumulator charge in `fuel` and no wave-3 buildings. Still read.
 const PRE_GRID_VERSION: u32 = 27;
 /// The format before items beyond the 128th: `seen` held every item bit. Still read (nothing above 128 seen yet).
@@ -39,8 +41,10 @@ const PRE_CHUNK_VERSION: u32 = 23;
 fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
     let legacy = version == LEGACY_VERSION;
     crate::items_serde::LEGACY.with(|l| l.set(legacy));
-    let r = if version == FORMAT_VERSION || version == PRE_GRID_VERSION {
+    let r = if version == FORMAT_VERSION {
         postcard::from_bytes(payload)
+    } else if version == PRE_JOURNAL_VERSION || version == PRE_GRID_VERSION {
+        postcard::from_bytes::<SaveDataV28>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_INDUSTRY_VERSION {
         postcard::from_bytes::<SaveDataV26>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_BURN_VERSION {
@@ -70,7 +74,7 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
 }
 
 fn readable(version: u32) -> bool {
-    matches!(version, FORMAT_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
+    matches!(version, FORMAT_VERSION | PRE_JOURNAL_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
 }
 const HEADER_LEN: usize = 4 + 4 + 8;
 
@@ -167,6 +171,38 @@ struct SaveExt {
     burn: Vec<(i32, i32, bool, u64, u64)>,
     /// Items beyond the first 128 that have been seen (bit = index - 128).
     seen_hi: u128,
+    /// The tribe's journal and the goal for the next day.
+    journal: crate::journal::Journal,
+}
+
+/// The extension block as formats 27 and 28 wrote it (no journal).
+#[derive(Deserialize)]
+struct SaveExtV28 {
+    settings: WorldSettings,
+    recipe_ids: Vec<String>,
+    custom_rules: Option<String>,
+    buildings: Vec<(i16, u16)>,
+    generations: Vec<u8>,
+    wear: Vec<Vec<(ItemKind, u16)>>,
+    nutrition: Vec<[u16; 3]>,
+    chunks: Vec<(i32, i32)>,
+    facing: Vec<u8>,
+    burn: Vec<(i32, i32, bool, u64, u64)>,
+    seen_hi: u128,
+}
+
+impl SaveExtV28 {
+    fn upgrade(self) -> SaveExt {
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: self.seen_hi, journal: Default::default() }
+    }
+}
+
+#[derive(Deserialize)]
+struct SaveDataV28 {
+    core: SaveCore,
+    air: Vec<crate::physics::Air>,
+    bodies: Vec<crate::physics::Body>,
+    ext: SaveExtV28,
 }
 
 /// The extension block as format 26 wrote it (no high item bits).
@@ -186,7 +222,7 @@ struct SaveExtV26 {
 
 impl SaveExtV26 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -214,7 +250,7 @@ struct SaveExtV25 {
 
 impl SaveExtV25 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: Vec::new(), seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: Vec::new(), seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -241,7 +277,7 @@ struct SaveExtV24 {
 
 impl SaveExtV24 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: Vec::new(), burn: Vec::new(), seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -267,7 +303,7 @@ struct SaveExtV23 {
 
 impl SaveExtV23 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -292,7 +328,7 @@ struct SaveExtV22 {
 
 impl SaveExtV22 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -316,7 +352,7 @@ struct SaveExtV21 {
 
 impl SaveExtV21 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0 }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
     }
 }
 
@@ -343,6 +379,7 @@ impl SaveExt {
             facing: Vec::new(),
             burn: Vec::new(),
             seen_hi: 0,
+            journal: Default::default(),
         }
     }
 }
@@ -353,6 +390,11 @@ struct SaveData {
     air: Vec<crate::physics::Air>,
     bodies: Vec<crate::physics::Body>,
     ext: SaveExt,
+}
+
+#[cfg(test)]
+pub(crate) fn checksum_for_tests(data: &[u8]) -> u64 {
+    checksum(data)
 }
 
 fn checksum(data: &[u8]) -> u64 {
@@ -441,6 +483,7 @@ impl World {
             facing: self.buildings.iter().map(|b| b.facing).collect(),
             burn: self.burn.iter().map(|(&(tx, ty), b)| (tx, ty, b.fire, b.born, b.until)).collect(),
             seen_hi: self.seen_hi,
+            journal: self.journal.clone(),
         };
         let data = SaveData { core, air: self.air.clone(), bodies: self.bodies.clone(), ext };
         let payload = postcard::to_allocvec(&data).expect("serialize save");
@@ -502,6 +545,8 @@ impl World {
         w.known = data.known;
         w.seen = data.seen;
         w.seen_hi = ext.seen_hi;
+        w.journal = ext.journal;
+        w.journal_cursor = 0;
         w.produced = data.produced;
         w.milestones = data.milestones;
         w.hardcore = data.hardcore;

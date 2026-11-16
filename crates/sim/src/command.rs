@@ -106,6 +106,10 @@ pub enum CommandKind {
     Relocate { building: u32, x: i64, y: i64 },
     /// Turn a building a quarter turn clockwise.
     Turn { building: u32 },
+    /// Sit down at a lit campfire in the evening: rest and warmth, once an evening.
+    Camp,
+    /// At camp: choose the goal for the next day (from `World::camp_goals`), or drop it.
+    SetGoal { goal: Option<crate::journal::Goal> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

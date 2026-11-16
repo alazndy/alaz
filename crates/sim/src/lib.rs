@@ -3,7 +3,9 @@
 
 pub mod agents;
 pub mod buildings;
+pub mod camp;
 pub mod debug;
+pub mod journal;
 pub mod command;
 pub mod map;
 mod items_serde;
@@ -31,4 +33,5 @@ pub use rules::rules;
 pub use surface::{Burn, Ground, Surface};
 pub use wildlife::{Wild, WildSpecies};
 pub use rules::MinigameKind;
+pub use journal::{Goal, Journal};
 pub use world::{PERCEPTION_STEPS, CraftView, Discovery, Event, Milestone, Reject, World};

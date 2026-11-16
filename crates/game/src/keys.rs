@@ -26,6 +26,7 @@ pub enum Action {
     Craft,
     Build,
     Goals,
+    Journal,
     Routes,
     Help,
     Save,
@@ -41,7 +42,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 29] = [
+    pub const ALL: [Action; 30] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -61,6 +62,7 @@ impl Action {
         Action::Craft,
         Action::Build,
         Action::Goals,
+        Action::Journal,
         Action::Routes,
         Action::Help,
         Action::Save,
@@ -94,6 +96,7 @@ impl Action {
             Action::Craft => "Yap",
             Action::Build => "İnşa",
             Action::Goals => "Hedefler",
+            Action::Journal => "Günlük",
             Action::Routes => "Rotalar",
             Action::Help => "Yardım",
             Action::Save => "Kaydet",
@@ -128,6 +131,7 @@ impl Action {
             Action::Craft => "craft",
             Action::Build => "build",
             Action::Goals => "goals",
+            Action::Journal => "journal",
             Action::Routes => "routes",
             Action::Help => "help",
             Action::Save => "save",
@@ -163,6 +167,7 @@ impl Action {
             Action::Craft => (K::KeyC, None),
             Action::Build => (K::KeyB, None),
             Action::Goals => (K::KeyH, None),
+            Action::Journal => (K::KeyJ, None),
             Action::Routes => (K::KeyR, None),
             Action::Help => (K::F1, None),
             Action::Save => (K::F5, None),

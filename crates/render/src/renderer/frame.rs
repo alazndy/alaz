@@ -591,7 +591,7 @@ impl Renderer {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (ground_height(world.seed, x + sx, z + sz) - ground_height(world.seed, x - sx, z - sz)) / 1.2
                 };
-                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, stage: world.perception_level(), slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me };
+                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, stage: world.perception_level(), slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated() };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;
