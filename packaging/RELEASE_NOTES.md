@@ -29,7 +29,7 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
-## 0.3.0'da yeni
+## 0.3.1'de yeni (0.3.0 yayınlanmadı)
 
 **53 yeni makine**, üç dalgada:
 - **Sanayi:** kok fırını, kireç ve çimento fırınları, tuğla fırını, pudlaj fırını, Bessemer konvertörü, döküm ocağı ve kum kalıp, torna, matkap/freze, pres, testere değirmeni, çıkrık, mekanik dokuma tezgahı, kazan, buhar çekici, haddeleme hattı.
