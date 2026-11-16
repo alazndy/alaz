@@ -134,10 +134,49 @@ pub enum BuildingKind {
     CottonGin,
     /// A powered frame of many spindles: a dozen threads where the wheel draws one.
     SpinningJenny,
+    // --- Electricity and the late age (wave 3) ---
+    /// An electric arc between graphite rods in a lined hearth: 1800 degrees on the grid, steel from pig iron and scrap, silicon without a blast furnace.
+    ArcFurnace,
+    /// Stills and columns on live power: rock oil split into lamp kerosene and machine oil.
+    Refinery,
+    /// A copper pot, a coil and a cooling tub: tar and oil boiled apart, and spirit run off fermented fruit and grain.
+    Still,
+    /// Plates in a bath with current through it: copper refined pure, aluminium won from bauxite.
+    Electrolysis,
+    /// A motor on a piston pump: on a live grid it blows the strong blast a converter or arc furnace needs.
+    Compressor,
+    /// A length of track, a wagon and a winch: carries what stations nearby have made to a depot beside another railway far away.
+    Railway,
+    /// A pump driven by its own steam cylinder: keeps a mine dry with no wire at all.
+    SteamPump,
+    /// Steps the line up: on a live grid it links grid buildings three times as far as a pole does.
+    Transformer,
+    /// A bank of lead plates in acid: charges while the grid has current to spare and feeds it when the dynamo stops.
+    Accumulator,
+    /// An arc held to the seam: beams and sheet parts joined into frames for big machines.
+    Welder,
+    /// A glass-lined vessel stirred by a motor: manure and lime to fertiliser, herbs to dye, oil to soap.
+    Reactor,
+    /// An insulated chamber chilled by a compressor: food keeps three times longer than in a cellar while the grid is live.
+    Cooler,
+    /// Key, sounder and a wire along the poles: reports what the other telegraph stations' depots hold.
+    Telegraph,
+    /// A mast, a tube set and a loop of wire: reports the depots of other radio stations within reach and tomorrow's weather.
+    Radio,
+    /// A pump that draws the air from glass: light bulbs by the pair and electron tubes.
+    VacuumPump,
+    /// A furnace that draws a seed crystal slowly out of molten silicon: pure silicon.
+    CrystalPuller,
+    /// Light through a mask onto coated silicon: chips by the dozen.
+    Photolith,
+    /// A machine tool run by a punched programme on live power: shafts, gears and pistons turned out with no hand on them.
+    CncMachine,
+    /// An arm on a rail: takes what the stations round it have made, runs a chain of recipes by itself and hands the result on.
+    AssemblyRobot,
 }
 
 impl BuildingKind {
-    pub const ALL: [BuildingKind; 68] = [
+    pub const ALL: [BuildingKind; 87] = [
         BuildingKind::Campfire,
         BuildingKind::Shelter,
         BuildingKind::CharcoalKiln,
@@ -206,23 +245,69 @@ impl BuildingKind {
         BuildingKind::PrintingPress,
         BuildingKind::CottonGin,
         BuildingKind::SpinningJenny,
+        BuildingKind::ArcFurnace,
+        BuildingKind::Refinery,
+        BuildingKind::Still,
+        BuildingKind::Electrolysis,
+        BuildingKind::Compressor,
+        BuildingKind::Railway,
+        BuildingKind::SteamPump,
+        BuildingKind::Transformer,
+        BuildingKind::Accumulator,
+        BuildingKind::Welder,
+        BuildingKind::Reactor,
+        BuildingKind::Cooler,
+        BuildingKind::Telegraph,
+        BuildingKind::Radio,
+        BuildingKind::VacuumPump,
+        BuildingKind::CrystalPuller,
+        BuildingKind::Photolith,
+        BuildingKind::CncMachine,
+        BuildingKind::AssemblyRobot,
     ];
 
     /// Part of the electric grid (generates, carries or uses electricity).
     pub fn on_grid(self) -> bool {
-        matches!(self, BuildingKind::Dynamo | BuildingKind::Pole | BuildingKind::ElectricMotor | BuildingKind::ElectricLamp | BuildingKind::Computer)
+        matches!(self, BuildingKind::Dynamo | BuildingKind::Pole | BuildingKind::ElectricMotor | BuildingKind::ElectricLamp | BuildingKind::Computer | BuildingKind::Transformer | BuildingKind::Accumulator) || self.needs_grid()
+    }
+
+    /// Machines that do nothing unless the grid they hang on is live (a dynamo turning, or an accumulator holding charge).
+    pub fn needs_grid(self) -> bool {
+        matches!(
+            self,
+            BuildingKind::ArcFurnace
+                | BuildingKind::Refinery
+                | BuildingKind::Electrolysis
+                | BuildingKind::Compressor
+                | BuildingKind::Welder
+                | BuildingKind::Reactor
+                | BuildingKind::Cooler
+                | BuildingKind::Telegraph
+                | BuildingKind::Radio
+                | BuildingKind::VacuumPump
+                | BuildingKind::CrystalPuller
+                | BuildingKind::Photolith
+                | BuildingKind::CncMachine
+                | BuildingKind::AssemblyRobot
+        )
+    }
+
+    /// How far this grid building reaches to link another (mm): a pole's 12 m, or three times that for a transformer.
+    pub fn grid_reach_mm(self) -> i64 {
+        if self == BuildingKind::Transformer { 36_000 } else { 12_000 }
     }
 
     /// Machines that do nothing without mechanical power (a wheel, wind, steam or a motor within reach, or an animal at a gin).
     pub fn needs_power(self) -> bool {
-        matches!(self, BuildingKind::Lathe | BuildingKind::DrillMill | BuildingKind::Press | BuildingKind::Sawmill | BuildingKind::PowerLoom | BuildingKind::RollingLine | BuildingKind::ForgeHammer | BuildingKind::CottonGin | BuildingKind::SpinningJenny)
+        matches!(self, BuildingKind::Lathe | BuildingKind::DrillMill | BuildingKind::Press | BuildingKind::Sawmill | BuildingKind::PowerLoom | BuildingKind::RollingLine | BuildingKind::ForgeHammer | BuildingKind::CottonGin | BuildingKind::SpinningJenny | BuildingKind::Railway)
     }
 
     /// What the machine has to have around it to work, beyond its inputs.
     pub fn requirement(self) -> Option<Requirement> {
         match self {
             k if k.needs_power() => Some(Requirement::Power),
-            BuildingKind::SteamHammer => Some(Requirement::Steam),
+            k if k.needs_grid() => Some(Requirement::Grid),
+            BuildingKind::SteamHammer | BuildingKind::SteamPump => Some(Requirement::Steam),
             BuildingKind::Bessemer => Some(Requirement::StrongBlast),
             BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola => Some(Requirement::Blast),
             _ => None,
@@ -240,6 +325,8 @@ impl BuildingKind {
 pub enum Requirement {
     /// Mechanical power within reach.
     Power,
+    /// A live electric grid: a dynamo turning (or an accumulator holding charge) on the same wires.
+    Grid,
     /// A steaming boiler or engine within 8 m.
     Steam,
     /// A bellows within 3 m, worked by anything (a hand will do).

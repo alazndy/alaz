@@ -74,6 +74,15 @@ Dosya adı = oyundaki şeyin adı (küçük harf, `_` ile):
     `spinz_windlass` (vinç), `piston_mould` (kâğıt havuzu), `spin_bar` + `piston_platen` (matbaa), `spinz_roller_a/b` +
     `spinx_pulley` (çırçır), `spin_spindle_0..5` + `spinz_drive` (iplik eğirme makinesi). Kurutma rafı çalışırken
     şeritlerin renk değiştirmesiyle, tüttürme ocağı dumanla, cam ocağı ağız parıltısıyla gösterir (`lit_extra`/`idle_extra`).
+  * **Elektrik ve ileri dönem makineleri** (3. dalga): `arc_furnace`, `refinery`, `still`, `electrolysis`, `compressor`, `railway`,
+    `steam_pump`, `transformer`, `accumulator`, `welder`, `reactor`, `cooler`, `telegraph`, `radio`, `vacuum_pump`,
+    `crystal_puller`, `photolith`, `cnc_machine`, `assembly_robot`. Bunlar da `crates/render/src/mesh/machines.rs`'te kodla yazılır
+    ve aynı kancadan geçer. Hareketli parçalar dışa aktarmada şu düğümler olur: `piston_electrode_0..2` (ark fırınının elektrotları),
+    `spinz_flywheel` (rafineri, kompresör, buharlı pompa), `piston_head` (kompresör, CNC), `spinx_drum` + `spinz_wheel_*`
+    (ray ve vagonun makarası ve tekerlekleri), `piston_rod` (buharlı pompa), `spin_stirrer` (reaktör), `spin_fan` (soğutucu),
+    `piston_key` (telgraf), `spin_dish` (radyo), `piston_piston` (vakum pompası), `spin_rod` (kristal çekme), `spin_wafer`
+    (fotolitografi), `spin_chuck` (CNC), `spin_turret` (montaj robotu kolu). Elektriksiz (şebeke ölü) makine dinlenme hâliyle
+    kalır: çalışan parça (`spin_`/`piston_`/`lit_`) yalnız şebeke canlıyken oynar.
 * **Doğa** (`NodeKind`): `stone_outcrop`, `iron_outcrop`, `copper_outcrop`, `tin_outcrop`, `berry_bush`,
   `clay_deposit`, `herb_patch`, `cave_mouth`, `fiber_plant`, `deadwood`, `tree`.
   * Ağaçlar için tür adları da var, bulunursa `tree`'den önce onlar kullanılır:
@@ -163,6 +172,8 @@ offset = [0.0, 0.0, 0.0]  # metre, modeli kaydır
 Yaşam ve zanaat eşyaları da: `plant_oil`, `linseed`, `leather`, `belt`, `leather_armor`, `rope`, `felt`, `felt_cloak`, `cotton`,
 `cotton_fiber`, `paper`, `book`, `bottle`, `lens`, `window_pane`, `oil_lamp`, `oil_flask`, `dried_berries`, `jerky`,
 `smoked_meat`, `smoked_fish`, `bulgur`.
+Elektrik ve ileri dönem eşyaları da: `bauxite`, `aluminium`, `pure_copper`, `kerosene`, `lubricant`, `alcohol`, `fertilizer`, `dye`,
+`soap`, `welded_frame`, `vacuum_tube`, `pure_silicon`, `chip`.
 
 * Biçim: PNG, RGBA (şeffaflık olur). Boyut serbest ama **kare**; 32×32 ya da 64×64 öneriyoruz.
 * Çizim: **nearest** (piksel piksel, yumuşatma yok), yuvaya sığacak kare boyutuna ölçeklenir.

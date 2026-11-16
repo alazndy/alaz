@@ -10,7 +10,9 @@ use crate::world::{Agent, World, WorldSettings};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 4] = b"ALAZ";
-pub const FORMAT_VERSION: u32 = 27;
+pub const FORMAT_VERSION: u32 = 28;
+/// The format before the late-age machines: the same layout, but no accumulator charge in `fuel` and no wave-3 buildings. Still read.
+const PRE_GRID_VERSION: u32 = 27;
 /// The format before items beyond the 128th: `seen` held every item bit. Still read (nothing above 128 seen yet).
 const PRE_INDUSTRY_VERSION: u32 = 26;
 /// The format before fire: no burning or ash tiles. Still read (nothing has burned).
@@ -37,7 +39,7 @@ const PRE_CHUNK_VERSION: u32 = 23;
 fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
     let legacy = version == LEGACY_VERSION;
     crate::items_serde::LEGACY.with(|l| l.set(legacy));
-    let r = if version == FORMAT_VERSION {
+    let r = if version == FORMAT_VERSION || version == PRE_GRID_VERSION {
         postcard::from_bytes(payload)
     } else if version == PRE_INDUSTRY_VERSION {
         postcard::from_bytes::<SaveDataV26>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
@@ -68,7 +70,7 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
 }
 
 fn readable(version: u32) -> bool {
-    matches!(version, FORMAT_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
+    matches!(version, FORMAT_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
 }
 const HEADER_LEN: usize = 4 + 4 + 8;
 

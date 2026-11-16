@@ -454,6 +454,8 @@ impl Renderer {
             if let Some(tile) = self.hover_node {
                 push_hover_rim(&mut dynamic, world, tile, world.perception_level(), &cam, secs);
             }
+            // the grid is worked out once a frame: grid machines stand still on a dead line
+            let live = world.electric_live();
             for (bi, b) in world.buildings.iter().enumerate().filter(|(_, b)| inside(b.x as f32 / 1000.0, b.y as f32 / 1000.0)) {
                 let (bx, bz) = (b.x as f32 / 1000.0, b.y as f32 / 1000.0);
                 decal(&mut dynamic, art.shadow_l, bx + 0.2, bz + 0.15, WHITE, 0.0);
@@ -462,7 +464,7 @@ impl Renderer {
                 } else {
                     let start = dynamic.len();
                     // a machine with a job but no power (or steam, or blast) stands still instead of pretending to work
-                    let working = b.active() && (!matches!(b.kind.requirement(), Some(alaz_sim::buildings::Requirement::Power | alaz_sim::buildings::Requirement::Steam | alaz_sim::buildings::Requirement::StrongBlast)) || world.requirement_met(bi));
+                    let working = world.working_with(bi, &live);
                     push_building(&mut dynamic, b.kind, bx, bz, working, tick, None);
                     turn_quarters(&mut dynamic, start, bx, bz, b.facing);
                 }

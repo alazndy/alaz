@@ -25,6 +25,9 @@ pub struct BuildingDef {
     /// Another way to pay for it (machined parts instead of cast ones): either list builds it. Empty = none.
     #[serde(default)]
     pub alt_cost: Vec<ItemCount>,
+    /// A third way to pay for it (the chip path to a computer, say). Empty = none.
+    #[serde(default)]
+    pub alt_cost2: Vec<ItemCount>,
     /// Things that must be carried to build it but are not used up (flint to light a fire).
     #[serde(default)]
     pub needs: Vec<ItemKind>,
@@ -38,13 +41,12 @@ pub struct BuildingDef {
 impl BuildingDef {
     /// The list of items that pays for this building from what is `has` (the plain cost first, then the other way).
     pub fn cost_for(&self, has: impl Fn(&[ItemCount]) -> bool) -> Option<&[ItemCount]> {
-        if has(&self.cost) {
-            Some(&self.cost)
-        } else if !self.alt_cost.is_empty() && has(&self.alt_cost) {
-            Some(&self.alt_cost)
-        } else {
-            None
-        }
+        self.price_lists().find(|l| has(l))
+    }
+
+    /// Every way to pay for it, the plain cost first (the others are left out when empty).
+    pub fn price_lists(&self) -> impl Iterator<Item = &[ItemCount]> {
+        std::iter::once(&self.cost[..]).chain([&self.alt_cost[..], &self.alt_cost2[..]].into_iter().filter(|l| !l.is_empty()))
     }
 
     /// A big building: what a crane within reach makes cheaper (twelve items or more to pay, and not a crane itself).
@@ -61,12 +63,7 @@ impl BuildingDef {
                 l.to_vec()
             }
         };
-        let plain = ease(&self.cost);
-        if has(&plain) {
-            return Some(plain);
-        }
-        let alt = ease(&self.alt_cost);
-        (!self.alt_cost.is_empty() && has(&alt)).then_some(alt)
+        self.price_lists().map(ease).find(|l| has(l))
     }
 }
 

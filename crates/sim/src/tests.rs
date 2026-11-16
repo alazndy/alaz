@@ -4609,8 +4609,12 @@ fn sweep_every_building_and_recipe() {
             if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer) {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Bellows, ax + 1_500, ay + 2_000));
             }
-            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill | BuildingKind::StoneMortar) || st.needs_power() {
+            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill | BuildingKind::StoneMortar) || st.needs_power() || st.needs_grid() {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Windmill, ax + 1_500, ay + 6_000));
+            }
+            // a grid machine wants a live line: a dynamo turned by that windmill
+            if st.needs_grid() {
+                w.buildings.push(crate::buildings::Building::new(BuildingKind::Dynamo, ax + 1_500, ay + 4_000));
             }
             // a steam hammer wants steam: a boiler under steam beside it
             if st == BuildingKind::SteamHammer {
@@ -6055,7 +6059,7 @@ fn every_wave_two_machine_has_work_or_an_effect() {
     }
     // the crane has no recipe: its effect is tested above
     assert!(r.recipes.iter().all(|d| d.station != Some(BuildingKind::Crane)));
-    assert_eq!(BuildingKind::ALL.len(), 68);
+    assert_eq!(BuildingKind::ALL.len(), 87, "68 before wave 3 and 19 with it");
     // old ways stay
     for id in ["raw_pot", "fire_pot", "cloth", "linen", "spin_fiber", "mill_flour", "glass", "copper_wire", "press_sheet_iron", "weave_thread", "boiler_coal", "cook_meat", "cook_fish"] {
         assert!(r.recipes.iter().any(|d| d.id == id && d.discovery != Discovery::Retired), "{id}");
@@ -6158,4 +6162,656 @@ fn a_wave_two_save_loads_and_older_item_lists_still_read() {
     assert_eq!(read.counts[0], 1);
     assert_eq!(read.counts[129], 130);
     assert!(read.counts[130..].iter().all(|&n| n == 0));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Electricity and the late age, wave 3: arc furnace, refining, electrolysis, compressor, rails, transformer,
+// accumulator, welding, chemistry, cooling, telegraph and radio, vacuum, crystals, chips, CNC, assembly robot.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// A windmill turning a dynamo at (x, y + 2.5 m): everything on the grid within 12 m of it is live.
+fn grid_at(w: &mut World, x: i64, y: i64) -> (u32, u32) {
+    let m = push_building(w, BuildingKind::Windmill, x, y + 5_500);
+    let d = push_building(w, BuildingKind::Dynamo, x, y + 2_500);
+    (m, d)
+}
+
+type GridCase = (BuildingKind, &'static str, Vec<(ItemKind, u16)>, Vec<(ItemKind, u16)>, u64);
+
+fn grid_cases() -> Vec<GridCase> {
+    use ItemKind as I;
+    vec![
+        (BuildingKind::ArcFurnace, "arc_steel", vec![(I::PigIron, 3)], vec![(I::Steel, 3)], 4_000),
+        (BuildingKind::ArcFurnace, "arc_scrap_steel", vec![(I::CastIronPart, 2)], vec![(I::Steel, 1)], 4_000),
+        (BuildingKind::ArcFurnace, "arc_silicon", vec![(I::Sand, 2), (I::Coke, 1)], vec![(I::Silicon, 2)], 4_000),
+        (BuildingKind::Refinery, "refine_oil", vec![(I::Oil, 2)], vec![(I::Kerosene, 2), (I::Lubricant, 1)], 4_000),
+        (BuildingKind::Refinery, "refine_tar", vec![(I::Tar, 2)], vec![(I::Kerosene, 1), (I::Lubricant, 1)], 4_000),
+        (BuildingKind::Electrolysis, "electro_copper", vec![(I::CopperIngot, 2), (I::WaterPot, 1)], vec![(I::PureCopper, 2), (I::Pot, 1)], 2_500),
+        (BuildingKind::Electrolysis, "electro_aluminium", vec![(I::Bauxite, 4), (I::Coke, 1)], vec![(I::Aluminium, 2)], 4_000),
+        (BuildingKind::Welder, "weld_frame", vec![(I::Beam, 2), (I::SheetPart, 2)], vec![(I::WeldedFrame, 1)], 2_500),
+        (BuildingKind::Welder, "weld_frame_steel", vec![(I::Steel, 3), (I::SheetPart, 2)], vec![(I::WeldedFrame, 1)], 2_500),
+        (BuildingKind::Reactor, "make_fertilizer", vec![(I::Manure, 3), (I::Lime, 1), (I::WaterPot, 1)], vec![(I::Fertilizer, 3), (I::Pot, 1)], 4_000),
+        (BuildingKind::Reactor, "make_dye", vec![(I::Herb, 2), (I::Lime, 1), (I::WaterPot, 1)], vec![(I::Dye, 2), (I::Pot, 1)], 4_000),
+        (BuildingKind::Reactor, "make_dye_berries", vec![(I::Berries, 4), (I::Lime, 1), (I::WaterPot, 1)], vec![(I::Dye, 2), (I::Pot, 1)], 4_000),
+        (BuildingKind::Reactor, "make_soap", vec![(I::PlantOil, 2), (I::Lime, 1), (I::WaterPot, 1)], vec![(I::Soap, 3), (I::Pot, 1)], 4_000),
+        (BuildingKind::VacuumPump, "vacuum_bulb", vec![(I::Glass, 1), (I::CopperWire, 1)], vec![(I::LightBulb, 2)], 1_500),
+        (BuildingKind::VacuumPump, "vacuum_tube", vec![(I::Glass, 1), (I::CopperWire, 2)], vec![(I::VacuumTube, 2)], 1_500),
+        (BuildingKind::CrystalPuller, "pull_crystal", vec![(I::Silicon, 3)], vec![(I::PureSilicon, 2)], 8_000),
+        (BuildingKind::Photolith, "print_chip", vec![(I::PureSilicon, 1), (I::CopperWire, 2), (I::Dye, 1)], vec![(I::Chip, 3)], 3_000),
+        (BuildingKind::Photolith, "print_chip_oil", vec![(I::PureSilicon, 1), (I::CopperWire, 2), (I::PlantOil, 1)], vec![(I::Chip, 2)], 3_000),
+        (BuildingKind::CncMachine, "cnc_shaft", vec![(I::Steel, 1)], vec![(I::Shaft, 2)], 1_000),
+        (BuildingKind::CncMachine, "cnc_gear", vec![(I::Steel, 1)], vec![(I::PrecisionGear, 3)], 1_000),
+        (BuildingKind::CncMachine, "cnc_piston", vec![(I::Steel, 1)], vec![(I::Piston, 2)], 1_500),
+        (BuildingKind::CncMachine, "cnc_bolts", vec![(I::Steel, 1)], vec![(I::BoltNut, 6)], 1_000),
+        (BuildingKind::CncMachine, "cnc_cylinder_block", vec![(I::IronCylinder, 1), (I::Steel, 1)], vec![(I::CylinderBlock, 1)], 1_500),
+        (BuildingKind::AssemblyRobot, "robot_magnet", vec![(I::Steel, 1), (I::IronOre, 2)], vec![(I::Magnet, 1)], 1_500),
+        (BuildingKind::AssemblyRobot, "robot_transistor", vec![(I::Silicon, 1), (I::CopperWire, 2)], vec![(I::Transistor, 2)], 1_500),
+    ]
+}
+
+#[test]
+fn grid_machines_make_their_goods_on_a_live_line() {
+    let (base, a, bx, by) = industry_world();
+    for (kind, id, inputs, outputs, max) in grid_cases() {
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        grid_at(&mut w, bx + 4_000, by);
+        assert!(w.requirement_met(st as usize), "{kind:?}: the line is live");
+        assert!(run_job(&mut w, a, st, id, &inputs, max), "{kind:?} {id} did not finish");
+        for (k, n) in outputs {
+            assert_eq!(out_of(&w, st, k), n, "{kind:?} {id}: {k:?}");
+        }
+    }
+    // the rest of the recipes of old stations: pure copper to wire, aluminium to sheet, a book on dye, kerosene in a boiler
+    use ItemKind as I;
+    let mut w = base.clone();
+    let mill = push_building(&mut w, BuildingKind::RollingMill, bx + 4_000, by);
+    w.buildings.push(Building::new(BuildingKind::Windmill, bx + 4_000, by + 4_000));
+    assert!(run_job(&mut w, a, mill, "wire_pure", &[(I::PureCopper, 1)], 3_000));
+    assert_eq!(out_of(&w, mill, I::CopperWire), 6, "pure copper draws more wire than the ingot did");
+    let mut w = base.clone();
+    let press = push_building(&mut w, BuildingKind::Press, bx + 4_000, by);
+    w.buildings.push(Building::new(BuildingKind::Windmill, bx + 4_000, by + 4_000));
+    assert!(run_job(&mut w, a, press, "press_aluminium", &[(I::Aluminium, 1)], 2_000));
+    assert_eq!(out_of(&w, press, I::Sheet), 2);
+    let mut w = base.clone();
+    let pp = push_building(&mut w, BuildingKind::PrintingPress, bx + 4_000, by);
+    assert!(run_job(&mut w, a, pp, "print_book_dye", &[(I::Paper, 4), (I::Dye, 1), (I::Leather, 1)], 4_000));
+    assert_eq!(out_of(&w, pp, I::Book), 1, "a book without charcoal and oil, on dye");
+    let mut w = base.clone();
+    let boiler = push_building(&mut w, BuildingKind::Boiler, bx + 4_000, by);
+    w.agents[0].inventory.counts[I::Kerosene as usize] = 1;
+    assert!(run_job(&mut w, a, boiler, "boiler_kerosene", &[(I::WaterPot, 2)], 20_000));
+    // and the still, which needs no wire, runs alcohol and kerosene
+    for (id, inputs, outs) in [
+        ("distill_tar", vec![(I::Tar, 2), (I::WaterPot, 1)], vec![(I::Kerosene, 1), (I::Pot, 1)]),
+        ("distill_oil", vec![(I::Oil, 2), (I::WaterPot, 1)], vec![(I::Kerosene, 2), (I::Pot, 1)]),
+        ("distill_alcohol_berries", vec![(I::Berries, 6), (I::WaterPot, 1)], vec![(I::Alcohol, 2), (I::Pot, 1)]),
+        ("distill_alcohol_grain", vec![(I::Grain, 5), (I::WaterPot, 1)], vec![(I::Alcohol, 2), (I::Pot, 1)]),
+    ] {
+        let mut w = base.clone();
+        let st = push_building(&mut w, BuildingKind::Still, bx + 4_000, by);
+        assert!(run_job(&mut w, a, st, id, &inputs, 5_000), "{id}");
+        for (k, n) in outs {
+            assert_eq!(out_of(&w, st, k), n, "{id}: {k:?}");
+        }
+    }
+}
+
+#[test]
+fn grid_machines_stand_still_and_cold_on_a_dead_line() {
+    let (base, a, bx, by) = industry_world();
+    for (kind, id, inputs, _, _) in grid_cases() {
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        // a dynamo with no wind to turn it, and a windmill too far from it
+        push_building(&mut w, BuildingKind::Dynamo, bx + 4_000, by + 2_500);
+        push_building(&mut w, BuildingKind::Windmill, bx + 4_000, by + 20_000);
+        assert!(!w.requirement_met(st as usize), "{kind:?}: no current");
+        let (x, y) = (w.buildings[st as usize].x, w.buildings[st as usize].y);
+        w.agents[0].x = x + 1_300;
+        w.agents[0].y = y;
+        for &(k, n) in &inputs {
+            w.agents[0].inventory.counts[k as usize] += n;
+        }
+        w.step(&[cmd(a, CommandKind::StartJob { building: st, recipe: recipe(id) })]);
+        let ticks = rules().recipes[recipe(id).0 as usize].ticks;
+        for _ in 0..900 {
+            topped_up(&mut w);
+            w.step(&[]);
+        }
+        let left = w.buildings[st as usize].job.map(|j| j.remaining);
+        assert_eq!(left, Some(ticks), "{kind:?} {id} did work with a dead line");
+        assert!(w.buildings[st as usize].temp < 60, "{kind:?} warmed up on a dead line: {}", w.buildings[st as usize].temp);
+        assert!(w.buildings[st as usize].output_total() == 0);
+    }
+}
+
+#[test]
+fn a_transformer_stretches_the_grid_three_times_as_far() {
+    let (mut w, _a) = with_agent(5);
+    let (sx, sy) = (10_000, 10_000);
+    grid_at(&mut w, sx, sy);
+    // a lamp 40 m down the line: a pole's reach is 12 m, so it stays dark
+    let lamp = push_building(&mut w, BuildingKind::ElectricLamp, sx + 40_000, sy + 2_500);
+    assert!(!w.electric_live()[lamp as usize]);
+    // a transformer 10 m from the dynamo: the line is live to it, and 36 m on from it
+    let tr = push_building(&mut w, BuildingKind::Transformer, sx + 10_000, sy + 2_500);
+    let live = w.electric_live();
+    assert!(live[tr as usize] && live[lamp as usize], "the far lamp is lit through the transformer");
+    // poles do not do that: the same gap with a pole in the transformer's place stays dark
+    let mut v = World::with_size(crate::map::tag_seed_v2(1), 64, 64);
+    grid_at(&mut v, sx, sy);
+    let lamp = push_building(&mut v, BuildingKind::ElectricLamp, sx + 40_000, sy + 2_500);
+    push_building(&mut v, BuildingKind::Pole, sx + 10_000, sy + 2_500);
+    assert!(!v.electric_live()[lamp as usize]);
+    // and 36 m is the limit
+    let far = push_building(&mut w, BuildingKind::ElectricLamp, sx + 10_000, sy + 2_500 + 37_000);
+    assert!(!w.electric_live()[far as usize]);
+    // the transformer without current lights nothing
+    let mut u = World::with_size(crate::map::tag_seed_v2(1), 64, 64);
+    push_building(&mut u, BuildingKind::Transformer, sx, sy);
+    let lamp = push_building(&mut u, BuildingKind::ElectricLamp, sx + 20_000, sy);
+    assert!(!u.electric_live()[lamp as usize]);
+}
+
+#[test]
+fn an_accumulator_charges_from_the_dynamo_and_carries_the_grid_when_it_stops() {
+    let (mut w, _a) = with_agent(5);
+    let (sx, sy) = (10_000, 10_000);
+    let (windmill, _) = grid_at(&mut w, sx, sy);
+    let acc = push_building(&mut w, BuildingKind::Accumulator, sx + 4_000, sy + 2_500);
+    let lamp = push_building(&mut w, BuildingKind::ElectricLamp, sx + 8_000, sy + 2_500);
+    assert_eq!(w.buildings[acc as usize].fuel, 0);
+    for _ in 0..600 {
+        w.step(&[]);
+    }
+    let charged = w.buildings[acc as usize].fuel;
+    assert!(charged >= 30 && charged <= crate::world::ACCUMULATOR_CAP, "ten seconds of a live grid charge it: {charged}");
+    // the wind stops (the windmill is taken away): the lamp stays lit on the accumulator, which runs down
+    w.buildings.remove(windmill as usize);
+    let (acc, lamp) = (acc as usize - 1, lamp as usize - 1);
+    assert!(w.electric_live()[lamp], "lit from the accumulator");
+    for _ in 0..600 {
+        w.step(&[]);
+    }
+    let after = w.buildings[acc].fuel;
+    assert!(after < charged && after + 5 >= charged - 12, "it gave off about a unit a second: {charged} -> {after}");
+    // flat, it is just a box on a dead line
+    w.buildings[acc].fuel = 0;
+    assert!(!w.electric_live()[lamp]);
+    // an accumulator never charges past its capacity
+    w.buildings[acc].fuel = crate::world::ACCUMULATOR_CAP - 1;
+    w.buildings.push(Building::new(BuildingKind::Windmill, sx, sy + 5_500));
+    for _ in 0..300 {
+        w.step(&[]);
+    }
+    assert_eq!(w.buildings[acc].fuel, crate::world::ACCUMULATOR_CAP);
+}
+
+#[test]
+fn a_compressor_blows_for_the_converter_and_doubles_the_arc_furnace() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    // a converter with only a live compressor beside it has its strong blast; a dead one gives none
+    let mut w = base.clone();
+    let bess = push_building(&mut w, BuildingKind::Bessemer, bx + 4_000, by);
+    push_building(&mut w, BuildingKind::Compressor, bx + 4_000, by + 2_000);
+    assert!(!w.requirement_met(bess as usize), "a compressor with no current blows nothing");
+    grid_at(&mut w, bx + 4_000, by + 2_000);
+    assert!(w.requirement_met(bess as usize), "a live compressor blows for it");
+    // twice the speed at the arc furnace: same recipe, same hour, half the time left
+    let progress = |with: bool| -> u32 {
+        let mut w = base.clone();
+        let st = push_building(&mut w, BuildingKind::ArcFurnace, bx + 4_000, by);
+        grid_at(&mut w, bx + 4_000, by);
+        if with {
+            push_building(&mut w, BuildingKind::Compressor, bx + 4_000, by - 2_000);
+        }
+        w.buildings[st as usize].temp = 1_800;
+        w.agents[0].x = bx + 5_300;
+        w.agents[0].y = by;
+        w.agents[0].inventory.counts[I::PigIron as usize] = 3;
+        w.step(&[cmd(a, CommandKind::StartJob { building: st, recipe: recipe("arc_steel") })]);
+        for _ in 0..150 {
+            topped_up(&mut w);
+            w.step(&[]);
+        }
+        rules().recipes[recipe("arc_steel").0 as usize].ticks - w.buildings[st as usize].job.expect("running").remaining
+    };
+    let (plain, blown) = (progress(false), progress(true));
+    assert_eq!(blown, plain * 2, "{plain} vs {blown}");
+}
+
+#[test]
+fn the_wagon_carries_goods_far_and_only_under_power() {
+    use ItemKind as I;
+    let (mut w, _a) = with_agent(5);
+    let (sx, sy) = (20_000, 20_000);
+    // a lathe makes shafts beside the first track; a depot waits 100 m away beside the second
+    let rail_a = push_building(&mut w, BuildingKind::Railway, sx, sy);
+    let rail_b = push_building(&mut w, BuildingKind::Railway, sx + 100_000, sy);
+    let lathe = push_building(&mut w, BuildingKind::Lathe, sx + 3_000, sy);
+    let depot = push_building(&mut w, BuildingKind::Depot, sx + 103_000, sy);
+    w.buildings[lathe as usize].output[I::Shaft as usize] = 5;
+    // no power: nothing moves
+    for _ in 0..3_000 {
+        w.step(&[]);
+    }
+    assert_eq!(w.buildings[depot as usize].output[I::Shaft as usize], 0);
+    assert_eq!(w.buildings[lathe as usize].output[I::Shaft as usize], 5);
+    assert_eq!(w.rail_partner(rail_a as usize), Some(rail_b as usize));
+    // a windmill turns the winch: the goods ride the wagon to the far depot, after a trip of some seconds
+    push_building(&mut w, BuildingKind::Windmill, sx, sy + 5_000);
+    let mut at = None;
+    for t in 0..3_000 {
+        w.step(&[]);
+        if at.is_none() && w.buildings[depot as usize].output[I::Shaft as usize] > 0 {
+            at = Some(t);
+        }
+    }
+    assert_eq!(w.buildings[depot as usize].output[I::Shaft as usize], 5);
+    assert_eq!(w.buildings[lathe as usize].output[I::Shaft as usize], 0);
+    assert!(at.unwrap() > 60, "a hundred metres takes a few seconds, not an instant: {:?}", at);
+    // too far for a wagon: 200 m
+    let mut v = World::with_size(crate::map::tag_seed_v2(1), 256, 256);
+    let a = push_building(&mut v, BuildingKind::Railway, sx, sy);
+    push_building(&mut v, BuildingKind::Railway, sx + 200_000, sy);
+    assert_eq!(v.rail_partner(a as usize), None);
+    // no depot at the end: the load stays in the wagon, and is not lost
+    let mut v = World::with_size(crate::map::tag_seed_v2(1), 256, 256);
+    let a = push_building(&mut v, BuildingKind::Railway, sx, sy);
+    push_building(&mut v, BuildingKind::Railway, sx + 50_000, sy);
+    push_building(&mut v, BuildingKind::Windmill, sx, sy + 5_000);
+    let l = push_building(&mut v, BuildingKind::Lathe, sx + 3_000, sy);
+    v.buildings[l as usize].output[I::Shaft as usize] = 4;
+    for _ in 0..1_500 {
+        v.step(&[]);
+    }
+    assert_eq!(v.buildings[a as usize].output[I::Shaft as usize], 4);
+}
+
+#[test]
+fn the_steam_pump_needs_steam_not_wire() {
+    let (mut w, _a) = with_agent(5);
+    let pump = push_building(&mut w, BuildingKind::SteamPump, 20_000, 20_000);
+    assert!(!w.requirement_met(pump as usize));
+    // wires and a windmill do not drive it
+    grid_at(&mut w, 20_000, 20_000);
+    assert!(!w.requirement_met(pump as usize), "a steam pump has no use for current");
+    // a steaming boiler within 8 m does
+    let mut boiler = Building::new(BuildingKind::Boiler, 25_000, 20_000);
+    boiler.job = Some(crate::buildings::Job { recipe: recipe("boiler_coal").0, remaining: u32::MAX / 2 });
+    boiler.temp = 300;
+    w.buildings.push(boiler);
+    assert!(w.requirement_met(pump as usize));
+    // the ordinary pump still goes with power (the old path is open)
+    let old = push_building(&mut w, BuildingKind::Pump, 20_000, 22_000);
+    assert!(w.powered_at(w.buildings[old as usize].x, w.buildings[old as usize].y));
+}
+
+#[test]
+fn the_cooler_keeps_food_three_times_longer_than_a_cellar_only_while_live() {
+    use ItemKind as I;
+    let lost = |kind: BuildingKind, live: bool| -> u32 {
+        let (mut w, _a) = with_agent(3);
+        let st = push_building(&mut w, kind, 10_000, 10_000);
+        if live {
+            grid_at(&mut w, 10_000, 10_000);
+        }
+        w.buildings[st as usize].output[I::Berries as usize] = 60_000;
+        w.tick = crate::time::TICKS_PER_DAY / 24 * 5;
+        w.step(&[]);
+        60_000 - w.buildings[st as usize].output[I::Berries as usize] as u32
+    };
+    let (cellar, cooler, dead, depot) = (lost(BuildingKind::Cellar, false), lost(BuildingKind::Cooler, true), lost(BuildingKind::Cooler, false), lost(BuildingKind::Depot, false));
+    assert!(cellar > 0 && cooler > 0);
+    let ratio = cellar as f64 / cooler as f64;
+    assert!((2.6..=3.4).contains(&ratio), "three times a cellar: {cellar} vs {cooler}");
+    assert!(dead > cellar * 3, "a cooler without current is a box: {dead} vs cellar {cellar}");
+    assert!(depot >= dead * 9 / 10, "and no better than a depot: {depot}");
+    // it takes goods like a depot
+    let (mut w, a) = with_agent(3);
+    let (cx, cy) = (w.agents[0].x + 1_500, w.agents[0].y);
+    let st = push_building(&mut w, BuildingKind::Cooler, cx, cy);
+    give(&mut w, I::Berries, 6);
+    w.step(&[cmd(a, CommandKind::Deposit { building: st })]);
+    assert_eq!(w.buildings[st as usize].output[I::Berries as usize], 6);
+}
+
+#[test]
+fn telegraph_and_radio_report_remote_depots() {
+    use ItemKind as I;
+    let (mut w, _a) = with_agent(5);
+    let (sx, sy) = (10_000, 10_000);
+    grid_at(&mut w, sx, sy);
+    let near = push_building(&mut w, BuildingKind::Telegraph, sx + 4_000, sy + 2_500);
+    // the wires run out on transformers: 30, 60 and 90 m
+    let tr: Vec<u32> = (1..=3).map(|k| push_building(&mut w, BuildingKind::Transformer, sx + k * 30_000, sy + 2_500)).collect();
+    let far = push_building(&mut w, BuildingKind::Telegraph, sx + 94_000, sy + 2_500);
+    let depot = push_building(&mut w, BuildingKind::Depot, sx + 98_000, sy + 2_500);
+    w.buildings[depot as usize].output[I::Steel as usize] = 7;
+    w.buildings[depot as usize].output[I::Plank as usize] = 5;
+    // a depot by the first telegraph is not remote to it
+    let home = push_building(&mut w, BuildingKind::Depot, sx + 8_000, sy + 2_500);
+    w.buildings[home as usize].output[I::Wood as usize] = 3;
+    let report = w.remote_depots(near as usize);
+    assert!(report.contains(&(depot as usize, 12)), "{report:?}");
+    assert!(!report.iter().any(|r| r.0 == home as usize), "the home depot is not news");
+    let report = w.remote_depots(far as usize);
+    assert!(report.contains(&(home as usize, 3)), "the news goes both ways: {report:?}");
+    // cut the wires in the middle: the far set goes dark and neither can speak
+    let mut cut = w.clone();
+    cut.buildings.remove(tr[1] as usize);
+    assert!(cut.remote_depots(near as usize).is_empty());
+    // a telegraph on its own reports nothing
+    let (mut v, _) = with_agent(5);
+    grid_at(&mut v, sx, sy);
+    let one = push_building(&mut v, BuildingKind::Telegraph, sx + 4_000, sy + 2_500);
+    assert!(v.remote_depots(one as usize).is_empty());
+    // radios need no wires between them: 300 m apart, each on its own line, within range; 500 m is too far
+    let (mut r, _) = with_agent(5);
+    grid_at(&mut r, sx, sy);
+    grid_at(&mut r, sx + 300_000, sy);
+    let r1 = push_building(&mut r, BuildingKind::Radio, sx + 4_000, sy + 2_500);
+    push_building(&mut r, BuildingKind::Radio, sx + 304_000, sy + 2_500);
+    let d = push_building(&mut r, BuildingKind::Cellar, sx + 308_000, sy + 2_500);
+    r.buildings[d as usize].output[I::Berries as usize] = 9;
+    assert!(r.remote_depots(r1 as usize).contains(&(d as usize, 9)));
+    let (mut r, _) = with_agent(5);
+    grid_at(&mut r, sx, sy);
+    grid_at(&mut r, sx + 500_000, sy);
+    let r1 = push_building(&mut r, BuildingKind::Radio, sx + 4_000, sy + 2_500);
+    push_building(&mut r, BuildingKind::Radio, sx + 504_000, sy + 2_500);
+    push_building(&mut r, BuildingKind::Depot, sx + 508_000, sy + 2_500);
+    assert!(r.remote_depots(r1 as usize).is_empty());
+    // the radio tells tomorrow's sky; it is the same sky the world will have
+    let f = w.forecast();
+    assert_eq!(f[0], w.weather());
+    assert_eq!(f[2], crate::time::weather(w.seed, w.tick + crate::time::TICKS_PER_DAY / 3, w.settings.season_days as u64));
+}
+
+#[test]
+fn the_assembly_robot_runs_a_chain_by_itself_and_stops_when_dark() {
+    use ItemKind as I;
+    let build = |powered: bool| -> World {
+        let (mut w, _a) = with_agent(5);
+        let (sx, sy) = (10_000, 10_000);
+        if powered {
+            grid_at(&mut w, sx, sy);
+        }
+        let robot = push_building(&mut w, BuildingKind::AssemblyRobot, sx, sy);
+        w.buildings[robot as usize].auto = None;
+        // a depot of silicon and wire; a bench that makes boards from transistors on auto (plank and wire already in)
+        let depot = push_building(&mut w, BuildingKind::Depot, sx + 3_000, sy);
+        w.buildings[depot as usize].output[I::Silicon as usize] = 2;
+        w.buildings[depot as usize].output[I::CopperWire as usize] = 4;
+        let bench = push_building(&mut w, BuildingKind::Workbench, sx - 3_000, sy);
+        w.buildings[bench as usize].auto = Some(recipe("circuit_board").0);
+        w.buildings[bench as usize].input[I::Plank as usize] = 2;
+        w.buildings[bench as usize].input[I::CopperWire as usize] = 4;
+        w
+    };
+    let mut w = build(true);
+    for _ in 0..6_000 {
+        w.step(&[]);
+    }
+    let bench = w.buildings.iter().position(|b| b.kind == BuildingKind::Workbench).unwrap();
+    assert!(w.buildings[bench].output[I::CircuitBoard as usize] >= 1, "silicon went in, a board came out, nobody touched it: {:?}", w.buildings[bench].output[I::CircuitBoard as usize]);
+    assert!(w.produced[I::Transistor as usize] >= 2);
+    // no current, no work
+    let mut w = build(false);
+    for _ in 0..6_000 {
+        w.step(&[]);
+    }
+    let bench = w.buildings.iter().position(|b| b.kind == BuildingKind::Workbench).unwrap();
+    assert_eq!(w.buildings[bench].output[I::CircuitBoard as usize], 0);
+    assert_eq!(w.produced[I::Transistor as usize], 0);
+}
+
+#[test]
+fn a_computer_takes_the_chip_path_and_the_old_board_path_stays_open() {
+    use ItemKind as I;
+    let def = rules().building(BuildingKind::Computer);
+    assert!(def.cost.iter().any(|c| c.item == I::CircuitBoard));
+    assert!(def.alt_cost.iter().any(|c| c.item == I::CircuitBoard));
+    assert!(def.alt_cost2.iter().any(|c| c.item == I::Chip));
+    for (items, how) in [
+        (vec![(I::CircuitBoard, 4), (I::Glass, 2), (I::Steel, 2), (I::CopperWire, 4)], "old board path"),
+        (vec![(I::CircuitBoard, 4), (I::Glass, 2), (I::SheetPart, 2), (I::CopperWire, 4)], "old board path with sheet parts"),
+        (vec![(I::Chip, 2), (I::Glass, 2), (I::Steel, 2), (I::CopperWire, 4)], "chip path"),
+    ] {
+        let (mut w, a) = with_agent(3);
+        learn_all(&mut w);
+        for &(k, n) in &items {
+            give(&mut w, k, n);
+        }
+        let (x, y) = spot_for(&w, BuildingKind::Computer, &[]);
+        w.agents[0].x = x - 1_500;
+        w.agents[0].y = y;
+        w.step(&[cmd(a, CommandKind::Build { kind: BuildingKind::Computer, x, y })]);
+        assert!(w.buildings.iter().any(|b| b.kind == BuildingKind::Computer), "{how}: {:?}", w.take_events());
+        for &(k, _) in &items {
+            assert_eq!(count(&w, 0, k), 0, "{how}: {k:?} paid");
+        }
+    }
+    // chips in hand open computing, like a board does
+    let (mut w, _) = with_agent(3);
+    give(&mut w, I::Chip, 2);
+    w.step(&[]);
+    assert!(w.knows(Discovery::Computing));
+}
+
+#[test]
+fn fertiliser_lifts_a_field_above_its_best_and_the_crop_with_it() {
+    use ItemKind as I;
+    let (mut w, a) = with_agent(3);
+    let (x, y) = (w.agents[0].x + 1_500, w.agents[0].y);
+    let f = push_building(&mut w, BuildingKind::Field, x, y);
+    give(&mut w, I::Fertilizer, 2);
+    w.step(&[cmd(a, CommandKind::Deposit { building: f })]);
+    for _ in 0..3 {
+        w.step(&[]);
+    }
+    assert_eq!(w.buildings[f as usize].fertility, crate::world::FERTILIZED_SOIL);
+    assert_eq!(w.buildings[f as usize].input[I::Fertilizer as usize], 1, "one dressing is enough until the soil tires");
+    // the harvest is half as big again as in plain soil
+    let crop = rules().recipes.iter().find(|r| r.station == Some(BuildingKind::Field) && r.outputs[0].n >= 4).expect("a field recipe");
+    let plain = crop.outputs[0].n as u32;
+    assert_eq!((plain * w.buildings[f as usize].fertility as u32 / 1000) as u32, plain * 3 / 2);
+}
+
+#[test]
+fn alcohol_and_soap_heal_and_a_kerosene_lamp_lasts_three_torches() {
+    use ItemKind as I;
+    let (mut w, a) = with_agent(3);
+    w.agents[0].sick = 6_000;
+    w.agents[0].injury = 3_000;
+    w.agents[0].health = 4_000;
+    give(&mut w, I::Alcohol, 1);
+    w.step(&[cmd(a, CommandKind::Eat { item: I::Alcohol })]);
+    assert_eq!(w.agents[0].injury, 0, "the wound is clean");
+    assert!(w.agents[0].sick <= 3_500 && w.agents[0].health >= 4_400);
+    assert_eq!(count(&w, 0, I::Alcohol), 0);
+    give(&mut w, I::Soap, 1);
+    let before = w.agents[0].sick;
+    w.step(&[cmd(a, CommandKind::Eat { item: I::Soap })]);
+    assert!(w.agents[0].sick < before);
+    assert_eq!(count(&w, 0, I::Soap), 0);
+}
+
+#[test]
+fn bauxite_lies_in_deposits_on_every_seed_and_the_shaft_brings_it_up() {
+    use ItemKind as I;
+    let mut with_bauxite = 0;
+    let mut total = (0, 0);
+    for s in 1..=24u64 {
+        let seed = crate::map::tag_seed_v2(s * 7919);
+        let mut found = 0;
+        for cy in -4..12 {
+            for cx in -4..12 {
+                if let Some(d) = crate::world::deposit_in_cell(seed, cx, cy) {
+                    total.0 += 1;
+                    if d.2 == I::Bauxite {
+                        found += 1;
+                        total.1 += 1;
+                    }
+                }
+            }
+        }
+        if found > 0 {
+            with_bauxite += 1;
+        }
+    }
+    assert!(with_bauxite >= 22, "bauxite on {with_bauxite} of 24 seeds");
+    assert!(total.1 * 100 / total.0 >= 4 && total.1 * 100 / total.0 <= 16, "a modest share of the beds: {total:?}");
+    // a shaft on a bauxite bed brings it up
+    let (seed, d) = (1..40u64)
+        .map(|s| crate::map::tag_seed_v2(s * 7919))
+        .find_map(|seed| (0..10).flat_map(|cy| (0..10).map(move |cx| (cx, cy))).filter_map(|(cx, cy)| crate::world::deposit_in_cell(seed, cx, cy)).find(|d| d.2 == I::Bauxite && (2..250).contains(&d.0) && (2..250).contains(&d.1)).map(|d| (seed, d)))
+        .expect("bauxite in a 256 map");
+    let mut w = World::with_size(seed, 256, 256);
+    let st = push_building(&mut w, BuildingKind::MineShaft, d.0 as i64 * 1000 + 500, d.1 as i64 * 1000 + 500);
+    w.buildings[st as usize].input[I::Plank as usize] = 1;
+    w.buildings[st as usize].job = Some(crate::buildings::Job { recipe: recipe("mine").0, remaining: 5 });
+    for _ in 0..40 {
+        w.step(&[]);
+    }
+    assert!(w.buildings[st as usize].output[I::Bauxite as usize] >= 2);
+}
+
+#[test]
+fn wave_three_discoveries_open_from_things_that_happen() {
+    use ItemKind as I;
+    let fresh = || with_agent(3).0;
+    let opens = |w: &mut World, d: Discovery| {
+        w.step(&[]);
+        w.knows(d)
+    };
+    type Case = (Vec<Discovery>, Vec<(ItemKind, u16)>, Discovery);
+    let cases: Vec<Case> = vec![
+        (vec![Discovery::Steam], vec![(I::Tar, 1)], Discovery::Chemistry),
+        (vec![Discovery::Steam], vec![(I::Oil, 1)], Discovery::Chemistry),
+        (vec![Discovery::Steam], vec![(I::Lime, 2)], Discovery::Chemistry),
+        (vec![Discovery::HeavyCurrent], vec![(I::Steel, 1)], Discovery::ArcSmelting),
+        (vec![Discovery::HeavyCurrent], vec![(I::Bauxite, 1)], Discovery::ArcSmelting),
+        (vec![Discovery::Electronics], vec![(I::Silicon, 1)], Discovery::Semiconductors),
+        (vec![Discovery::Electronics], vec![(I::Transistor, 1)], Discovery::Automation),
+        (vec![Discovery::Electronics], vec![(I::CircuitBoard, 1)], Discovery::Automation),
+        (vec![Discovery::Electronics], vec![(I::Chip, 1)], Discovery::Automation),
+    ];
+    for (known, held, opened) in cases {
+        let mut w = fresh();
+        for &(k, n) in &held {
+            give(&mut w, k, n);
+        }
+        assert!(!opens(&mut w, opened), "{opened:?} must not open before what it needs is known");
+        for k in &known {
+            w.learn(*k);
+        }
+        assert!(opens(&mut w, opened), "{opened:?} from {known:?} and {held:?}");
+    }
+    // a dynamo that stands opens heavy current (for people who know electricity)
+    let mut w = fresh();
+    w.learn(Discovery::Electricity);
+    assert!(!opens(&mut w, Discovery::HeavyCurrent));
+    push_building(&mut w, BuildingKind::Dynamo, 5_000, 5_000);
+    assert!(opens(&mut w, Discovery::HeavyCurrent));
+    // every machine has a way to be opened, and the late ones follow what they need
+    let r = rules();
+    for (k, d) in [
+        (BuildingKind::ArcFurnace, Discovery::ArcSmelting),
+        (BuildingKind::Electrolysis, Discovery::ArcSmelting),
+        (BuildingKind::Welder, Discovery::ArcSmelting),
+        (BuildingKind::Refinery, Discovery::Chemistry),
+        (BuildingKind::Still, Discovery::Chemistry),
+        (BuildingKind::Reactor, Discovery::Chemistry),
+        (BuildingKind::Compressor, Discovery::HeavyCurrent),
+        (BuildingKind::Transformer, Discovery::HeavyCurrent),
+        (BuildingKind::Accumulator, Discovery::HeavyCurrent),
+        (BuildingKind::Cooler, Discovery::HeavyCurrent),
+        (BuildingKind::Railway, Discovery::Machining),
+        (BuildingKind::SteamPump, Discovery::Steam),
+        (BuildingKind::Telegraph, Discovery::Electricity),
+        (BuildingKind::Radio, Discovery::Electronics),
+        (BuildingKind::VacuumPump, Discovery::Electronics),
+        (BuildingKind::CrystalPuller, Discovery::Semiconductors),
+        (BuildingKind::Photolith, Discovery::Semiconductors),
+        (BuildingKind::CncMachine, Discovery::Automation),
+        (BuildingKind::AssemblyRobot, Discovery::Automation),
+    ] {
+        assert_eq!(r.building(k).discovery, d, "{k:?}");
+    }
+    // the discovery bits still fit in a u64
+    assert!((Discovery::Automation as u32) < 64);
+}
+
+#[test]
+fn every_wave_three_machine_has_work_or_an_effect_and_a_requirement() {
+    let r = rules();
+    let effect_only = [BuildingKind::Compressor, BuildingKind::Railway, BuildingKind::SteamPump, BuildingKind::Transformer, BuildingKind::Accumulator, BuildingKind::Cooler, BuildingKind::Telegraph, BuildingKind::Radio];
+    for k in [
+        BuildingKind::ArcFurnace, BuildingKind::Refinery, BuildingKind::Still, BuildingKind::Electrolysis, BuildingKind::Compressor, BuildingKind::Railway,
+        BuildingKind::SteamPump, BuildingKind::Transformer, BuildingKind::Accumulator, BuildingKind::Welder, BuildingKind::Reactor, BuildingKind::Cooler,
+        BuildingKind::Telegraph, BuildingKind::Radio, BuildingKind::VacuumPump, BuildingKind::CrystalPuller, BuildingKind::Photolith, BuildingKind::CncMachine,
+        BuildingKind::AssemblyRobot,
+    ] {
+        let works = r.recipes.iter().any(|x| x.station == Some(k));
+        assert!(works || effect_only.contains(&k), "{k:?} does nothing");
+        // electric machines are on the grid and say so
+        if k.needs_grid() {
+            assert!(k.on_grid() && k.requirement() == Some(crate::buildings::Requirement::Grid), "{k:?}");
+        }
+        // every machine can be paid for, and an old path (no wave-3 item) exists where the plain price has one
+        let def = r.building(k);
+        assert!(!def.cost.is_empty());
+    }
+    // the late machines have an old way to pay for them: no price needs both a chip and a wave-3 only chain unless an older price exists
+    for k in [BuildingKind::CncMachine, BuildingKind::AssemblyRobot, BuildingKind::Computer] {
+        assert!(r.building(k).cost.iter().all(|c| c.item != ItemKind::Chip), "{k:?}: the plain cost does not need a chip");
+    }
+    // appended recipes come after every older one
+    assert!(recipe("arc_steel").0 > recipe("jenny_cotton").0);
+}
+
+#[test]
+fn a_version_27_save_loads_and_wave_three_state_survives() {
+    use ItemKind as I;
+    let (mut w, _) = with_agent(7);
+    let mut acc = Building::new(BuildingKind::Accumulator, 6_000, 6_000);
+    acc.fuel = 777;
+    w.buildings.push(acc);
+    let mut rail = Building::new(BuildingKind::Railway, 12_000, 6_000);
+    rail.output[I::Steel as usize] = 5;
+    w.buildings.push(rail);
+    let mut robot = Building::new(BuildingKind::AssemblyRobot, 18_000, 6_000);
+    robot.auto = Some(recipe("robot_magnet").0);
+    robot.input[I::Steel as usize] = 2;
+    w.buildings.push(robot);
+    w.buildings.push(Building::new(BuildingKind::Telegraph, 24_000, 6_000));
+    w.mark_seen(I::Chip);
+    w.mark_seen(I::PureSilicon);
+    w.learn(Discovery::Automation);
+    let b = World::from_bytes(&w.to_bytes()).expect("load");
+    assert_eq!(b.hash(), w.hash());
+    assert_eq!(b.buildings[b.buildings.len() - 4].fuel, 777, "the accumulator keeps its charge");
+    assert_eq!(b.buildings[b.buildings.len() - 3].output[I::Steel as usize], 5, "the wagon keeps its load");
+    assert_eq!(b.buildings[b.buildings.len() - 2].auto, Some(recipe("robot_magnet").0));
+    assert!(b.has_seen(I::Chip) && b.knows(Discovery::Automation));
+    // the same bytes framed as format 27 (what wave 2 wrote: the same layout) still load, and carry on
+    let bytes = w.to_bytes();
+    let mut old = bytes.clone();
+    old[4..8].copy_from_slice(&27u32.to_le_bytes());
+    let c = World::from_bytes(&old).expect("format 27 loads");
+    assert_eq!(c.buildings.len(), w.buildings.len());
+    assert!(c.has_seen(I::Chip));
+}
+
+#[test]
+fn a_chip_counts_for_the_transistor_and_board_milestones() {
+    let (mut w, _) = with_agent(3);
+    w.produced[ItemKind::Silicon as usize] = 1;
+    w.produced[ItemKind::Chip as usize] = 1;
+    w.step(&[]);
+    assert!(w.milestone_done(crate::world::Milestone::Transistor) && w.milestone_done(crate::world::Milestone::CircuitBoard));
 }

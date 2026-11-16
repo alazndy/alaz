@@ -121,6 +121,18 @@ pub const USE_RADIUS_MM: i64 = 3_000;
 pub const BUILD_RADIUS_MM: i64 = 8_000;
 /// Per-item cap of a station's input buffer.
 pub const STATION_INPUT_CAP: u16 = 60;
+/// Soil strength (permille) a dressing of fertiliser gives a field: above the ordinary 1000, so the next crop is half as big again.
+pub const FERTILIZED_SOIL: u16 = 1500;
+/// What an accumulator holds (seconds it can keep the grid live alone), and what it takes on each second a dynamo feeds it.
+pub const ACCUMULATOR_CAP: u32 = 1_200;
+const ACCUMULATOR_CHARGE: u32 = 4;
+/// How far a railway's wagon runs from one track to another (mm), and its trip time: a base plus a second per ten metres.
+pub const RAIL_RANGE_MM: i64 = 160_000;
+const RAIL_TRIP_BASE_S: u64 = 8;
+/// How far a radio carries news (mm).
+pub const RADIO_RANGE_MM: i64 = 400_000;
+/// How far a robot reaches round it, to pull goods from other machines and push goods to them (mm).
+const ROBOT_REACH_MM: i64 = 6_000;
 /// How far a crane reaches from its mast (mm): heavy buildings put up within it cost a quarter less.
 pub const CRANE_REACH_MM: i64 = 10_000;
 
@@ -484,6 +496,17 @@ pub enum Discovery {
     Spinning,
     /// Machines known, copper or steel or sheet in hand: the forge hammer.
     Drawing,
+    // --- Electricity and the late age (wave 3) ---
+    /// A dynamo stands: transformer, accumulator, compressor, cooler.
+    HeavyCurrent,
+    /// Heavy current known, iron, steel or copper in hand: the arc furnace, electrolysis, the welder.
+    ArcSmelting,
+    /// Steam known, tar, oil or lime in hand: still, refinery, chemical reactor.
+    Chemistry,
+    /// Electronics known, silicon in hand: the crystal puller and photolithography.
+    Semiconductors,
+    /// Electronics known, a transistor, board or chip in hand: the CNC machine and the assembly robot.
+    Automation,
 }
 
 impl Discovery {
@@ -1048,7 +1071,7 @@ pub fn cotton_tuft(seed: u64, tx: i32, ty: i32, warm: i32, wet: i32) -> bool {
 
 /// Put everything a building accepts into it. Depots take all but tools; stations take recipe inputs.
 fn deposit_into(rules: &crate::rules::Rules, inv: &mut Inventory, b: &mut Building) {
-    if matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar) {
+    if matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar | BuildingKind::Cooler) {
         for k in ItemKind::ALL {
             if !k.is_tool() {
                 b.output[k as usize] += std::mem::take(&mut inv.counts[k as usize]);
@@ -1058,6 +1081,7 @@ fn deposit_into(rules: &crate::rules::Rules, inv: &mut Inventory, b: &mut Buildi
     }
     if b.kind == BuildingKind::Field {
         b.input[ItemKind::Manure as usize] += std::mem::take(&mut inv.counts[ItemKind::Manure as usize]);
+        b.input[ItemKind::Fertilizer as usize] += std::mem::take(&mut inv.counts[ItemKind::Fertilizer as usize]);
     }
     for r in rules.recipes.iter().filter(|r| r.station == Some(b.kind)) {
         if let Some(al) = &r.alloy {
@@ -1249,6 +1273,11 @@ impl World {
     /// The sky now.
     pub fn weather(&self) -> crate::time::Weather {
         crate::time::weather(self.seed, self.tick, self.settings.season_days as u64)
+    }
+
+    /// What a radio announces: the sky in each of the next four blocks of four hours (the first is the one under way).
+    pub fn forecast(&self) -> [crate::time::Weather; 4] {
+        std::array::from_fn(|k| crate::time::weather(self.seed, self.tick + k as u64 * TICKS_PER_DAY / 6, self.settings.season_days as u64))
     }
 
     /// A world of `w` x `h` tiles (clamped to the supported range).
@@ -1891,10 +1920,14 @@ impl World {
                     _ if !human => {}
                     None => {}
                     Some((nx, ny)) if dist2(a.x, a.y, nx, ny) > 3_000 * 3_000 => self.events.push(Event::Rejected(id, Reject::TooFar)),
-                    Some(_) if a.inventory.get(ItemKind::Torch) == 0 && !(a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::PlantOil) > 0) => self.events.push(Event::Rejected(id, Reject::NoLight)),
+                    Some(_) if a.inventory.get(ItemKind::Torch) == 0 && !(a.inventory.get(ItemKind::OilLamp) > 0 && (a.inventory.get(ItemKind::PlantOil) > 0 || a.inventory.get(ItemKind::Kerosene) > 0)) => self.events.push(Event::Rejected(id, Reject::NoLight)),
                     Some(_) => {
                         // a lamp (kept) with a spoonful of oil burns twice as long as a torch, which is used up
-                        let light = if a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::PlantOil) > 0 {
+                        let light = if a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::Kerosene) > 0 {
+                            // lamp kerosene burns clean and steady: three times a torch
+                            a.inventory.counts[ItemKind::Kerosene as usize] -= 1;
+                            CAVE_TORCH_TICKS * 3
+                        } else if a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::PlantOil) > 0 {
                             a.inventory.counts[ItemKind::PlantOil as usize] -= 1;
                             CAVE_TORCH_TICKS * 2
                         } else {
@@ -1913,7 +1946,7 @@ impl World {
                     let have = pick_tier(&*rules_now, self.agents[idx].kind, &self.agents[idx].inventory);
                     // the deepest chamber is under water: it opens only with a working pump within 15 m of the mouth
                     let mouth = self.nodes.get(node.0 as usize).map(|n| n.center_mm()).unwrap_or((ax, ay));
-                    let pumped = self.buildings.iter().filter(|p| p.kind == BuildingKind::Pump && dist2(p.x, p.y, mouth.0, mouth.1) <= 15_000 * 15_000).any(|p| self.powered_at(p.x, p.y));
+                    let pumped = self.buildings.iter().enumerate().filter(|(_, p)| matches!(p.kind, BuildingKind::Pump | BuildingKind::SteamPump) && dist2(p.x, p.y, mouth.0, mouth.1) <= 15_000 * 15_000).any(|(pi, p)| if p.kind == BuildingKind::SteamPump { self.requirement_met(pi) } else { self.powered_at(p.x, p.y) });
                     if deeper && depth + 1 == CAVE_MAX_DEPTH && !pumped {
                         self.events.push(Event::Rejected(id, Reject::Flooded));
                     } else if have.is_none_or(|t| t < need) && (!deeper || depth < CAVE_MAX_DEPTH) {
@@ -1982,6 +2015,23 @@ impl World {
                     } else {
                         a.injury = 0;
                         a.health = (a.health + 600).min(MAX_STAT);
+                    }
+                }
+            }
+            CommandKind::Eat { item } if matches!(item, ItemKind::Alcohol | ItemKind::Soap) => {
+                let a = &mut self.agents[idx];
+                let n = &mut a.inventory.counts[*item as usize];
+                if human && *n > 0 {
+                    *n -= 1;
+                    if *item == ItemKind::Alcohol {
+                        // spirit on a wound and a mouthful for the stomach: the wound is clean, the sickness eases
+                        a.injury = 0;
+                        a.sick = (a.sick - 2_500).max(0);
+                        a.health = (a.health + 450).min(MAX_STAT);
+                    } else {
+                        // washed hands and clothes keep the sickness off
+                        a.sick = (a.sick - 1_500).max(0);
+                        a.health = (a.health + 100).min(MAX_STAT);
                     }
                 }
             }
@@ -3229,8 +3279,10 @@ impl World {
         let steam: Vec<(i64, i64)> = self.buildings.iter().enumerate().filter(|(i, b)| b.steaming() || (b.kind == BuildingKind::SteamEngine && is_power_source(&self.buildings, *i))).map(|(_, b)| (b.x, b.y)).collect();
         let steam_only: Vec<(i64, i64)> = steam.clone();
         // electric motors on a live grid drive machines like a wheel does
-        let live = self.electric_live();
+        let (live, fed) = self.electric_state();
         let motors: Vec<(i64, i64)> = self.buildings.iter().zip(&live).filter(|(b, on)| **on && b.kind == BuildingKind::ElectricMotor).map(|(b, _)| (b.x, b.y)).collect();
+        // compressors on a live grid blow strong air for any furnace or converter within 3 m
+        let air: Vec<(i64, i64)> = self.buildings.iter().zip(&live).filter(|(b, on)| **on && b.kind == BuildingKind::Compressor).map(|(b, _)| (b.x, b.y)).collect();
         let mut motor_worked = false;
         if live.iter().zip(&self.buildings).any(|(on, b)| *on && b.kind == BuildingKind::Dynamo) && self.milestones & Milestone::Electricity.bit() == 0 {
             self.milestones |= Milestone::Electricity.bit();
@@ -3264,6 +3316,7 @@ impl World {
                     || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
             })
             .map(|b| (b.x, b.y))
+            .chain(air.iter().copied())
             .collect();
         // bellows driven by machinery (never by hand): the strong blast a converter needs
         let strong_blown: Vec<(i64, i64)> = self
@@ -3277,6 +3330,7 @@ impl World {
                     || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
             })
             .map(|b| (b.x, b.y))
+            .chain(air.iter().copied())
             .collect();
         let wheels: Vec<(i64, i64)> =
             self.buildings.iter().filter(|b| b.kind == BuildingKind::WaterWheel).map(|b| (b.x, b.y)).collect();
@@ -3304,8 +3358,10 @@ impl World {
                 Some(Requirement::StrongBlast) if !strong_blown.iter().any(|&(x, y)| dist2(x, y, b.x, b.y) <= 3_000 * 3_000) => bdef.heat_max.min(1000),
                 _ => bdef.heat_max,
             };
+            // a grid machine with a dead line stands cold and still
+            let grid_dead = b.kind.needs_grid() && !live[i];
             if second && bdef.heat_max > 0 {
-                let working = if b.kind.burns() { b.fuel > 0 } else { b.job.is_some() };
+                let working = if b.kind.burns() { b.fuel > 0 } else { b.job.is_some() && !grid_dead };
                 if working && b.temp < ceiling {
                     b.temp = (b.temp + bdef.heat_rate.max(1)).min(ceiling);
                 } else if working && b.temp > ceiling {
@@ -3334,6 +3390,11 @@ impl World {
                 if b.input[ItemKind::Manure as usize] > 0 && b.fertility <= 750 {
                     b.input[ItemKind::Manure as usize] -= 1;
                     b.fertility += 250;
+                }
+                // chemical fertiliser lifts the soil above its ordinary best: half as much again at the next harvest
+                if b.input[ItemKind::Fertilizer as usize] > 0 && b.fertility < FERTILIZED_SOIL {
+                    b.input[ItemKind::Fertilizer as usize] -= 1;
+                    b.fertility = FERTILIZED_SOIL;
                 }
             }
             // penned animals leave dung behind
@@ -3370,6 +3431,10 @@ impl World {
                 let (_, animals, water) = power_at(b.x, b.y, false);
                 by_water = water > 0;
                 mill_power = (3 * animals + 3 * water).min(3);
+            }
+            // grid machines run at full speed on a live line (twice that with a compressor's oxygen at an arc furnace)
+            if b.kind.needs_grid() {
+                mill_power = if grid_dead { 0 } else if b.kind == BuildingKind::ArcFurnace && air.iter().any(|&(cx, cy)| dist2(cx, cy, b.x, b.y) <= 3_000 * 3_000) { 6 } else { 3 };
             }
             // a steam hammer wants steam itself: a wheel or the wind will not lift it
             if b.kind == BuildingKind::SteamHammer {
@@ -3464,6 +3529,9 @@ impl World {
             self.events.push(Event::Milestone(Milestone::WindPower));
         }
         self.run_conveyors();
+        self.run_grid_storage(&live, &fed);
+        self.run_rails();
+        self.run_robots(&live);
         if water_forged && self.milestones & Milestone::Mechanism.bit() == 0 {
             self.milestones |= Milestone::Mechanism.bit();
             self.events.push(Event::Milestone(Milestone::Mechanism));
@@ -3901,7 +3969,7 @@ impl World {
         if self.knows(Discovery::Spear) || n(ItemKind::RawFish) >= 1 {
             self.discover(Discovery::Fishing);
         }
-        if n(ItemKind::CircuitBoard) >= 1 {
+        if n(ItemKind::CircuitBoard) >= 1 || n(ItemKind::Chip) >= 2 {
             self.discover(Discovery::Computing);
         }
         if self.knows(Discovery::Steam) && n(ItemKind::CopperIngot) >= 1 {
@@ -3990,6 +4058,23 @@ impl World {
         }
         if self.knows(Discovery::Mechanics) && (n(ItemKind::CopperIngot) >= 1 || n(ItemKind::Sheet) >= 1 || n(ItemKind::Steel) >= 1) {
             self.discover(Discovery::Drawing);
+        }
+        // electricity and the late age
+        let has_dynamo = self.buildings.iter().any(|b| b.kind == BuildingKind::Dynamo);
+        if self.knows(Discovery::Electricity) && has_dynamo {
+            self.discover(Discovery::HeavyCurrent);
+        }
+        if self.knows(Discovery::HeavyCurrent) && (n(ItemKind::Steel) >= 1 || n(ItemKind::PigIron) >= 1 || n(ItemKind::CopperIngot) >= 2 || n(ItemKind::Bauxite) >= 1) {
+            self.discover(Discovery::ArcSmelting);
+        }
+        if self.knows(Discovery::Steam) && (n(ItemKind::Tar) >= 1 || n(ItemKind::Oil) >= 1 || n(ItemKind::Lime) >= 2) {
+            self.discover(Discovery::Chemistry);
+        }
+        if self.knows(Discovery::Electronics) && n(ItemKind::Silicon) >= 1 {
+            self.discover(Discovery::Semiconductors);
+        }
+        if self.knows(Discovery::Electronics) && (n(ItemKind::Transistor) >= 1 || n(ItemKind::CircuitBoard) >= 1 || n(ItemKind::Chip) >= 1) {
+            self.discover(Discovery::Automation);
         }
         let has_animal = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Dog | AgentKind::Ox | AgentKind::Horse));
         let has_draught = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse));
@@ -4124,6 +4209,12 @@ impl World {
         self.buildings.iter().zip(&live).any(|(b, &on)| on && b.kind == BuildingKind::ElectricMotor && dist2(b.x, b.y, x, y) <= 8_000 * 8_000)
     }
 
+    /// Is a compressor on a live grid within 3 m of (x, y)? Its blast serves any furnace or converter there.
+    pub fn compressor_near(&self, x: i64, y: i64) -> bool {
+        let live = self.electric_live();
+        self.buildings.iter().zip(&live).any(|(c, &on)| on && c.kind == BuildingKind::Compressor && dist2(c.x, c.y, x, y) <= 3_000 * 3_000)
+    }
+
     /// Is there a crane within reach of a building site at (x, y)? It makes heavy buildings cheaper.
     pub fn crane_near(&self, x: i64, y: i64) -> bool {
         self.buildings.iter().any(|b| b.kind == BuildingKind::Crane && dist2(b.x, b.y, x, y) <= CRANE_REACH_MM * CRANE_REACH_MM)
@@ -4137,18 +4228,30 @@ impl World {
         match b.kind.requirement() {
             None => true,
             Some(Requirement::Power) => self.powered_at(b.x, b.y),
+            Some(Requirement::Grid) => self.electric_live().get(i).copied().unwrap_or(false),
             Some(Requirement::Steam) => self.buildings.iter().enumerate().any(|(j, w)| (w.steaming() || w.kind == BuildingKind::SteamEngine) && is_power_source(&self.buildings, j) && near(w.x, w.y, 8_000)),
-            Some(r @ (Requirement::Blast | Requirement::StrongBlast)) => self.buildings.iter().filter(|bl| bl.kind == BuildingKind::Bellows && near(bl.x, bl.y, 3_000)).any(|bl| {
-                self.powered_at(bl.x, bl.y)
-                    || (r == Requirement::Blast && self.agents.iter().any(|a| a.kind == AgentKind::Human && dist2(a.x, a.y, bl.x, bl.y) <= 2_500 * 2_500))
-            }),
+            Some(r @ (Requirement::Blast | Requirement::StrongBlast)) => {
+                self.compressor_near(b.x, b.y)
+                    || self.buildings.iter().filter(|bl| bl.kind == BuildingKind::Bellows && near(bl.x, bl.y, 3_000)).any(|bl| {
+                        self.powered_at(bl.x, bl.y)
+                            || (r == Requirement::Blast && self.agents.iter().any(|a| a.kind == AgentKind::Human && dist2(a.x, a.y, bl.x, bl.y) <= 2_500 * 2_500))
+                    })
+            }
         }
     }
 
-    /// Which buildings are on a live grid: a dynamo turned by mechanical power feeds it, and grid buildings (poles,
-    /// motors, lamps, computers, other dynamos) within 12 m of a live one are live too.
+    /// Which buildings are on a live grid: a dynamo turned by mechanical power feeds it, and grid buildings within reach
+    /// of a live one (12 m, or 36 m for a transformer at either end) are live too. When the dynamos stop, accumulators
+    /// that still hold charge keep their wires live.
     pub fn electric_live(&self) -> Vec<bool> {
-        let mut live = vec![false; self.buildings.len()];
+        self.electric_state().0
+    }
+
+    /// The live grid, and which of its buildings are live by a dynamo (the accumulators among them charge) rather than
+    /// by an accumulator's stored charge (those drain).
+    pub fn electric_state(&self) -> (Vec<bool>, Vec<bool>) {
+        let n = self.buildings.len();
+        let mut live = vec![false; n];
         let mut todo: Vec<usize> = Vec::new();
         for (i, b) in self.buildings.iter().enumerate() {
             if b.kind == BuildingKind::Dynamo && self.mech_powered_at(b.x, b.y) {
@@ -4156,16 +4259,30 @@ impl World {
                 todo.push(i);
             }
         }
+        self.spread_grid(&mut live, &mut todo);
+        let fed = live.clone();
+        // a dark grid with a charged accumulator on it lights up from the accumulator
+        for i in 0..n {
+            if !live[i] && self.buildings[i].kind == BuildingKind::Accumulator && self.buildings[i].fuel > 0 {
+                live[i] = true;
+                todo.push(i);
+                self.spread_grid(&mut live, &mut todo);
+            }
+        }
+        (live, fed)
+    }
+
+    fn spread_grid(&self, live: &mut [bool], todo: &mut Vec<usize>) {
         while let Some(i) = todo.pop() {
-            let (x, y) = (self.buildings[i].x, self.buildings[i].y);
+            let (x, y, reach) = (self.buildings[i].x, self.buildings[i].y, self.buildings[i].kind.grid_reach_mm());
             for (j, c) in self.buildings.iter().enumerate() {
-                if !live[j] && c.kind.on_grid() && dist2(c.x, c.y, x, y) <= 12_000 * 12_000 {
+                let r = reach.max(c.kind.grid_reach_mm());
+                if !live[j] && c.kind.on_grid() && dist2(c.x, c.y, x, y) <= r * r {
                     live[j] = true;
                     todo.push(j);
                 }
             }
         }
-        live
     }
 
     /// Mechanical power at (x, y): water wheel, windmill or steam within 8 m, or an animal at a gin within 6 m.
@@ -4173,6 +4290,179 @@ impl World {
         let near = |px: i64, py: i64, r: i64| dist2(px, py, x, y) <= r * r;
         self.buildings.iter().enumerate().any(|(i, w)| is_power_source(&self.buildings, i) && near(w.x, w.y, 8_000))
             || self.buildings.iter().filter(|g| g.kind == BuildingKind::AnimalGin && near(g.x, g.y, 6_000)).any(|g| self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse) && dist2(a.x, a.y, g.x, g.y) <= PEN_RADIUS_MM * PEN_RADIUS_MM))
+    }
+
+    /// Accumulators, once a second: one on a grid a dynamo feeds takes on charge; one holding the grid up alone gives it off.
+    fn run_grid_storage(&mut self, live: &[bool], fed: &[bool]) {
+        if self.tick % TICKS_PER_SECOND_U64 != 0 {
+            return;
+        }
+        for (i, b) in self.buildings.iter_mut().enumerate().filter(|(_, b)| b.kind == BuildingKind::Accumulator) {
+            if fed[i] {
+                b.fuel = (b.fuel + ACCUMULATOR_CHARGE).min(ACCUMULATOR_CAP);
+            } else if live[i] && b.fuel > 0 {
+                b.fuel -= 1;
+            }
+        }
+    }
+
+    /// The railway a track's wagon runs to: the nearest other one within range.
+    pub fn rail_partner(&self, i: usize) -> Option<usize> {
+        let a = self.buildings.get(i)?;
+        self.buildings.iter().enumerate().filter(|(j, b)| *j != i && b.kind == BuildingKind::Railway && dist2(a.x, a.y, b.x, b.y) <= RAIL_RANGE_MM * RAIL_RANGE_MM).min_by_key(|(_, b)| dist2(a.x, a.y, b.x, b.y)).map(|(j, _)| j)
+    }
+
+    /// Railways, once a second: a powered track loads what the stations within 6 m have made into its wagon, and every few
+    /// seconds (more the farther it goes) the wagon runs to the nearest other track and tips its load into the depot within
+    /// 12 m of it. A wagon with no depot to go to keeps its load. The load lives in the track's own `output`.
+    fn run_rails(&mut self) {
+        if self.tick % TICKS_PER_SECOND_U64 != 0 || !self.buildings.iter().any(|b| b.kind == BuildingKind::Railway) {
+            return;
+        }
+        let rails: Vec<usize> = self.buildings.iter().enumerate().filter(|(_, b)| b.kind == BuildingKind::Railway).map(|(i, _)| i).collect();
+        let second = self.tick / TICKS_PER_SECOND_U64;
+        for ri in rails {
+            let (rx, ry) = (self.buildings[ri].x, self.buildings[ri].y);
+            if !self.powered_at(rx, ry) {
+                continue;
+            }
+            let near = |x: i64, y: i64, r: i64| dist2(x, y, rx, ry) <= r * r;
+            // load
+            let mut load = [0u16; ItemKind::COUNT];
+            for (j, b) in self.buildings.iter_mut().enumerate() {
+                if j != ri && !matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar | BuildingKind::Cooler | BuildingKind::Railway | BuildingKind::Conveyor) && near(b.x, b.y, 6_000) {
+                    for (k, n) in b.output.iter_mut().enumerate() {
+                        load[k] += std::mem::take(n);
+                    }
+                }
+            }
+            for (k, n) in load.iter().enumerate() {
+                self.buildings[ri].output[k] += n;
+            }
+            // run
+            let Some(pj) = self.rail_partner(ri) else { continue };
+            let (px, py) = (self.buildings[pj].x, self.buildings[pj].y);
+            let trip = RAIL_TRIP_BASE_S + (dist2(rx, ry, px, py) as f64).sqrt() as u64 / 10_000;
+            if (second + ri as u64) % trip != 0 || self.buildings[ri].output_total() == 0 {
+                continue;
+            }
+            let Some(depot) = self.buildings.iter().enumerate().filter(|(_, b)| b.kind == BuildingKind::Depot && dist2(b.x, b.y, px, py) <= 12_000 * 12_000).min_by_key(|(_, b)| dist2(b.x, b.y, px, py)).map(|(j, _)| j) else { continue };
+            let cargo = std::mem::replace(&mut self.buildings[ri].output, [0; ItemKind::COUNT]);
+            for (k, n) in cargo.iter().enumerate() {
+                self.buildings[depot].output[k] += n;
+            }
+            if self.milestones & Milestone::BeltLine.bit() == 0 {
+                self.milestones |= Milestone::BeltLine.bit();
+                self.events.push(Event::Milestone(Milestone::BeltLine));
+            }
+        }
+    }
+
+    /// Assembly robots, once a second, on a live grid: the robot runs a chain of recipes by itself. It pulls whatever its
+    /// chosen recipe (or, without one, the first it could start) lacks from the output of the machines within 6 m, and hands
+    /// its own output on to any neighbouring machine that is set to make something from it.
+    fn run_robots(&mut self, live: &[bool]) {
+        if self.tick % TICKS_PER_SECOND_U64 != 0 {
+            return;
+        }
+        let robots: Vec<usize> = self.buildings.iter().enumerate().filter(|(i, b)| b.kind == BuildingKind::AssemblyRobot && live[*i]).map(|(i, _)| i).collect();
+        if robots.is_empty() {
+            return;
+        }
+        let rules_now = self.rules_arc();
+        let recipes = &rules_now.recipes;
+        for ri in robots {
+            let (rx, ry) = (self.buildings[ri].x, self.buildings[ri].y);
+            let near: Vec<usize> = (0..self.buildings.len()).filter(|&j| j != ri && dist2(self.buildings[j].x, self.buildings[j].y, rx, ry) <= ROBOT_REACH_MM * ROBOT_REACH_MM).collect();
+            // which recipe it works: the one set on it, else the first of its own it can be fed for
+            let chosen = self.buildings[ri].auto.or_else(|| {
+                let stocked: Vec<u16> = {
+                    let mut have = self.buildings[ri].input;
+                    for &j in &near {
+                        if !matches!(self.buildings[j].kind, BuildingKind::AssemblyRobot) {
+                            for (k, n) in self.buildings[j].output.iter().enumerate() {
+                                have[k] = have[k].saturating_add(*n);
+                            }
+                        }
+                    }
+                    recipes.iter().enumerate().filter(|(_, r)| r.station == Some(BuildingKind::AssemblyRobot) && r.inputs.iter().all(|c| have[c.item as usize] >= c.n)).map(|(i, _)| i as u16).collect()
+                };
+                stocked.first().copied()
+            });
+            if let Some(rec) = chosen {
+                if self.buildings[ri].auto.is_none() {
+                    self.buildings[ri].auto = Some(rec);
+                }
+                // pull what is missing
+                for c in &recipes[rec as usize].inputs {
+                    let mut need = (c.n * 2).saturating_sub(self.buildings[ri].input[c.item as usize]);
+                    for &j in &near {
+                        if need == 0 {
+                            break;
+                        }
+                        if self.buildings[j].kind == BuildingKind::AssemblyRobot {
+                            continue;
+                        }
+                        let take = self.buildings[j].output[c.item as usize].min(need);
+                        self.buildings[j].output[c.item as usize] -= take;
+                        self.buildings[ri].input[c.item as usize] += take;
+                        need -= take;
+                    }
+                }
+            }
+            // hand on: what a neighbouring machine is set to make something from
+            for &j in &near {
+                let Some(want) = self.buildings[j].auto.map(|a| &recipes[a as usize]) else { continue };
+                if self.buildings[j].kind == BuildingKind::AssemblyRobot {
+                    continue;
+                }
+                for c in &want.inputs {
+                    let take = self.buildings[ri].output[c.item as usize].min(STATION_INPUT_CAP.saturating_sub(self.buildings[j].input[c.item as usize]));
+                    self.buildings[ri].output[c.item as usize] -= take;
+                    self.buildings[j].input[c.item as usize] += take;
+                }
+            }
+        }
+    }
+
+    /// What the telegraph or radio at `i` reports: every depot, cellar or cooler held by another station of the same kind
+    /// that is on the grid (telegraph: on the same live wires; radio: within radio range), as (building index, stored goods).
+    /// Empty when the set is dark.
+    pub fn remote_depots(&self, i: usize) -> Vec<(usize, u32)> {
+        let Some(b) = self.buildings.get(i) else { return Vec::new() };
+        if !matches!(b.kind, BuildingKind::Telegraph | BuildingKind::Radio) {
+            return Vec::new();
+        }
+        let live = self.electric_live();
+        if !live.get(i).copied().unwrap_or(false) {
+            return Vec::new();
+        }
+        let range = if b.kind == BuildingKind::Radio { RADIO_RANGE_MM } else { i64::MAX / 4 };
+        // the other sets of the same kind that are live too (a telegraph needs the same wires, which is what live means here)
+        let sets: Vec<usize> = self.buildings.iter().enumerate().filter(|(j, o)| *j != i && o.kind == b.kind && live[*j] && dist2(o.x, o.y, b.x, b.y) <= range.saturating_mul(range).min(i64::MAX / 4)).map(|(j, _)| j).collect();
+        let reach = 15_000i64;
+        let mut out = Vec::new();
+        for (j, d) in self.buildings.iter().enumerate() {
+            if matches!(d.kind, BuildingKind::Depot | BuildingKind::Cellar | BuildingKind::Cooler) && sets.iter().any(|&s| dist2(self.buildings[s].x, self.buildings[s].y, d.x, d.y) <= reach * reach) {
+                out.push((j, d.output.iter().map(|&n| n as u32).sum()));
+            }
+        }
+        out
+    }
+
+    /// Does the machine at `i` stand working right now? `live` is `electric_live()` (taken once for a whole frame).
+    pub fn working_with(&self, i: usize, live: &[bool]) -> bool {
+        let Some(b) = self.buildings.get(i) else { return false };
+        match b.kind {
+            BuildingKind::Compressor | BuildingKind::Cooler | BuildingKind::Telegraph | BuildingKind::Radio | BuildingKind::Transformer => live.get(i).copied().unwrap_or(false),
+            BuildingKind::Accumulator => live.get(i).copied().unwrap_or(false) && b.fuel > 0,
+            BuildingKind::SteamPump => self.requirement_met(i),
+            BuildingKind::Railway => b.output_total() > 0 && self.powered_at(b.x, b.y),
+            _ => {
+                let gated = matches!(b.kind.requirement(), Some(Requirement::Power | Requirement::Steam | Requirement::StrongBlast | Requirement::Grid));
+                b.active() && (!gated || if b.kind.needs_grid() { live.get(i).copied().unwrap_or(false) } else { self.requirement_met(i) })
+            }
+        }
     }
 
     /// Powered belts, once a second: everything the stations within 3 m have made goes to the nearest depot within
@@ -4227,6 +4517,7 @@ impl World {
             scale *= 2;
         }
         let (seed, tick) = (self.seed, self.tick);
+        let live = self.electric_live();
         let spoil = |counts: &mut [u16; ItemKind::COUNT], salt: i32, jar_slow: u32, mut gone: Option<&mut Vec<(ItemKind, u16)>>| {
             for p in &rules_now.perish {
                 let c = counts[p.item as usize] as u64;
@@ -4260,6 +4551,8 @@ impl World {
                 BuildingKind::Depot => b.output[ItemKind::LargePot as usize].min(4) as u32,
                 // a cellar: cool and dark, five times slower
                 BuildingKind::Cellar => 4,
+                // a cooler on a live grid: three times the cellar's keeping (a dead one is just a box)
+                BuildingKind::Cooler if live.get(i).copied().unwrap_or(false) => 14,
                 _ => 0,
             };
             spoil(&mut b.input, 100_000 + i as i32 * 2, 1, None);
@@ -4336,8 +4629,9 @@ impl World {
         }
         let electronics = [
             (Milestone::Silicon, made(ItemKind::Silicon)),
-            (Milestone::Transistor, made(ItemKind::Transistor)),
-            (Milestone::CircuitBoard, made(ItemKind::CircuitBoard)),
+            // a chip carries its transistors and stands in for the board, so the chip path to a computer counts as well
+            (Milestone::Transistor, made(ItemKind::Transistor) || made(ItemKind::Chip)),
+            (Milestone::CircuitBoard, made(ItemKind::CircuitBoard) || made(ItemKind::Chip)),
             (Milestone::DesignWritten, self.custom_rules.is_some()),
         ];
         for (m, ok) in electronics {
@@ -4557,7 +4851,7 @@ fn serde_json_like(k: ItemKind) -> String {
 }
 
 /// Hidden deposits: one at most in each 24-tile cell, placed and filled from the seed alone (no map change, nothing
-/// saved). Kind by chance: iron, copper, tin, coal, or rock oil; richness 1..=3.
+/// saved). Kind by chance: iron (some of it bauxite), copper, tin, coal, or rock oil; richness 1..=3.
 pub fn deposit_in_cell(seed: u64, cx: i32, cy: i32) -> Option<(i32, i32, ItemKind, u8)> {
     let h = crate::rng::hash2(seed ^ 0xDE905, cx, cy);
     if h % 100 >= 35 {
@@ -4565,7 +4859,11 @@ pub fn deposit_in_cell(seed: u64, cx: i32, cy: i32) -> Option<(i32, i32, ItemKin
     }
     let tx = cx * 24 + ((h >> 8) % 20) as i32 + 2;
     let ty = cy * 24 + ((h >> 16) % 20) as i32 + 2;
-    let kind = [ItemKind::IronOre, ItemKind::CopperOre, ItemKind::TinOre, ItemKind::Coal, ItemKind::Coal, ItemKind::Oil][((h >> 24) % 6) as usize];
+    let mut kind = [ItemKind::IronOre, ItemKind::CopperOre, ItemKind::TinOre, ItemKind::Coal, ItemKind::Coal, ItemKind::Oil][((h >> 24) % 6) as usize];
+    // a third of the iron beds are red bauxite, aluminium's ore (the rest of the map is as it was)
+    if kind == ItemKind::IronOre && (h >> 36) % 3 == 0 {
+        kind = ItemKind::Bauxite;
+    }
     Some((tx, ty, kind, 1 + ((h >> 28) % 3) as u8))
 }
 

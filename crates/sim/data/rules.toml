@@ -266,6 +266,8 @@ discovery = "computing"
 # on a live grid it opens the design table: new rules, and the way to a new world
 cost = [{ item = "circuit_board", n = 4 }, { item = "glass", n = 2 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 4 }]
 alt_cost = [{ item = "circuit_board", n = 4 }, { item = "glass", n = 2 }, { item = "sheet_part", n = 2 }, { item = "copper_wire", n = 4 }]
+# or on chips printed on pure silicon instead of wired boards
+alt_cost2 = [{ item = "chip", n = 2 }, { item = "glass", n = 2 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 4 }]
 
 [[building]]
 kind = "ruin"
@@ -605,6 +607,190 @@ discovery = "spinning"
 # powered: many spindles on one frame
 cost = [{ item = "plank", n = 6 }, { item = "gear", n = 4 }, { item = "cast_iron_part", n = 1 }, { item = "cloth", n = 2 }]
 alt_cost = [{ item = "plank", n = 6 }, { item = "precision_gear", n = 2 }, { item = "belt", n = 2 }, { item = "cast_iron_part", n = 1 }]
+
+# --- Electricity and the late age (wave 3) ---
+[[building]]
+kind = "arc_furnace"
+name = "Elektrik ark fırını"
+radius_mm = 1100
+discovery = "arc_smelting"
+# on a live grid: 1800 C, steel from pig iron and scrap, silicon without a blast furnace; twice as fast with a compressor within 3 m
+cost = [{ item = "fire_brick", n = 6 }, { item = "steel", n = 3 }, { item = "copper_wire", n = 8 }]
+alt_cost = [{ item = "fire_brick", n = 6 }, { item = "beam", n = 2 }, { item = "sheet_part", n = 2 }, { item = "copper_wire", n = 8 }]
+heat_max = 1800
+heat_rate = 60
+
+[[building]]
+kind = "refinery"
+name = "Rafineri"
+radius_mm = 1100
+discovery = "chemistry"
+# on a live grid: rock oil and tar split into kerosene and machine oil
+cost = [{ item = "pipe", n = 4 }, { item = "steel", n = 3 }, { item = "copper_wire", n = 4 }, { item = "cast_iron_part", n = 2 }]
+alt_cost = [{ item = "pipe", n = 4 }, { item = "sheet", n = 4 }, { item = "copper_wire", n = 4 }, { item = "shaft", n = 1 }]
+heat_max = 300
+heat_rate = 20
+
+[[building]]
+kind = "still"
+name = "Damıtma kazanı"
+radius_mm = 800
+discovery = "chemistry"
+# a copper pot over a fire: tar and oil boiled apart, spirit run off berries and grain (no wire needed)
+cost = [{ item = "copper_ingot", n = 3 }, { item = "brick", n = 4 }, { item = "pipe", n = 2 }]
+alt_cost = [{ item = "sheet", n = 4 }, { item = "brick", n = 4 }, { item = "pipe", n = 2 }]
+heat_max = 200
+heat_rate = 15
+
+[[building]]
+kind = "electrolysis"
+name = "Elektroliz hücresi"
+radius_mm = 900
+discovery = "arc_smelting"
+# on a live grid: copper refined pure, aluminium from bauxite
+cost = [{ item = "brick", n = 6 }, { item = "copper_wire", n = 6 }, { item = "steel", n = 2 }, { item = "glass", n = 2 }]
+alt_cost = [{ item = "concrete", n = 3 }, { item = "copper_wire", n = 6 }, { item = "sheet", n = 2 }, { item = "glass", n = 2 }]
+
+[[building]]
+kind = "compressor"
+name = "Kompresör"
+radius_mm = 700
+discovery = "heavy_current"
+# on a live grid it blows the strong blast a converter or arc furnace needs, within 3 m
+cost = [{ item = "cast_iron_part", n = 3 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 6 }, { item = "magnet", n = 1 }]
+alt_cost = [{ item = "cylinder_block", n = 1 }, { item = "piston", n = 1 }, { item = "copper_wire", n = 6 }, { item = "magnet", n = 1 }]
+
+[[building]]
+kind = "railway"
+name = "Ray ve vagon"
+radius_mm = 1000
+discovery = "machining"
+# track, a wagon and a winch under power: carries the stations' goods up to 160 m to a depot beside another railway
+cost = [{ item = "rail", n = 4 }, { item = "plank", n = 6 }, { item = "iron_wheel", n = 2 }, { item = "gear", n = 2 }]
+alt_cost = [{ item = "rail", n = 4 }, { item = "beam", n = 2 }, { item = "welded_frame", n = 1 }, { item = "iron_wheel", n = 2 }]
+
+[[building]]
+kind = "steam_pump"
+name = "Buharlı pompa"
+radius_mm = 800
+discovery = "steam"
+# a pump on its own steam cylinder: keeps a mine dry within 15 m with no wire, beside a steaming boiler or engine
+cost = [{ item = "cast_iron_part", n = 3 }, { item = "plank", n = 4 }, { item = "steel", n = 1 }]
+alt_cost = [{ item = "pipe", n = 2 }, { item = "piston", n = 1 }, { item = "cylinder_block", n = 1 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "transformer"
+name = "Transformatör"
+radius_mm = 600
+discovery = "heavy_current"
+# on a live grid it links grid buildings three times as far as a pole does (36 m)
+cost = [{ item = "copper_wire", n = 12 }, { item = "steel", n = 3 }, { item = "magnet", n = 2 }, { item = "plank", n = 2 }]
+alt_cost = [{ item = "copper_wire", n = 12 }, { item = "sheet", n = 3 }, { item = "magnet", n = 2 }, { item = "plank", n = 2 }]
+alt_cost2 = [{ item = "copper_wire", n = 12 }, { item = "aluminium", n = 2 }, { item = "magnet", n = 2 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "accumulator"
+name = "Akümülatör"
+radius_mm = 600
+discovery = "heavy_current"
+# charges while a dynamo feeds the grid; when the dynamos stop it keeps the wires live until it runs down
+cost = [{ item = "sheet", n = 4 }, { item = "bottle", n = 2 }, { item = "copper_wire", n = 4 }, { item = "plank", n = 2 }]
+alt_cost = [{ item = "sheet_part", n = 4 }, { item = "glass", n = 3 }, { item = "copper_wire", n = 4 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "welder"
+name = "Elektrikli kaynak"
+radius_mm = 700
+discovery = "arc_smelting"
+# on a live grid: beams and sheet parts welded into frames for big machines
+cost = [{ item = "copper_wire", n = 8 }, { item = "steel", n = 3 }, { item = "magnet", n = 1 }, { item = "gear", n = 1 }]
+alt_cost = [{ item = "copper_wire", n = 8 }, { item = "sheet", n = 3 }, { item = "magnet", n = 1 }, { item = "precision_gear", n = 1 }]
+
+[[building]]
+kind = "reactor"
+name = "Kimya reaktörü"
+radius_mm = 900
+discovery = "chemistry"
+# on a live grid: fertiliser, dye and soap
+cost = [{ item = "steel", n = 3 }, { item = "glass", n = 4 }, { item = "pipe", n = 2 }, { item = "copper_wire", n = 4 }]
+alt_cost = [{ item = "sheet", n = 4 }, { item = "glass", n = 4 }, { item = "pipe", n = 2 }, { item = "copper_wire", n = 4 }]
+heat_max = 300
+heat_rate = 20
+
+[[building]]
+kind = "cooler"
+name = "Soğutucu"
+radius_mm = 900
+discovery = "heavy_current"
+# a chilled store: on a live grid food in it keeps three times longer than in a cellar
+cost = [{ item = "plank", n = 8 }, { item = "cast_iron_part", n = 2 }, { item = "pipe", n = 2 }, { item = "cloth", n = 4 }]
+alt_cost = [{ item = "plank", n = 8 }, { item = "sheet", n = 4 }, { item = "pipe", n = 2 }, { item = "felt", n = 4 }]
+
+[[building]]
+kind = "telegraph"
+name = "Telgraf"
+radius_mm = 500
+discovery = "electricity"
+# on a live grid it reports what the depots by other telegraphs on the wires hold
+cost = [{ item = "plank", n = 3 }, { item = "copper_wire", n = 8 }, { item = "steel", n = 1 }, { item = "magnet", n = 1 }]
+alt_cost = [{ item = "plank", n = 3 }, { item = "copper_wire", n = 8 }, { item = "sheet_part", n = 1 }, { item = "magnet", n = 1 }]
+
+[[building]]
+kind = "radio"
+name = "Radyo"
+radius_mm = 500
+discovery = "electronics"
+# on a live grid it reports the depots by other radios within 400 m, and the weather to come
+cost = [{ item = "plank", n = 4 }, { item = "copper_wire", n = 10 }, { item = "vacuum_tube", n = 2 }, { item = "glass", n = 1 }]
+alt_cost = [{ item = "plank", n = 4 }, { item = "copper_wire", n = 10 }, { item = "transistor", n = 4 }, { item = "sheet_part", n = 1 }]
+
+[[building]]
+kind = "vacuum_pump"
+name = "Vakum pompası"
+radius_mm = 700
+discovery = "electronics"
+# on a live grid: light bulbs by the pair and electron tubes
+cost = [{ item = "cast_iron_part", n = 2 }, { item = "glass", n = 2 }, { item = "copper_wire", n = 6 }, { item = "pipe", n = 1 }]
+alt_cost = [{ item = "piston", n = 1 }, { item = "glass", n = 2 }, { item = "copper_wire", n = 6 }, { item = "pipe", n = 1 }]
+
+[[building]]
+kind = "crystal_puller"
+name = "Kristal çekme fırını"
+radius_mm = 900
+discovery = "semiconductors"
+# on a live grid: silicon drawn slowly out of the melt as a pure crystal
+cost = [{ item = "fire_brick", n = 6 }, { item = "steel", n = 3 }, { item = "copper_wire", n = 8 }, { item = "glass", n = 2 }]
+alt_cost = [{ item = "fire_brick", n = 6 }, { item = "sheet", n = 4 }, { item = "copper_wire", n = 8 }, { item = "glass", n = 2 }]
+heat_max = 1600
+heat_rate = 50
+
+[[building]]
+kind = "photolith"
+name = "Fotolitografi tezgahı"
+radius_mm = 800
+discovery = "semiconductors"
+# on a live grid: circuits printed with light on pure silicon
+cost = [{ item = "lens", n = 2 }, { item = "glass", n = 2 }, { item = "steel", n = 2 }, { item = "copper_wire", n = 6 }]
+alt_cost = [{ item = "lens", n = 2 }, { item = "glass", n = 2 }, { item = "sheet", n = 3 }, { item = "copper_wire", n = 6 }]
+
+[[building]]
+kind = "cnc_machine"
+name = "CNC tezgahı"
+radius_mm = 900
+discovery = "automation"
+# on a live grid: parts turned out by the batch with no hand on them
+cost = [{ item = "steel", n = 4 }, { item = "precision_gear", n = 4 }, { item = "circuit_board", n = 2 }, { item = "copper_wire", n = 6 }]
+alt_cost = [{ item = "steel", n = 4 }, { item = "precision_gear", n = 4 }, { item = "chip", n = 2 }, { item = "copper_wire", n = 6 }]
+
+[[building]]
+kind = "assembly_robot"
+name = "Montaj robotu"
+radius_mm = 900
+discovery = "automation"
+# on a live grid: runs a chain of recipes by itself, pulling from and handing on to the machines round it
+cost = [{ item = "steel", n = 4 }, { item = "precision_gear", n = 4 }, { item = "circuit_board", n = 4 }, { item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }]
+alt_cost = [{ item = "steel", n = 4 }, { item = "precision_gear", n = 4 }, { item = "chip", n = 4 }, { item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }]
+alt_cost2 = [{ item = "welded_frame", n = 1 }, { item = "precision_gear", n = 4 }, { item = "chip", n = 2 }, { item = "copper_wire", n = 8 }, { item = "magnet", n = 2 }]
 
 [[recipe]]
 id = "sharp_stone"
@@ -2819,6 +3005,354 @@ inputs = [{ item = "cotton_fiber", n = 6 }]
 outputs = [{ item = "thread", n = 8 }]
 ticks = 600
 discovery = "spinning"
+
+# --- Electricity and the late age (wave 3). Appended, so the recipe indexes in saves stay put. ---
+[[recipe]]
+id = "arc_steel"
+name = "Ark ocağında çelik eritir"
+station = "arc_furnace"
+inputs = [{ item = "pig_iron", n = 3 }]
+outputs = [{ item = "steel", n = 3 }]
+ticks = 1200
+discovery = "arc_smelting"
+heat = 1400
+
+[[recipe]]
+id = "arc_scrap_steel"
+name = "Hurdadan çelik eritir"
+station = "arc_furnace"
+inputs = [{ item = "cast_iron_part", n = 2 }]
+outputs = [{ item = "steel", n = 1 }]
+ticks = 900
+discovery = "arc_smelting"
+heat = 1400
+
+[[recipe]]
+id = "arc_silicon"
+name = "Ark ocağında silisyum indir"
+station = "arc_furnace"
+inputs = [{ item = "sand", n = 2 }, { item = "coke", n = 1 }]
+outputs = [{ item = "silicon", n = 2 }]
+ticks = 1500
+discovery = "arc_smelting"
+heat = 1500
+
+[[recipe]]
+id = "refine_oil"
+name = "Petrolü rafine et"
+station = "refinery"
+inputs = [{ item = "oil", n = 2 }]
+outputs = [{ item = "kerosene", n = 2 }, { item = "lubricant", n = 1 }]
+ticks = 1800
+discovery = "chemistry"
+heat = 180
+
+[[recipe]]
+id = "refine_tar"
+name = "Katranı rafine et"
+station = "refinery"
+inputs = [{ item = "tar", n = 2 }]
+outputs = [{ item = "kerosene", n = 1 }, { item = "lubricant", n = 1 }]
+ticks = 1200
+discovery = "chemistry"
+heat = 180
+
+[[recipe]]
+id = "distill_tar"
+name = "Katranı damıt"
+station = "still"
+inputs = [{ item = "tar", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "kerosene", n = 1 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "chemistry"
+heat = 110
+
+[[recipe]]
+id = "distill_oil"
+name = "Petrolü damıt"
+station = "still"
+inputs = [{ item = "oil", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "kerosene", n = 2 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "chemistry"
+heat = 110
+
+[[recipe]]
+id = "distill_alcohol_berries"
+name = "Yemişten alkol çek"
+station = "still"
+inputs = [{ item = "berries", n = 6 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "alcohol", n = 2 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "chemistry"
+heat = 78
+
+[[recipe]]
+id = "distill_alcohol_grain"
+name = "Tahıldan alkol çek"
+station = "still"
+inputs = [{ item = "grain", n = 5 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "alcohol", n = 2 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "chemistry"
+heat = 78
+
+[[recipe]]
+id = "electro_copper"
+name = "Bakırı elektrolizle saflaştır"
+station = "electrolysis"
+inputs = [{ item = "copper_ingot", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "pure_copper", n = 2 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "electro_aluminium"
+name = "Boksitten alüminyum çek"
+station = "electrolysis"
+inputs = [{ item = "bauxite", n = 4 }, { item = "coke", n = 1 }]
+outputs = [{ item = "aluminium", n = 2 }]
+ticks = 3000
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "wire_pure"
+name = "Saf bakırdan tel çek"
+station = "rolling_mill"
+inputs = [{ item = "pure_copper", n = 1 }]
+outputs = [{ item = "copper_wire", n = 6 }]
+ticks = 1200
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "press_aluminium"
+name = "Alüminyum sac bastır"
+station = "press"
+inputs = [{ item = "aluminium", n = 1 }]
+outputs = [{ item = "sheet", n = 2 }]
+ticks = 600
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "weld_frame"
+name = "Kirişten çerçeve kaynakla"
+station = "welder"
+inputs = [{ item = "beam", n = 2 }, { item = "sheet_part", n = 2 }]
+outputs = [{ item = "welded_frame", n = 1 }]
+ticks = 1800
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "weld_frame_steel"
+name = "Çelikten çerçeve kaynakla"
+station = "welder"
+inputs = [{ item = "steel", n = 3 }, { item = "sheet_part", n = 2 }]
+outputs = [{ item = "welded_frame", n = 1 }]
+ticks = 1800
+discovery = "arc_smelting"
+
+[[recipe]]
+id = "make_fertilizer"
+name = "Gübre pişir"
+station = "reactor"
+inputs = [{ item = "manure", n = 3 }, { item = "lime", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "fertilizer", n = 3 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "chemistry"
+heat = 120
+
+[[recipe]]
+id = "make_dye"
+name = "Otlardan boya kaynat"
+station = "reactor"
+inputs = [{ item = "herb", n = 2 }, { item = "lime", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "dye", n = 2 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "chemistry"
+heat = 100
+
+[[recipe]]
+id = "make_dye_berries"
+name = "Yemişten boya kaynat"
+station = "reactor"
+inputs = [{ item = "berries", n = 4 }, { item = "lime", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "dye", n = 2 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "chemistry"
+heat = 100
+
+[[recipe]]
+id = "make_soap"
+name = "Sabun kaynat"
+station = "reactor"
+inputs = [{ item = "plant_oil", n = 2 }, { item = "lime", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "soap", n = 3 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "chemistry"
+heat = 100
+
+[[recipe]]
+id = "vacuum_bulb"
+name = "Boşaltılmış ampul yap"
+station = "vacuum_pump"
+inputs = [{ item = "glass", n = 1 }, { item = "copper_wire", n = 1 }]
+outputs = [{ item = "light_bulb", n = 2 }]
+ticks = 900
+discovery = "electronics"
+
+[[recipe]]
+id = "vacuum_tube"
+name = "Elektron tüpü yap"
+station = "vacuum_pump"
+inputs = [{ item = "glass", n = 1 }, { item = "copper_wire", n = 2 }]
+outputs = [{ item = "vacuum_tube", n = 2 }]
+ticks = 1200
+discovery = "electronics"
+
+[[recipe]]
+id = "pull_crystal"
+name = "Silisyum kristali çek"
+station = "crystal_puller"
+inputs = [{ item = "silicon", n = 3 }]
+outputs = [{ item = "pure_silicon", n = 2 }]
+ticks = 3600
+discovery = "semiconductors"
+heat = 1450
+
+[[recipe]]
+id = "print_chip"
+name = "Çip bas"
+station = "photolith"
+inputs = [{ item = "pure_silicon", n = 1 }, { item = "copper_wire", n = 2 }, { item = "dye", n = 1 }]
+outputs = [{ item = "chip", n = 3 }]
+ticks = 2400
+discovery = "semiconductors"
+
+[[recipe]]
+id = "print_chip_oil"
+name = "Çip bas (yağ kaplamayla)"
+station = "photolith"
+inputs = [{ item = "pure_silicon", n = 1 }, { item = "copper_wire", n = 2 }, { item = "plant_oil", n = 1 }]
+outputs = [{ item = "chip", n = 2 }]
+ticks = 2400
+discovery = "semiconductors"
+
+[[recipe]]
+id = "cnc_shaft"
+name = "CNC mil işle"
+station = "cnc_machine"
+inputs = [{ item = "steel", n = 1 }]
+outputs = [{ item = "shaft", n = 2 }]
+ticks = 600
+discovery = "automation"
+
+[[recipe]]
+id = "cnc_gear"
+name = "CNC dişli işle"
+station = "cnc_machine"
+inputs = [{ item = "steel", n = 1 }]
+outputs = [{ item = "precision_gear", n = 3 }]
+ticks = 600
+discovery = "automation"
+
+[[recipe]]
+id = "cnc_piston"
+name = "CNC piston işle"
+station = "cnc_machine"
+inputs = [{ item = "steel", n = 1 }]
+outputs = [{ item = "piston", n = 2 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "cnc_bolts"
+name = "CNC cıvata işle"
+station = "cnc_machine"
+inputs = [{ item = "steel", n = 1 }]
+outputs = [{ item = "bolt_nut", n = 6 }]
+ticks = 450
+discovery = "automation"
+
+[[recipe]]
+id = "cnc_cylinder_block"
+name = "CNC silindir bloğu işle"
+station = "cnc_machine"
+inputs = [{ item = "iron_cylinder", n = 1 }, { item = "steel", n = 1 }]
+outputs = [{ item = "cylinder_block", n = 1 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "robot_magnet"
+name = "Robot mıknatıs yapar"
+station = "assembly_robot"
+inputs = [{ item = "steel", n = 1 }, { item = "iron_ore", n = 2 }]
+outputs = [{ item = "magnet", n = 1 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "robot_light_bulb"
+name = "Robot ampul yapar"
+station = "assembly_robot"
+inputs = [{ item = "glass", n = 1 }, { item = "copper_wire", n = 1 }, { item = "coke", n = 1 }]
+outputs = [{ item = "light_bulb", n = 1 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "robot_transistor"
+name = "Robot transistör yapar"
+station = "assembly_robot"
+inputs = [{ item = "silicon", n = 1 }, { item = "copper_wire", n = 2 }]
+outputs = [{ item = "transistor", n = 2 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "robot_circuit_board"
+name = "Robot devre kartı yapar"
+station = "assembly_robot"
+inputs = [{ item = "plank", n = 1 }, { item = "copper_wire", n = 2 }, { item = "transistor", n = 2 }]
+outputs = [{ item = "circuit_board", n = 1 }]
+ticks = 900
+discovery = "automation"
+
+[[recipe]]
+id = "print_book_dye"
+name = "Boyayla kitap bas"
+station = "printing_press"
+inputs = [{ item = "paper", n = 4 }, { item = "dye", n = 1 }, { item = "leather", n = 1 }]
+outputs = [{ item = "book", n = 1 }]
+ticks = 2400
+discovery = "printing"
+
+[[recipe]]
+id = "boiler_kerosene"
+name = "Gazyağıyla buhar kaldır"
+station = "boiler"
+inputs = [{ item = "kerosene", n = 1 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 18000
+discovery = "steam"
+
+[[recipe]]
+id = "boiler_lubricant"
+name = "Makine yağıyla buhar kaldır"
+station = "boiler"
+inputs = [{ item = "lubricant", n = 1 }, { item = "water_pot", n = 2 }]
+outputs = [{ item = "pot", n = 2 }]
+ticks = 12000
+discovery = "steam"
+
+[[recipe]]
+id = "oil_flask_lube"
+name = "Makine yağından şişe doldur"
+inputs = [{ item = "bottle", n = 1 }, { item = "lubricant", n = 1 }]
+outputs = [{ item = "oil_flask", n = 1 }]
+ticks = 0
+discovery = "chemistry"
+fine_bonus = 0
 
 # keeping food: what is dried or smoked spoils far slower than what is raw or cooked
 [[perish]]

@@ -314,10 +314,34 @@ fn demo_setup(w: &mut World) -> Selection {
                 b.job = Some(alaz_sim::Job { recipe: ri as u16, remaining: rules().recipes[ri].ticks.max(60) * 100 });
                 b.temp = def.heat_max;
             }
+            let mi = w.buildings.len();
             w.buildings.push(b);
             let aid = |w: &mut World, k: BuildingKind, dx: i64, dy: i64| w.buildings.push(alaz_sim::Building::new(k, x + dx, y + dy));
-            if (kind.needs_power() && std::env::var_os("ALAZ_DEMO_NOPOWER").is_none()) || matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
+            let powered = std::env::var_os("ALAZ_DEMO_NOPOWER").is_none();
+            if ((kind.needs_power() || (kind.on_grid() && *kind != BuildingKind::Dynamo)) && powered) || matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
                 aid(w, BuildingKind::Windmill, 0, -3_800);
+            }
+            // grid machines hang on a dynamo that the windmill turns
+            if kind.on_grid() && powered && *kind != BuildingKind::Dynamo {
+                aid(w, BuildingKind::Dynamo, 2_200, -2_200);
+            }
+            // a railway carries a load; an accumulator holds some charge
+            if *kind == BuildingKind::Railway {
+                w.buildings[mi].output[ItemKind::Shaft as usize] = 4;
+            }
+            if *kind == BuildingKind::Accumulator {
+                w.buildings[mi].fuel = 600;
+            }
+            // a depot with goods in it, for a telegraph or a radio to report
+            if *kind == BuildingKind::Depot {
+                w.buildings[mi].output[ItemKind::Steel as usize] = 12;
+                w.buildings[mi].output[ItemKind::Plank as usize] = 6;
+            }
+            if *kind == BuildingKind::SteamPump {
+                let mut boiler = alaz_sim::Building::new(BuildingKind::Boiler, x + 3_500, y);
+                boiler.job = Some(alaz_sim::Job { recipe: rules().recipes.iter().position(|r| r.id == "boiler_coal").unwrap() as u16, remaining: 1_000_000 });
+                boiler.temp = 300;
+                w.buildings.push(boiler);
             }
             if matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
                 aid(w, BuildingKind::Bellows, 1_800, 0);

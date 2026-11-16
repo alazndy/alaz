@@ -34,6 +34,15 @@ const STONE_D: [f32; 3] = [0.42, 0.41, 0.39];
 const ROPE: [f32; 3] = [0.76, 0.66, 0.42];
 const FELT: [f32; 3] = [0.56, 0.58, 0.62];
 const OILC: [f32; 3] = [0.86, 0.74, 0.22];
+const COPPER: [f32; 3] = [0.80, 0.46, 0.28];
+const ALU: [f32; 3] = [0.78, 0.82, 0.86];
+const PANEL: [f32; 3] = [0.16, 0.26, 0.30];
+const ENAMEL: [f32; 3] = [0.88, 0.90, 0.92];
+const SPARK: [f32; 3] = [0.65, 0.85, 1.0];
+const SAFETY: [f32; 3] = [0.92, 0.55, 0.12];
+const GRAPHITE: [f32; 3] = [0.14, 0.14, 0.16];
+const TEAL: [f32; 3] = [0.20, 0.55, 0.52];
+const PORCELAIN: [f32; 3] = [0.86, 0.80, 0.68];
 
 /// How a moving part moves: about an axis (0 x, 1 y, 2 z), or up and down.
 #[derive(Clone, Copy)]
@@ -847,6 +856,479 @@ pub(crate) fn push_machine(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, a
                 wheel(o, [x + 1.3, 0.75, z], 2, 0.5, IRON, 8);
             });
             lb(out, [x + 1.3, 0.75, z - 0.02], [x + 0.85, 0.6, z + 0.2], 0.02, 0.02, LEATHER, 3);
+        }
+        BuildingKind::ArcFurnace => {
+            // a round steel shell on legs under a swung roof, three black graphite electrodes on a gantry with copper cables to a transformer box; a blue-white arc when it works
+            for (dx, dz) in [(-0.6f32, -0.45f32), (0.6, -0.45), (-0.6, 0.45), (0.6, 0.45)] {
+                bx(out, [x + dx, 0.0, z + dz], [0.1, 0.35, 0.1], IRON_D, 0.0);
+            }
+            lb(out, [x, 0.35, z], [x, 1.05, z], 0.9, 0.85, [0.50, 0.53, 0.60], 14);
+            lb(out, [x, 1.05, z], [x, 1.2, z], 0.95, 0.95, IRON_D, 14);
+            lb(out, [x + 0.7, 0.8, z + 0.5], [x + 1.25, 0.6, z + 0.8], 0.14, 0.1, IRON, 6);
+            for k in 0..3 {
+                let a = k as f32 * TAU / 3.0 + 0.5;
+                let (ex, ez) = (x + a.cos() * 0.4, z + a.sin() * 0.4);
+                moving(out, &format!("electrode_{k}"), Move::Piston, [ex, 1.4, ez], 0.04 + 0.01 * k as f32, 0.1, active, tick, |o| {
+                    lb(o, [ex, 1.1, ez], [ex, 2.8, ez], 0.075, 0.075, GRAPHITE, 7);
+                    lb(o, [ex, 2.3, ez], [ex, 2.45, ez], 0.12, 0.12, COPPER, 7);
+                });
+            }
+            bx(out, [x - 1.15, 0.0, z - 0.1], [0.12, 3.0, 0.12], IRON, 0.0);
+            bx(out, [x + 1.15, 0.0, z - 0.1], [0.12, 3.0, 0.12], IRON, 0.0);
+            bx(out, [x, 3.0, z - 0.1], [1.25, 0.12, 0.14], IRON_D, 0.0);
+            for k in 0..3 {
+                let a = k as f32 * TAU / 3.0 + 0.5;
+                lb(out, [x + a.cos() * 0.4, 2.4, z + a.sin() * 0.4], [x + 1.55 - k as f32 * 0.12, 1.0, z - 0.1 + k as f32 * 0.1], 0.03, 0.03, COPPER, 4);
+            }
+            bx(out, [x + 1.5, 0.0, z - 0.1], [0.4, 1.0, 0.5], [0.30, 0.46, 0.50], 0.0);
+            bx(out, [x + 1.5, 1.0, z - 0.1], [0.44, 0.06, 0.54], IRON_D, 0.0);
+            for k in 0..3 {
+                bx(out, [x + 1.5, 0.2 + k as f32 * 0.25, z + 0.42], [0.3, 0.015, 0.01], IRON, 0.0);
+            }
+            if active {
+                let st = out.len();
+                lb(out, [x, 1.2, z], [x, 1.26, z], 0.7, 0.7, SPARK, 14);
+                bx(out, [x, 1.3, z], [0.2, 0.2 * flick(2.0), 0.2], [0.85, 0.95, 1.0], 1.0);
+                if tint.is_none() {
+                    super::buildings::glowify(&mut out.verts, st);
+                }
+                for k in 0..4u32 {
+                    let a = (t * 0.1 + k as f32 * 1.6).fract();
+                    shapes::sphere(out, [x + (k as f32 - 1.5) * 0.18, 1.3 + a * 0.6, z + (t * 0.2 + k as f32).sin() * 0.15], [0.03, 0.03, 0.03], [1.0, 0.8, 0.4], 4, 3, 1.0, k);
+                }
+            }
+            smoke(out, x, 1.4, z, 0.9);
+        }
+        BuildingKind::Refinery => {
+            // a tall fractionating column with ringed platforms beside a shorter one and a fat tank, pipes between them, a flare stack with a flame; the pump flywheel turns
+            bx(out, [x, 0.0, z], [1.35, 0.1, 0.75], CONC, 0.0);
+            lb(out, [x - 0.7, 0.1, z], [x - 0.7, 3.8, z], 0.28, 0.24, [0.62, 0.66, 0.72], 12);
+            for h in [0.9f32, 1.7, 2.5, 3.2] {
+                lb(out, [x - 0.7, h, z], [x - 0.7, h + 0.05, z], 0.42, 0.42, IRON_D, 12);
+            }
+            lb(out, [x - 0.7, 3.8, z], [x - 0.7, 4.1, z], 0.24, 0.1, [0.62, 0.66, 0.72], 12);
+            lb(out, [x, 0.1, z], [x, 2.4, z], 0.22, 0.2, [0.58, 0.62, 0.68], 12);
+            for h in [0.8f32, 1.6] {
+                lb(out, [x, h, z], [x, h + 0.05, z], 0.34, 0.34, IRON_D, 12);
+            }
+            rd(out, [x + 0.85, 0.5, z + 0.1], [0.42, 0.42, 0.42], [0.85, 0.85, 0.82]);
+            lb(out, [x - 0.7, 3.1, z], [x, 2.2, z], 0.04, 0.04, IRON, 4);
+            lb(out, [x - 0.7, 1.2, z], [x + 0.85, 0.7, z + 0.1], 0.04, 0.04, IRON, 4);
+            lb(out, [x, 0.5, z + 0.25], [x + 0.5, 0.3, z + 0.3], 0.05, 0.05, COPPER, 4);
+            lb(out, [x + 1.2, 0.1, z - 0.4], [x + 1.2, 3.0, z - 0.4], 0.05, 0.04, IRON_D, 6);
+            if active {
+                let f = flick(1.0);
+                bx(out, [x + 1.2, 3.0, z - 0.4], [0.07, 0.4 * f, 0.07], [1.0, 0.55, 0.12], 1.0);
+                bx(out, [x + 1.2, 3.0, z - 0.4], [0.04, 0.25 * f, 0.04], [1.0, 0.9, 0.5], 1.0);
+            }
+            moving(out, "flywheel", Move::Spin(2), [x + 0.3, 0.4, z + 0.55], 0.2, 0.0, active, tick, |o| {
+                wheel(o, [x + 0.3, 0.4, z + 0.55], 2, 0.28, IRON_D, 6);
+            });
+            bx(out, [x + 0.55, 0.1, z + 0.45], [0.25, 0.3, 0.2], PANEL, 0.0);
+        }
+        BuildingKind::Still => {
+            // a squat copper pot on a brick firebox, a swan-neck into a coiled worm in a tub of cold water, a flask under the drip
+            bx(out, [x - 0.5, 0.0, z], [0.6, 0.55, 0.5], BRICK, 0.0);
+            bx(out, [x - 0.65, 0.12, z + 0.5], [0.22, 0.26, 0.03], SOOT, 0.0);
+            if active {
+                bx(out, [x - 0.62, 0.18, z + 0.53], [0.16, 0.14 * flick(2.0), 0.02], FIRE, 1.0);
+            }
+            rd(out, [x - 0.5, 0.95, z], [0.52, 0.45, 0.5], COPPER);
+            rd(out, [x - 0.5, 1.45, z], [0.28, 0.26, 0.28], COPPER);
+            lb(out, [x - 0.5, 1.6, z], [x - 0.1, 1.95, z], 0.09, 0.07, COPPER, 6);
+            lb(out, [x - 0.1, 1.95, z], [x + 0.45, 1.5, z], 0.07, 0.07, COPPER, 6);
+            lb(out, [x + 0.95, 0.0, z], [x + 0.95, 1.35, z], 0.5, 0.48, WOOD, 12);
+            lb(out, [x + 0.95, 1.2, z], [x + 0.95, 1.33, z], 0.43, 0.43, WATER, 12);
+            for k in 0..5 {
+                let h = 0.25 + k as f32 * 0.2;
+                lb(out, [x + 0.62, h, z + 0.12], [x + 1.28, h - 0.08, z - 0.12], 0.04, 0.04, COPPER, 4);
+            }
+            lb(out, [x + 0.45, 1.5, z], [x + 0.62, 1.1, z + 0.12], 0.05, 0.05, COPPER, 4);
+            lb(out, [x + 1.28, 0.1, z - 0.12], [x + 1.4, 0.0, z - 0.6], 0.04, 0.04, COPPER, 4);
+            lb(out, [x + 1.4, 0.0, z - 0.7], [x + 1.4, 0.28, z - 0.7], 0.13, 0.09, GLASSC, 7);
+            if active {
+                let age = (t * 0.03).fract();
+                shapes::sphere(out, [x - 0.1, 2.05 + age * 0.5, z], [0.06 + 0.1 * age, 0.06 + 0.1 * age, 0.06 + 0.1 * age], [0.94, 0.95, 0.97], 6, 4, 0.2, 3);
+            }
+        }
+        BuildingKind::Electrolysis => {
+            // a long brick-walled tank of blue bath, a row of copper plates hung on bus bars across it, bubbles rising while current flows
+            bx(out, [x, 0.0, z], [1.2, 0.75, 0.6], [0.56, 0.52, 0.48], 0.0);
+            bx(out, [x, 0.7, z], [1.08, 0.04, 0.48], [0.22, 0.55, 0.70], 0.0);
+            for sz in [-0.4f32, 0.4] {
+                bx(out, [x, 0.78, z + sz], [1.2, 0.05, 0.05], COPPER, 0.0);
+            }
+            for k in 0..7 {
+                let px = x - 0.9 + k as f32 * 0.3;
+                bx(out, [px, 0.3, z], [0.035, 0.55, 0.38], if k % 2 == 0 { COPPER } else { ALU }, 0.0);
+                bx(out, [px, 0.8, z - 0.4], [0.05, 0.03, 0.8], COPPER, 0.0);
+            }
+            bx(out, [x - 1.35, 0.0, z], [0.2, 0.9, 0.35], PANEL, 0.0);
+            rd(out, [x - 1.35, 0.75, z + 0.36], [0.07, 0.07, 0.02], if active { [0.4, 1.0, 0.5] } else { [0.3, 0.35, 0.3] });
+            lb(out, [x - 1.35, 0.9, z], [x - 0.9, 0.85, z - 0.4], 0.03, 0.03, COPPER, 4);
+            if active {
+                for k in 0..6u32 {
+                    let a = (t * 0.02 + k as f32 / 6.0).fract();
+                    shapes::sphere(out, [x - 0.8 + k as f32 * 0.3 + 0.12, 0.45 + a * 0.3, z + (t * 0.05 + k as f32).sin() * 0.2], [0.035, 0.035, 0.035], [0.8, 0.95, 1.0], 4, 3, 0.4, k);
+                }
+            }
+        }
+        BuildingKind::Compressor => {
+            // a long air receiver on two legs, a motor with a belt to a flywheel on top, a cylinder head with a piston and a round pressure gauge
+            for sx in [-0.7f32, 0.7] {
+                bx(out, [x + sx, 0.0, z], [0.12, 0.45, 0.4], IRON_D, 0.0);
+            }
+            lb(out, [x - 0.95, 0.75, z], [x + 0.95, 0.75, z], 0.38, 0.38, [0.30, 0.50, 0.62], 12);
+            rd(out, [x - 0.95, 0.75, z], [0.14, 0.38, 0.38], [0.30, 0.50, 0.62]);
+            rd(out, [x + 0.95, 0.75, z], [0.14, 0.38, 0.38], [0.30, 0.50, 0.62]);
+            bx(out, [x - 0.2, 1.1, z], [0.7, 0.08, 0.3], IRON_D, 0.0);
+            bx(out, [x - 0.65, 1.18, z], [0.28, 0.4, 0.25], PANEL, 0.0);
+            moving(out, "flywheel", Move::Spin(2), [x + 0.1, 1.5, z + 0.3], 0.3, 0.0, active, tick, |o| {
+                wheel(o, [x + 0.1, 1.5, z + 0.3], 2, 0.34, IRON, 6);
+            });
+            lb(out, [x - 0.65, 1.4, z + 0.28], [x + 0.1, 1.5, z + 0.3], 0.02, 0.02, LEATHER, 3);
+            bx(out, [x + 0.45, 1.18, z], [0.2, 0.5, 0.2], IRON, 0.0);
+            moving(out, "head", Move::Piston, [x + 0.45, 1.7, z], 0.35, 0.08, active, tick, |o| {
+                lb(o, [x + 0.45, 1.68, z], [x + 0.45, 1.95, z], 0.04, 0.04, STEEL, 5);
+                bx(o, [x + 0.45, 1.95, z], [0.14, 0.05, 0.14], IRON_D, 0.0);
+            });
+            rd(out, [x + 0.95, 1.15, z + 0.38], [0.15, 0.15, 0.04], ENAMEL);
+            rd(out, [x + 0.95, 1.15, z + 0.4], [0.02, 0.1, 0.03], if active { [0.9, 0.2, 0.2] } else { [0.2, 0.2, 0.2] });
+            lb(out, [x + 0.45, 1.2, z - 0.1], [x + 0.8, 1.05, z - 0.3], 0.03, 0.03, COPPER, 4);
+        }
+        BuildingKind::Railway => {
+            // two rails on sleepers running out of a winch house, a wagon of planks on four iron wheels with a load of sacks, a cable drum turning in the house
+            for k in 0..9 {
+                bx(out, [x - 0.4 + k as f32 * 0.35, 0.0, z], [0.07, 0.05, 0.5], WOOD, 0.0);
+            }
+            for sz in [-0.3f32, 0.3] {
+                bx(out, [x + 0.9, 0.05, z + sz], [1.85, 0.07, 0.04], IRON, 0.0);
+            }
+            bx(out, [x - 1.45, 0.0, z - 0.1], [0.5, 0.85, 0.55], WOOD, 0.0);
+            bx(out, [x - 1.45, 0.85, z - 0.1], [0.58, 0.1, 0.62], [0.42, 0.26, 0.2], 0.0);
+            moving(out, "drum", Move::Spin(0), [x - 0.9, 0.5, z - 0.1], 0.18, 0.0, active, tick, |o| {
+                lb(o, [x - 1.0, 0.5, z - 0.1], [x - 0.8, 0.5, z - 0.1], 0.2, 0.2, IRON, 8);
+                lb(o, [x - 1.0, 0.5, z - 0.1], [x - 0.8, 0.5, z - 0.1], 0.21, 0.21, ROPE, 8);
+            });
+            lb(out, [x - 0.8, 0.5, z], [x + 0.2, 0.3, z], 0.015, 0.015, ROPE, 3);
+            bx(out, [x + 0.65, 0.2, z], [0.55, 0.12, 0.4], WOOD_L, 0.0);
+            for sz in [-0.4f32, 0.4] {
+                bx(out, [x + 0.65, 0.32, z + sz], [0.55, 0.28, 0.025], WOOD, 0.0);
+            }
+            for (wx, wz) in [(0.25f32, -0.3f32), (1.05, -0.3), (0.25, 0.3), (1.05, 0.3)] {
+                moving(out, &format!("wheel_{}_{}", (wx * 10.0) as i32, (wz * 10.0) as i32), Move::Spin(2), [x + wx, 0.15, z + wz], 0.15, 0.0, active, tick, |o| {
+                    wheel(o, [x + wx, 0.15, z + wz], 2, 0.15, IRON_D, 4);
+                });
+            }
+            for k in 0..3 {
+                rd(out, [x + 0.35 + k as f32 * 0.3, 0.52, z + (k % 2) as f32 * 0.1 - 0.05], [0.14, 0.12, 0.2], CLOTH);
+            }
+            bx(out, [x + 2.0, 0.05, z], [0.1, 0.35, 0.4], IRON_D, 0.0);
+        }
+        BuildingKind::SteamPump => {
+            // an upright steam cylinder on a brick base with a brass head and a rod going down to a pump barrel, a flywheel, a stack and a pipe into the ground
+            bx(out, [x, 0.0, z], [0.7, 0.4, 0.55], BRICK, 0.0);
+            lb(out, [x - 0.25, 0.4, z], [x - 0.25, 1.6, z], 0.26, 0.26, [0.34, 0.40, 0.46], 10);
+            lb(out, [x - 0.25, 1.6, z], [x - 0.25, 1.78, z], 0.3, 0.3, BRASS, 10);
+            moving(out, "rod", Move::Piston, [x - 0.25, 1.8, z], 0.1, 0.18, active, tick, |o| {
+                lb(o, [x - 0.25, 1.78, z], [x - 0.25, 2.35, z], 0.045, 0.045, STEEL, 6);
+                bx(o, [x - 0.25, 2.3, z], [0.14, 0.08, 0.1], IRON, 0.0);
+            });
+            moving(out, "flywheel", Move::Spin(2), [x + 0.4, 1.1, z + 0.4], 0.1, 0.0, active, tick, |o| {
+                wheel(o, [x + 0.4, 1.1, z + 0.4], 2, 0.48, IRON, 8);
+            });
+            lb(out, [x + 0.4, 1.1, z + 0.38], [x - 0.25, 1.1, z + 0.38], 0.04, 0.04, IRON_D, 4);
+            lb(out, [x + 0.35, 0.4, z - 0.2], [x + 0.35, 2.3, z - 0.2], 0.09, 0.08, IRON_D, 7);
+            lb(out, [x + 0.35, 1.5, z - 0.2], [x - 0.25, 1.3, z], 0.04, 0.04, IRON, 4);
+            lb(out, [x - 1.0, 0.0, z], [x - 1.0, 0.7, z], 0.2, 0.2, [0.30, 0.40, 0.55], 8);
+            lb(out, [x - 1.0, 0.65, z], [x - 0.5, 0.65, z], 0.07, 0.07, IRON, 5);
+            lb(out, [x - 1.0, 0.0, z], [x - 1.0, -0.4, z], 0.09, 0.09, IRON_D, 5);
+            smoke(out, x + 0.35, 2.4, z - 0.2, 0.8);
+            if active {
+                let age = (t * 0.03).fract();
+                let r = 0.05 + 0.1 * age;
+                shapes::sphere(out, [x - 0.55, 1.45 + age * 0.7, z + 0.2], [r, r, r], [0.92, 0.94, 0.96], 6, 4, 0.2, 5);
+            }
+        }
+        BuildingKind::Transformer => {
+            // a grey tank on a concrete pad with cooling fins down one side, three porcelain bushings on top with wires out, a small hum lamp
+            bx(out, [x, 0.0, z], [0.75, 0.12, 0.6], CONC, 0.0);
+            bx(out, [x, 0.12, z], [0.5, 0.9, 0.38], [0.42, 0.50, 0.46], 0.0);
+            bx(out, [x, 1.02, z], [0.54, 0.05, 0.42], IRON_D, 0.0);
+            for k in 0..5 {
+                bx(out, [x + 0.62, 0.2, z - 0.3 + k as f32 * 0.15], [0.1, 0.78, 0.03], [0.46, 0.54, 0.50], 0.0);
+            }
+            for k in 0..3 {
+                let bxp = x - 0.3 + k as f32 * 0.3;
+                lb(out, [bxp, 1.07, z], [bxp, 1.6, z], 0.1, 0.06, PORCELAIN, 8);
+                for h in [1.2f32, 1.35, 1.5] {
+                    lb(out, [bxp, h, z], [bxp, h + 0.03, z], 0.13, 0.13, PORCELAIN, 8);
+                }
+                lb(out, [bxp, 1.6, z], [bxp - 0.05 + k as f32 * 0.05, 1.9, z + (k as f32 - 1.0) * 0.4], 0.02, 0.02, COPPER, 4);
+            }
+            rd(out, [x - 0.3, 0.7, z + 0.4], [0.06, 0.06, 0.03], if active { [0.4, 0.8, 1.0] } else { [0.25, 0.3, 0.32] });
+        }
+        BuildingKind::Accumulator => {
+            // a rack of two shelves of square cells with glass sides and lead plates showing, copper straps between the terminals, a green charge lamp
+            for sx in [-0.85f32, 0.85] {
+                bx(out, [x + sx, 0.0, z], [0.05, 1.05, 0.4], WOOD, 0.0);
+            }
+            for h in [0.0f32, 0.5, 1.0] {
+                bx(out, [x, h, z], [0.9, 0.04, 0.42], WOOD_L, 0.0);
+            }
+            for row in 0..2 {
+                for k in 0..4 {
+                    let cx = x - 0.65 + k as f32 * 0.43;
+                    let base = 0.04 + row as f32 * 0.5;
+                    bx(out, [cx, base, z], [0.16, 0.38, 0.3], [0.52, 0.72, 0.66], 0.0);
+                    bx(out, [cx, base + 0.05, z], [0.1, 0.3, 0.2], [0.36, 0.36, 0.42], 0.0);
+                    bx(out, [cx - 0.08, base + 0.38, z], [0.025, 0.06, 0.025], COPPER, 0.0);
+                    bx(out, [cx + 0.08, base + 0.38, z], [0.025, 0.06, 0.025], COPPER, 0.0);
+                    if k < 3 {
+                        bx(out, [cx + 0.2, base + 0.43, z], [0.25, 0.015, 0.02], COPPER, 0.0);
+                    }
+                }
+            }
+            bx(out, [x + 0.0, 1.05, z], [0.35, 0.18, 0.1], PANEL, 0.0);
+            let lamp = if active { [0.3, 1.0, 0.45] } else { [0.18, 0.28, 0.2] };
+            rd(out, [x - 0.15, 1.15, z + 0.1], [0.05, 0.05, 0.03], lamp);
+            if active {
+                rd(out, [x - 0.15, 1.15, z + 0.12], [0.04, 0.04, 0.02], [0.6, 1.0, 0.7]);
+            }
+        }
+        BuildingKind::Welder => {
+            // a steel welding bench with a cabinet of dials, a cable to a torch arm over a frame of beams, a screen to shade the glare; blue-white sparks when it works
+            bx(out, [x, 0.0, z], [0.9, 0.7, 0.5], IRON_D, 0.0);
+            bx(out, [x, 0.7, z], [0.95, 0.05, 0.55], [0.42, 0.44, 0.50], 0.0);
+            bx(out, [x - 1.25, 0.0, z], [0.35, 1.0, 0.4], [0.80, 0.42, 0.16], 0.0);
+            for k in 0..2 {
+                rd(out, [x - 1.25 + (k as f32 - 0.5) * 0.3, 0.8, z + 0.4], [0.07, 0.07, 0.02], ENAMEL);
+            }
+            lb(out, [x - 1.25, 1.0, z], [x - 0.5, 1.9, z - 0.1], 0.025, 0.025, [0.12, 0.12, 0.12], 4);
+            lb(out, [x - 0.5, 1.9, z - 0.1], [x - 0.2, 1.1, z + 0.1], 0.05, 0.05, IRON, 5);
+            lb(out, [x - 0.2, 1.1, z + 0.1], [x - 0.15, 0.78, z + 0.1], 0.03, 0.015, COPPER, 4);
+            for k in 0..3 {
+                bx(out, [x + 0.1 + k as f32 * 0.35, 0.75, z - 0.1], [0.04, 0.16, 0.2], STEEL, 0.0);
+            }
+            bx(out, [x + 0.3, 0.75, z - 0.1], [0.45, 0.03, 0.04], STEEL, 0.0);
+            bx(out, [x + 1.2, 0.0, z + 0.2], [0.04, 1.3, 0.45], [0.18, 0.2, 0.26], 0.0);
+            if active {
+                let st = out.len();
+                bx(out, [x - 0.15, 0.78, z + 0.1], [0.12, 0.1 * flick(1.0), 0.12], [0.9, 0.97, 1.0], 1.0);
+                if tint.is_none() {
+                    super::buildings::glowify(&mut out.verts, st);
+                }
+                for k in 0..5u32 {
+                    let a = (t * 0.15 + k as f32 * 0.37).fract();
+                    shapes::sphere(out, [x - 0.15 + (k as f32 - 2.0) * 0.1 * a * 2.0, 0.8 + a * 0.35 - a * a * 0.3, z + 0.1 + (t * 0.3 + k as f32).sin() * 0.08], [0.025, 0.025, 0.025], [1.0, 0.8, 0.35], 4, 3, 1.0, k);
+                }
+            }
+        }
+        BuildingKind::Reactor => {
+            // a tall glass-lined vessel in a steel jacket with a motor on the lid turning a stirrer, feed pipes with a valve wheel, a sight glass full of coloured liquor
+            bx(out, [x, 0.0, z], [0.75, 0.15, 0.6], CONC, 0.0);
+            lb(out, [x, 0.15, z], [x, 1.75, z], 0.55, 0.5, [0.52, 0.56, 0.60], 14);
+            rd(out, [x, 1.75, z], [0.52, 0.28, 0.52], [0.52, 0.56, 0.60]);
+            for h in [0.45f32, 1.1, 1.55] {
+                lb(out, [x, h, z], [x, h + 0.05, z], 0.58, 0.58, IRON_D, 14);
+            }
+            bx(out, [x + 0.45, 0.6, z + 0.2], [0.1, 0.7, 0.05], [0.6, 0.78, 0.74], 0.0);
+            bx(out, [x + 0.46, 0.65, z + 0.23], [0.06, 0.6 * if active { 1.0 } else { 0.5 }, 0.02], TEAL, if active { 0.35 } else { 0.0 });
+            bx(out, [x - 0.2, 2.0, z], [0.2, 0.3, 0.2], PANEL, 0.0);
+            moving(out, "stirrer", Move::Spin(1), [x - 0.2, 2.3, z], 0.35, 0.0, active, tick, |o| {
+                lb(o, [x - 0.2, 2.3, z], [x - 0.2, 2.55, z], 0.03, 0.03, STEEL, 5);
+                bx(o, [x - 0.2, 2.5, z], [0.15, 0.015, 0.015], STEEL, 0.0);
+            });
+            lb(out, [x + 0.3, 1.95, z], [x + 0.9, 1.95, z], 0.05, 0.05, IRON, 5);
+            lb(out, [x + 0.9, 1.95, z], [x + 0.9, 0.5, z], 0.05, 0.05, IRON, 5);
+            wheel(out, [x + 0.65, 1.95, z + 0.1], 1, 0.12, [0.7, 0.2, 0.18], 4);
+            lb(out, [x - 0.4, 0.2, z + 0.5], [x - 0.9, 0.2, z + 0.5], 0.06, 0.06, COPPER, 5);
+            if active {
+                for k in 0..3u32 {
+                    let a = (t * 0.02 + k as f32 / 3.0).fract();
+                    shapes::sphere(out, [x + 0.3 - k as f32 * 0.25, 2.1 + a * 0.5, z], [0.05 + 0.06 * a, 0.05 + 0.06 * a, 0.05 + 0.06 * a], [0.88, 0.94, 0.95], 6, 4, 0.2, k);
+                }
+            }
+        }
+        BuildingKind::Cooler => {
+            // a big white insulated box with a heavy door and a latch, a compressor unit with finned coils on top, a fan that spins when it runs, frost along the edges
+            bx(out, [x, 0.0, z], [0.95, 1.2, 0.7], ENAMEL, 0.0);
+            bx(out, [x, 0.0, z + 0.7], [0.82, 1.1, 0.03], [0.76, 0.80, 0.84], 0.0);
+            bx(out, [x + 0.65, 0.5, z + 0.75], [0.04, 0.2, 0.03], IRON_D, 0.0);
+            bx(out, [x, 1.2, z], [0.98, 0.05, 0.72], [0.68, 0.72, 0.78], 0.0);
+            bx(out, [x - 0.4, 1.25, z], [0.45, 0.35, 0.4], PANEL, 0.0);
+            for k in 0..6 {
+                bx(out, [x + 0.35, 1.25 + k as f32 * 0.04, z], [0.45, 0.015, 0.38], STEEL, 0.0);
+            }
+            moving(out, "fan", Move::Spin(1), [x - 0.4, 1.62, z], 0.5, 0.0, active, tick, |o| {
+                bx(o, [x - 0.4, 1.6, z], [0.3, 0.012, 0.05], IRON_D, 0.0);
+                bx(o, [x - 0.4, 1.6, z], [0.05, 0.012, 0.3], IRON_D, 0.0);
+            });
+            let frost = [0.82, 0.92, 1.0];
+            bx(out, [x, 0.0, z + 0.68], [0.96, 0.05, 0.03], frost, 0.0);
+            bx(out, [x + 0.93, 0.0, z], [0.03, 1.15, 0.6], frost, 0.0);
+            if active {
+                for k in 0..3u32 {
+                    let a = (t * 0.02 + k as f32 / 3.0).fract();
+                    shapes::sphere(out, [x - 0.1 + k as f32 * 0.35, 1.5 + a * 0.5, z + 0.5], [0.07, 0.04, 0.07], [0.85, 0.95, 1.0], 5, 3, 0.4, k);
+                }
+            }
+        }
+        BuildingKind::Telegraph => {
+            // a small wooden hut with a window and a door, a pole beside it with glass insulators and wires that run off, a key and sounder on a ledge that click while it works
+            bx(out, [x, 0.0, z], [0.55, 0.8, 0.45], WOOD, 0.0);
+            bx(out, [x, 0.8, z], [0.65, 0.07, 0.55], [0.40, 0.24, 0.20], 0.0);
+            bx(out, [x - 0.2, 0.3, z + 0.45], [0.14, 0.4, 0.02], SOOT, 0.0);
+            bx(out, [x + 0.18, 0.4, z + 0.45], [0.12, 0.2, 0.02], GLASSC, 0.0);
+            bx(out, [x + 0.55, 0.0, z + 0.2], [0.06, 2.4, 0.06], WOOD_L, 0.0);
+            for h in [1.9f32, 2.2] {
+                bx(out, [x + 0.55, h, z + 0.2], [0.35, 0.03, 0.03], WOOD, 0.0);
+            }
+            for (dx, h) in [(-0.3f32, 1.95f32), (0.3, 1.95), (-0.3, 2.25), (0.3, 2.25)] {
+                lb(out, [x + 0.55 + dx, h, z + 0.2], [x + 0.55 + dx, h + 0.1, z + 0.2], 0.03, 0.02, GLASSC, 5);
+            }
+            lb(out, [x + 0.25, 2.05, z + 0.2], [x - 1.2, 1.4, z + 0.4], 0.008, 0.008, [0.1, 0.1, 0.1], 3);
+            lb(out, [x + 0.85, 2.05, z + 0.2], [x + 1.8, 1.5, z + 0.4], 0.008, 0.008, [0.1, 0.1, 0.1], 3);
+            bx(out, [x - 0.15, 0.87, z + 0.1], [0.2, 0.03, 0.14], BRASS, 0.0);
+            moving(out, "key", Move::Piston, [x + 0.1, 0.9, z + 0.1], 0.5, 0.025, active, tick, |o| {
+                bx(o, [x + 0.1, 0.9, z + 0.1], [0.05, 0.03, 0.08], BRASS, 0.0);
+            });
+            let lamp = if active && (t * 0.1).sin() > 0.0 { [1.0, 0.8, 0.3] } else { [0.3, 0.26, 0.2] };
+            rd(out, [x + 0.55, 2.55, z + 0.2], [0.06, 0.06, 0.06], lamp);
+        }
+        BuildingKind::Radio => {
+            // a lattice mast over a small hut, a turning dish near its top, a red lamp that blinks, and a loop aerial
+            bx(out, [x, 0.0, z], [0.6, 0.7, 0.5], [0.52, 0.55, 0.52], 0.0);
+            bx(out, [x, 0.7, z], [0.65, 0.05, 0.55], IRON_D, 0.0);
+            bx(out, [x - 0.3, 0.2, z + 0.5], [0.12, 0.35, 0.02], SOOT, 0.0);
+            for (dx, dz) in [(-0.2f32, -0.2f32), (0.2, -0.2), (-0.2, 0.2), (0.2, 0.2)] {
+                lb(out, [x + 0.4 + dx * 0.9, 0.0, z + dz * 0.9], [x + 0.4 + dx * 0.25, 3.8, z + dz * 0.25], 0.025, 0.015, IRON, 4);
+            }
+            for k in 0..5 {
+                let h = 0.4 + k as f32 * 0.7;
+                let w = 0.2 - k as f32 * 0.035;
+                lb(out, [x + 0.4 - w, h, z - w], [x + 0.4 + w, h + 0.5, z + w], 0.012, 0.012, IRON, 3);
+                lb(out, [x + 0.4 + w, h, z - w], [x + 0.4 - w, h + 0.5, z + w], 0.012, 0.012, IRON, 3);
+            }
+            moving(out, "dish", Move::Spin(1), [x + 0.4, 3.2, z], 0.08, 0.0, active, tick, |o| {
+                lb(o, [x + 0.4, 3.2, z], [x + 0.62, 3.2, z], 0.02, 0.02, IRON, 4);
+                rd(o, [x + 0.68, 3.2, z], [0.06, 0.26, 0.26], ALU);
+                rd(o, [x + 0.62, 3.2, z], [0.04, 0.05, 0.05], BRASS);
+            });
+            let lamp = if active && (t * 0.08).sin() > 0.0 { [1.0, 0.2, 0.15] } else { [0.35, 0.1, 0.1] };
+            rd(out, [x + 0.4, 3.9, z], [0.07, 0.07, 0.07], lamp);
+            lb(out, [x - 0.5, 0.75, z - 0.3], [x - 0.5, 1.5, z - 0.3], 0.02, 0.02, COPPER, 4);
+            wheel(out, [x - 0.5, 1.5, z - 0.3], 2, 0.2, COPPER, 0);
+        }
+        BuildingKind::VacuumPump => {
+            // a glass bell jar on a flat plate with a violet glow when pumped down, a horizontal pump body and motor on the bench, a hose, a gauge
+            bx(out, [x, 0.0, z], [0.9, 0.7, 0.5], WOOD, 0.0);
+            bx(out, [x, 0.7, z], [0.95, 0.05, 0.55], IRON_D, 0.0);
+            lb(out, [x - 0.4, 0.75, z], [x - 0.4, 0.85, z], 0.36, 0.36, IRON, 12);
+            shapes::sphere(out, [x - 0.4, 1.0, z], [0.3, 0.38, 0.3], if active { [0.62, 0.50, 0.95] } else { [0.72, 0.9, 0.9] }, 12, 8, if active { 0.5 } else { 0.0 }, 3);
+            rd(out, [x - 0.4, 0.95, z], [0.05, 0.1, 0.05], BRASS);
+            lb(out, [x + 0.05, 0.9, z], [x + 0.75, 0.9, z], 0.15, 0.15, [0.34, 0.40, 0.46], 10);
+            bx(out, [x + 0.7, 0.75, z], [0.3, 0.35, 0.22], PANEL, 0.0);
+            moving(out, "piston", Move::Piston, [x + 0.3, 1.05, z], 0.4, 0.05, active, tick, |o| {
+                lb(o, [x + 0.3, 1.05, z], [x + 0.3, 1.2, z], 0.035, 0.035, STEEL, 5);
+            });
+            lb(out, [x - 0.1, 0.9, z + 0.05], [x - 0.3, 0.85, z + 0.05], 0.03, 0.03, [0.15, 0.15, 0.15], 4);
+            rd(out, [x + 0.3, 1.35, z + 0.3], [0.12, 0.12, 0.03], ENAMEL);
+            rd(out, [x + 0.3, 1.35, z + 0.32], [0.02, 0.08, 0.02], [0.8, 0.2, 0.2]);
+        }
+        BuildingKind::CrystalPuller => {
+            // a tall steel chamber with a glowing viewport on an iron frame, a long seed rod coming out of the top, turning and drawing up a bright boule
+            bx(out, [x, 0.0, z], [0.7, 0.2, 0.6], CONC, 0.0);
+            lb(out, [x, 0.2, z], [x, 1.3, z], 0.5, 0.48, [0.60, 0.64, 0.70], 14);
+            lb(out, [x, 1.3, z], [x, 1.5, z], 0.48, 0.3, [0.52, 0.56, 0.62], 14);
+            for h in [0.5f32, 1.0] {
+                lb(out, [x, h, z], [x, h + 0.05, z], 0.53, 0.53, IRON_D, 14);
+            }
+            lb(out, [x, 1.5, z], [x, 1.7, z], 0.3, 0.3, IRON_D, 10);
+            bx(out, [x, 0.55, z + 0.48], [0.18, 0.2, 0.02], if active { [1.0, 0.6, 0.2] } else { [0.15, 0.16, 0.18] }, if active { 1.0 } else { 0.0 });
+            for sx in [-0.55f32, 0.55] {
+                bx(out, [x + sx, 0.0, z - 0.4], [0.06, 3.6, 0.06], IRON, 0.0);
+            }
+            bx(out, [x, 3.6, z - 0.4], [0.7, 0.1, 0.1], IRON_D, 0.0);
+            bx(out, [x, 3.0, z - 0.2], [0.28, 0.5, 0.25], PANEL, 0.0);
+            moving(out, "rod", Move::Spin(1), [x, 2.4, z], 0.12, 0.0, active, tick, |o| {
+                lb(o, [x, 1.7, z], [x, 3.0, z], 0.035, 0.035, STEEL, 6);
+                lb(o, [x, 1.9, z], [x, 2.1, z], 0.09, 0.06, [0.86, 0.84, 0.82], 8);
+            });
+            if active {
+                let st = out.len();
+                lb(out, [x, 0.7, z], [x, 0.78, z], 0.46, 0.46, [1.0, 0.5, 0.15], 12);
+                if tint.is_none() {
+                    super::buildings::glowify(&mut out.verts, st);
+                }
+            }
+        }
+        BuildingKind::Photolith => {
+            // a clean white cabinet with a vertical optical column and a lens barrel above a flat wafer stage, a control screen and a violet beam while it prints
+            bx(out, [x, 0.0, z], [0.9, 0.85, 0.65], ENAMEL, 0.0);
+            bx(out, [x, 0.85, z], [0.95, 0.05, 0.7], [0.60, 0.64, 0.70], 0.0);
+            lb(out, [x, 0.9, z - 0.1], [x, 2.3, z - 0.1], 0.2, 0.17, [0.30, 0.36, 0.52], 10);
+            lb(out, [x, 1.5, z - 0.1], [x, 1.58, z - 0.1], 0.26, 0.26, BRASS, 10);
+            lb(out, [x, 2.3, z - 0.1], [x, 2.45, z - 0.1], 0.12, 0.12, IRON_D, 8);
+            rd(out, [x, 1.0, z - 0.1], [0.16, 0.05, 0.16], GLASSC);
+            moving(out, "wafer", Move::Spin(1), [x, 0.93, z + 0.35], 0.2, 0.0, active, tick, |o| {
+                lb(o, [x, 0.9, z + 0.35], [x, 0.93, z + 0.35], 0.2, 0.2, [0.55, 0.58, 0.66], 14);
+                bx(o, [x + 0.1, 0.93, z + 0.35], [0.03, 0.005, 0.03], [0.8, 0.7, 0.2], 0.0);
+            });
+            bx(out, [x + 0.85, 0.85, z + 0.2], [0.04, 0.5, 0.35], PANEL, 0.0);
+            bx(out, [x + 0.82, 1.15, z + 0.2], [0.02, 0.18, 0.28], if active { [0.3, 0.9, 0.6] } else { [0.14, 0.2, 0.2] }, if active { 0.8 } else { 0.0 });
+            if active {
+                let st = out.len();
+                lb(out, [x, 0.96, z - 0.1], [x, 1.0, z - 0.1], 0.06, 0.06, [0.75, 0.55, 1.0], 8);
+                lb(out, [x, 1.0, z - 0.1], [x, 1.5, z - 0.1], 0.035, 0.07, [0.75, 0.55, 1.0], 8);
+                if tint.is_none() {
+                    super::buildings::glowify(&mut out.verts, st);
+                }
+            }
+        }
+        BuildingKind::CncMachine => {
+            // a heavy enclosure with a window onto a spindle and a vice, a control panel on an arm with a glowing screen, a coolant tank; spindle turns and the head moves
+            bx(out, [x, 0.0, z], [0.95, 0.55, 0.65], [0.28, 0.36, 0.34], 0.0);
+            bx(out, [x, 0.55, z], [0.95, 0.9, 0.65], [0.62, 0.66, 0.68], 0.0);
+            bx(out, [x - 0.1, 0.8, z + 0.65], [0.62, 0.5, 0.02], [0.45, 0.78, 0.82], 0.0);
+            bx(out, [x + 0.75, 0.6, z + 0.67], [0.12, 0.8, 0.03], [0.50, 0.54, 0.56], 0.0);
+            bx(out, [x + 1.1, 0.6, z + 0.5], [0.08, 0.85, 0.35], PANEL, 0.0);
+            bx(out, [x + 1.1, 1.2, z + 0.5], [0.07, 0.25, 0.28], if active { [0.3, 0.9, 0.6] } else { [0.12, 0.2, 0.2] }, if active { 0.8 } else { 0.0 });
+            bx(out, [x + 1.1, 0.0, z + 0.1], [0.2, 0.4, 0.35], [0.30, 0.34, 0.30], 0.0);
+            bx(out, [x - 0.1, 1.45, z], [0.35, 0.05, 0.3], IRON_D, 0.0);
+            moving(out, "head", Move::Piston, [x - 0.1, 1.2, z + 0.1], 0.2, 0.09, active, tick, |o| {
+                bx(o, [x - 0.1, 1.1, z + 0.1], [0.14, 0.34, 0.14], IRON, 0.0);
+                lb(o, [x - 0.1, 0.95, z + 0.1], [x - 0.1, 1.1, z + 0.1], 0.05, 0.05, STEEL, 6);
+            });
+            moving(out, "chuck", Move::Spin(1), [x - 0.1, 0.9, z + 0.1], 0.6, 0.0, active, tick, |o| {
+                lb(o, [x - 0.1, 0.78, z + 0.1], [x - 0.1, 0.95, z + 0.1], 0.025, 0.012, STEEL, 5);
+                bx(o, [x - 0.1, 0.9, z + 0.1], [0.04, 0.012, 0.012], STEEL, 0.0);
+            });
+            bx(out, [x - 0.1, 0.55, z + 0.1], [0.25, 0.08, 0.2], IRON_D, 0.0);
+        }
+        BuildingKind::AssemblyRobot => {
+            // an orange articulated arm on a turret over a steel plinth with a conveyor strip, two parts bins; the turret swings and the head dips while it assembles
+            bx(out, [x, 0.0, z], [0.9, 0.25, 0.7], IRON_D, 0.0);
+            bx(out, [x, 0.25, z + 0.45], [0.85, 0.05, 0.15], [0.18, 0.18, 0.2], 0.0);
+            for k in 0..5 {
+                bx(out, [x - 0.7 + k as f32 * 0.35, 0.3, z + 0.45], [0.03, 0.02, 0.15], [0.35, 0.35, 0.38], 0.0);
+            }
+            for (dx, c) in [(-0.6f32, [0.35f32, 0.55, 0.75]), (0.6, [0.75, 0.35, 0.3])] {
+                bx(out, [x + dx, 0.25, z - 0.35], [0.22, 0.25, 0.18], c, 0.0);
+            }
+            lb(out, [x, 0.25, z], [x, 0.55, z], 0.28, 0.25, [0.30, 0.34, 0.36], 12);
+            moving(out, "turret", Move::Spin(1), [x, 0.6, z], 0.06, 0.0, active, tick, |o| {
+                lb(o, [x, 0.55, z], [x, 0.75, z], 0.22, 0.2, SAFETY, 12);
+                rd(o, [x, 0.85, z], [0.14, 0.14, 0.14], IRON_D);
+                lb(o, [x, 0.85, z], [x + 0.35, 1.7, z], 0.1, 0.08, SAFETY, 8);
+                rd(o, [x + 0.35, 1.7, z], [0.11, 0.11, 0.11], IRON_D);
+                lb(o, [x + 0.35, 1.7, z], [x + 0.9, 1.35, z + 0.2], 0.08, 0.06, SAFETY, 8);
+                rd(o, [x + 0.9, 1.35, z + 0.2], [0.08, 0.08, 0.08], IRON_D);
+                lb(o, [x + 0.9, 1.35, z + 0.2], [x + 0.9, 1.1, z + 0.2], 0.03, 0.03, STEEL, 5);
+                bx(o, [x + 0.9, 1.0, z + 0.2], [0.1, 0.03, 0.02], STEEL, 0.0);
+            });
+            let lamp = if active { [0.3, 1.0, 0.4] } else { [0.2, 0.3, 0.2] };
+            rd(out, [x - 0.8, 0.3, z + 0.65], [0.05, 0.05, 0.03], lamp);
         }
         _ => {}
     }

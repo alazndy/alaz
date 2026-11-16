@@ -503,6 +503,25 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
         | BuildingKind::PrintingPress
         | BuildingKind::CottonGin
         | BuildingKind::SpinningJenny
+        | BuildingKind::ArcFurnace
+        | BuildingKind::Refinery
+        | BuildingKind::Still
+        | BuildingKind::Electrolysis
+        | BuildingKind::Compressor
+        | BuildingKind::Railway
+        | BuildingKind::SteamPump
+        | BuildingKind::Transformer
+        | BuildingKind::Accumulator
+        | BuildingKind::Welder
+        | BuildingKind::Reactor
+        | BuildingKind::Cooler
+        | BuildingKind::Telegraph
+        | BuildingKind::Radio
+        | BuildingKind::VacuumPump
+        | BuildingKind::CrystalPuller
+        | BuildingKind::Photolith
+        | BuildingKind::CncMachine
+        | BuildingKind::AssemblyRobot
         => push_machine(out, kind, x, z, active, tick, tint),
         BuildingKind::Furnace => {
             round(out, [x, 0.55, z], [0.7, 0.62, 0.7], [0.55, 0.53, 0.50], tint);

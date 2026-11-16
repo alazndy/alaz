@@ -227,6 +227,19 @@ pub fn item_name(k: ItemKind) -> &'static str {
         ItemKind::SmokedMeat => "Tütsülenmiş et",
         ItemKind::SmokedFish => "Tütsülenmiş balık",
         ItemKind::Bulgur => "Bulgur",
+        ItemKind::Bauxite => "Boksit",
+        ItemKind::Aluminium => "Alüminyum",
+        ItemKind::PureCopper => "Saf bakır",
+        ItemKind::Kerosene => "Gazyağı",
+        ItemKind::Lubricant => "Makine yağı",
+        ItemKind::Alcohol => "Alkol",
+        ItemKind::Fertilizer => "Gübre (kimyasal)",
+        ItemKind::Dye => "Boya",
+        ItemKind::Soap => "Sabun",
+        ItemKind::WeldedFrame => "Kaynaklı çerçeve",
+        ItemKind::VacuumTube => "Elektron tüpü",
+        ItemKind::PureSilicon => "Saf silisyum",
+        ItemKind::Chip => "Çip",
 
 
 
@@ -426,6 +439,11 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Discovered(Discovery::Ginning) => "Pamuk kozasının çekirdeği çırçır makinesiyle ayrılır; pamuk lifi iplik ve kumaş olur. Pamuk tarlada da ekilir.".into(),
         Event::Discovered(Discovery::Spinning) => "Çok iğli makine çıkrığın üç katı iplik eğirir. İplik eğirme makinesi güç ister.".into(),
         Event::Discovered(Discovery::Drawing) => "Güçle çalışan çekiç sac ve tel döver. Dövme çekici haddehane ve prese giden başka bir yoldur.".into(),
+        Event::Discovered(Discovery::HeavyCurrent) => "Dinamo ayakta: akım sadece ışık değil, güç de taşır. Transformatör şebekeyi 36 m uzağa uzatır, akümülatör akımı saklar, kompresör havayı elektrikle üfler, soğutucu yiyeceği kilerden uzun saklar.".into(),
+        Event::Discovered(Discovery::ArcSmelting) => "Elektrik arkı 1800 °C'ye çıkar. Ark fırını pik demirden ve hurdadan çelik eritir; elektroliz hücresi bakırı saflaştırır, boksitten alüminyum çeker; kaynak makinesi çerçeve birleştirir.".into(),
+        Event::Discovered(Discovery::Chemistry) => "Katran ve petrol damıtılınca ayrışır: damıtma kazanı gazyağı ve alkol, rafineri gazyağı ve makine yağı verir. Kimya reaktörü gübre, boya ve sabun pişirir; alkol yarayı temizler.".into(),
+        Event::Discovered(Discovery::Semiconductors) => "Silisyum tek kristal olarak çekilince saf olur; kristal çekme fırını bunu yapar. Fotolitografi tezgahı saf silisyuma ışıkla çip basar (devre kartı yoluna ek bir yol).".into(),
+        Event::Discovered(Discovery::Automation) => "Hesap ve elektrik elleri boşa çıkarır: CNC tezgahı partilerle parça işler, montaj robotu çevresindeki makineleri bir zincir gibi kendi çalıştırır.".into(),
         Event::Discovered(Discovery::Medicine) => "Acı otlar karın ve yara için iyidir. Çiğneyebilir ya da iki otu sargıya çevirebilirsin.".into(),
         Event::Struck { .. } => return None,
         Event::Broke { agent, item } => {
@@ -618,6 +636,25 @@ pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
         BuildingKind::PrintingPress => "4 kâğıt, kömür, yağ ve deriden kitap basar. Kitap taşıyanın işi ince çıkar; kitap basılınca pratik çabuk oturur.",
         BuildingKind::CottonGin => "Güçle çalışır: 3 pamuktan tohumu ayırıp 2 pamuk lifi verir. Pamuk yabanda bulunur, tarlada ekilir.",
         BuildingKind::SpinningJenny => "Güçle çalışır: çok iğli; çıkrığın üç katı iplik eğirir (8 lifle 6 iplik).",
+        BuildingKind::ArcFurnace => "Şebeke ister: 1800 °C'ye çıkar. 3 pik demirden 3 çelik, 2 hurda döküm parçadan 1 çelik, kum ve koktan 2 silisyum. Yanında kompresör varsa iki kat hızlı.",
+        BuildingKind::Refinery => "Şebeke ister: 2 petrolden 2 gazyağı ve 1 makine yağı; 2 katrandan 1 gazyağı ve 1 makine yağı.",
+        BuildingKind::Still => "Güç istemez, ateşle çalışır: katran ve petrolü gazyağına ayırır; yemiş ya da tahıldan alkol çeker (alkol yarayı temizler, midenin hastalığını azaltır). Her seferinde bir dolu çömlek ister.",
+        BuildingKind::Electrolysis => "Şebeke ister: 2 bakır külçeden 2 saf bakır (saf bakır haddehanede 6 tel verir); 4 boksit ve 1 kokdan 2 alüminyum.",
+        BuildingKind::Compressor => "Şebeke ister: 3 m içindeki konvertöre, yüksek fırına, bloomery'ye ve ark fırınına güçlü hava üfler (körüğün yerini tutar).",
+        BuildingKind::Railway => "Güçle çalışır (su çarkı, motor...): 6 m içindeki istasyonların ürününü vagona yükler, 160 m içindeki en yakın başka ray durağına götürüp oradaki 12 m içindeki ambara boşaltır. Taşıyıcı bandın uzun mesafe hali.",
+        BuildingKind::SteamPump => "Elektriksiz pompa: 8 m içinde çalışan bir kazan ya da buhar makinesi varken 15 m içindeki mağaranın en dip odasını kuru tutar.",
+        BuildingKind::Transformer => "Şebekede olunca, bağlantı menzilini direğin 12 m'sinden 36 m'ye çıkarır (iki ucu da bağlar). Şebeke canlı değilse bir işe yaramaz.",
+        BuildingKind::Accumulator => "Dinamo şebekeyi beslerken şarj olur; dinamolar durunca şebekeyi şarjı bitene kadar canlı tutar (yaklaşık 20 dakikaya kadar).",
+        BuildingKind::Welder => "Şebeke ister: kirişten ya da çelikten, sac parçalarla kaynaklı çerçeve yapar (büyük makine ve araç parçası).",
+        BuildingKind::Reactor => "Şebeke ister: gübre (3 hayvan gübresi + kireç = 3 kimyasal gübre; tarlayı bir seferlik %150 verime çıkarır), boya (ot ya da yemişten) ve sabun (yağdan) pişirir.",
+        BuildingKind::Cooler => "Şebeke canlıyken kilerden 3 kat yavaş bozar. Elektrik kesilirse sıradan bir kutudur. Ambar gibi her şeyi alır.",
+        BuildingKind::Telegraph => "Şebeke ister: aynı hatta bağlı başka telgraf noktalarındaki ambarların, kilerlerin ve soğutucuların doluluğunu bildirir.",
+        BuildingKind::Radio => "Şebeke ister: 400 m içindeki başka radyoların yanındaki ambarların durumunu ve yaklaşan havayı bildirir. Aralarında tel gerekmez.",
+        BuildingKind::VacuumPump => "Şebeke ister: camdan havayı çeker; 1 camdan 2 ampul (kok gerekmez), 1 camdan 2 elektron tüpü.",
+        BuildingKind::CrystalPuller => "Şebeke ister: 1450 °C'de ergimiş silisyumdan tek kristal çeker: 3 silisyumdan 2 saf silisyum.",
+        BuildingKind::Photolith => "Şebeke ister: saf silisyuma ışıkla devre basar: 1 saf silisyum, 2 tel ve boya (ya da yağ) ile 3 çip.",
+        BuildingKind::CncMachine => "Şebeke ister: çelikten elle iş yapmadan partilerle mil, dişli, piston, cıvata; silindir bloğu deşer.",
+        BuildingKind::AssemblyRobot => "Şebeke ister: 6 m içindeki makinelerin çıktısını kendi alır, tarifini kendi çalıştırır ve ürününü işleyen komşu makineye verir. Tarif zincirini kendi yürütür.",
         _ => return None,
     })
 }
@@ -627,6 +664,7 @@ fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç ister (su çarkı, yel değirmeni, buhar, motor ya da manej).",
+        R::Grid => "Şebeke ister (dinamo ya da şarjlı akümülatör bağlı direk, 12 m).",
         R::Steam => "Buhar ister (8 m içinde kazan ya da buhar makinesi).",
         R::Blast => "Körük ister.",
         R::StrongBlast => "Makineyle çalışan körük ister (3 m içinde).",
@@ -638,6 +676,7 @@ fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç yok: 8 m içinde su çarkı, yel değirmeni, çalışan buhar ya da elektrik motoru (ya da 6 m içinde manejde hayvan) gerek.",
+        R::Grid => "Elektrik yok: şebeke canlı değil. Dönen bir dinamoya (ya da şarjlı akümülatöre) direkle bağla; direkler 12 m, transformatör 36 m uzağa uzanır.",
         R::Steam => "Buhar yok: 8 m içinde çalışan bir kazan ya da buhar makinesi gerek.",
         R::Blast => "Hava yok: 3 m içinde çalışan bir körük gerek (1000 °C'yi geçmez).",
         R::StrongBlast => "Güçlü hava yok: 3 m içinde, su çarkı/rüzgâr/buhar ya da motorla çalışan bir körük gerek; elle üflenen yetmez.",
@@ -662,7 +701,7 @@ fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::w
 /// Perception level of the tribe, mirrored here so panels can dress themselves for the era.
 pub(crate) static ERA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
-pub const DISCOVERIES: [Discovery; 54] = [
+pub const DISCOVERIES: [Discovery; 59] = [
     Discovery::SharpStone,
     Discovery::StoneAxe,
     Discovery::Hammer,
@@ -717,6 +756,11 @@ pub const DISCOVERIES: [Discovery; 54] = [
     Discovery::Ginning,
     Discovery::Spinning,
     Discovery::Drawing,
+    Discovery::HeavyCurrent,
+    Discovery::ArcSmelting,
+    Discovery::Chemistry,
+    Discovery::Semiconductors,
+    Discovery::Automation,
 ];
 
 pub fn discovery_name(d: Discovery) -> &'static str {
@@ -776,6 +820,11 @@ pub fn discovery_name(d: Discovery) -> &'static str {
         Discovery::Ginning => "Pamuk",
         Discovery::Spinning => "İplikçilik",
         Discovery::Drawing => "Demir çekme",
+        Discovery::HeavyCurrent => "Ağır akım",
+        Discovery::ArcSmelting => "Elektrikle eritme",
+        Discovery::Chemistry => "Kimya",
+        Discovery::Semiconductors => "Yarı iletkenler",
+        Discovery::Automation => "Otomasyon",
     }
 }
 
@@ -1269,12 +1318,18 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
                     }
                 }
                 // care: only when something is wrong and there is a cure in the bag
-                let care = (me.injury > 0 && inv.get(ItemKind::Bandage) > 0) || (me.broken > 0 && inv.get(ItemKind::Splint) > 0) || (me.sick > 0 && inv.get(ItemKind::Herb) > 0);
+                let care = (me.injury > 0 && (inv.get(ItemKind::Bandage) > 0 || inv.get(ItemKind::Alcohol) > 0)) || (me.sick > 0 && (inv.get(ItemKind::Alcohol) > 0 || inv.get(ItemKind::Soap) > 0)) || (me.broken > 0 && inv.get(ItemKind::Splint) > 0) || (me.sick > 0 && inv.get(ItemKind::Herb) > 0);
                 if care {
                     ui.separator();
                 }
                 if me.injury > 0 && inv.get(ItemKind::Bandage) > 0 && btn(ui, Glyph::Plus, "Sargı sar".into(), true) {
                     acts.push(UiAction::Cmd(CommandKind::Eat { item: ItemKind::Bandage }));
+                }
+                if (me.injury > 0 || me.sick > 0) && inv.get(ItemKind::Alcohol) > 0 && btn(ui, Glyph::Plus, "Alkol: yarayı temizle".into(), true) {
+                    acts.push(UiAction::Cmd(CommandKind::Eat { item: ItemKind::Alcohol }));
+                }
+                if me.sick > 0 && inv.get(ItemKind::Soap) > 0 && btn(ui, Glyph::Plus, "Sabunla yıkan".into(), true) {
+                    acts.push(UiAction::Cmd(CommandKind::Eat { item: ItemKind::Soap }));
                 }
                 if me.broken > 0 && inv.get(ItemKind::Splint) > 0 && btn(ui, Glyph::Leg, "Kırığı bağla".into(), true) {
                     acts.push(UiAction::Cmd(CommandKind::Eat { item: ItemKind::Splint }));
@@ -1545,12 +1600,12 @@ const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiy
 fn build_group(kind: BuildingKind) -> usize {
     use BuildingKind as B;
     match kind {
-        B::Campfire | B::CharcoalKiln | B::Furnace | B::PitKiln | B::Bloomery | B::BlastFurnace | B::CokeOven | B::LimeKiln | B::CementKiln | B::BrickKiln | B::PuddlingFurnace | B::Bessemer | B::Cupola | B::GlassFurnace | B::Smokehouse => 0,
+        B::Campfire | B::CharcoalKiln | B::Furnace | B::PitKiln | B::Bloomery | B::BlastFurnace | B::CokeOven | B::LimeKiln | B::CementKiln | B::BrickKiln | B::PuddlingFurnace | B::Bessemer | B::Cupola | B::GlassFurnace | B::Smokehouse | B::ArcFurnace | B::CrystalPuller | B::Still => 0,
         B::Workbench | B::Workshop | B::Anvil | B::IronAnvil | B::SteelAnvil | B::Loom | B::SpinningWheel | B::MoldingBench | B::PotterWheel | B::Tannery | B::FeltMallet | B::Ropewalk | B::PaperVat | B::PrintingPress => 1,
-        B::Field | B::Pen | B::HandMill | B::StoneMortar | B::WaterMill | B::DryingRack | B::OilPress | B::Well => 2,
-        B::WaterWheel | B::Windmill | B::AnimalGin | B::SteamEngine | B::Boiler | B::Bellows => 3,
-        B::TripHammer | B::Lathe | B::DrillMill | B::Press | B::Sawmill | B::PowerLoom | B::SteamHammer | B::RollingLine | B::RollingMill | B::ForgeHammer | B::CottonGin | B::SpinningJenny | B::Conveyor | B::Crane => 4,
-        B::Dynamo | B::Pole | B::ElectricMotor | B::ElectricLamp | B::Computer => 5,
+        B::Field | B::Pen | B::HandMill | B::StoneMortar | B::WaterMill | B::DryingRack | B::OilPress | B::Well | B::Cooler => 2,
+        B::WaterWheel | B::Windmill | B::AnimalGin | B::SteamEngine | B::Boiler | B::Bellows | B::SteamPump => 3,
+        B::TripHammer | B::Lathe | B::DrillMill | B::Press | B::Sawmill | B::PowerLoom | B::SteamHammer | B::RollingLine | B::RollingMill | B::ForgeHammer | B::CottonGin | B::SpinningJenny | B::Conveyor | B::Crane | B::Railway | B::Refinery | B::Electrolysis | B::Welder | B::Reactor | B::Compressor | B::CncMachine | B::AssemblyRobot => 4,
+        B::Dynamo | B::Pole | B::ElectricMotor | B::ElectricLamp | B::Computer | B::Transformer | B::Accumulator | B::Telegraph | B::Radio | B::VacuumPump | B::Photolith => 5,
         B::Shelter | B::Depot | B::Cellar | B::MineShaft | B::Pump | B::Ruin => 6,
     }
 }
@@ -1571,6 +1626,10 @@ fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: 
                     if !b.alt_cost.is_empty() {
                         ui.label(RichText::new("ya da").small().weak());
                         need_row(ui, w, &b.alt_cost, &me.inventory);
+                    }
+                    if !b.alt_cost2.is_empty() {
+                        ui.label(RichText::new("ya da").small().weak());
+                        need_row(ui, w, &b.alt_cost2, &me.inventory);
                     }
                     needs_row(ui, w, &b.needs, &me.inventory);
                     if let Some(note) = machine_note(b.kind) {
@@ -2840,6 +2899,81 @@ fn draw_building(
             }
             if b.kind == BuildingKind::SteamEngine {
                 ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor." } else { "Kömür (kok ya da katran) ve dolu bir çömlek yükle, buhar kaldır: kazan 120 °C'yi geçince çalışır. 6 m içinde çalışan bir kazan varsa yakıt gerekmez." }).small().weak());
+            }
+            if b.kind == BuildingKind::Transformer {
+                let live = w.electric_live().get(i).copied().unwrap_or(false);
+                ui.label(RichText::new(if live { "Şebeke canlı: 36 m içindeki şebeke binalarına bağlı." } else { "Şebeke canlı değil: bir işe yaramıyor." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
+            }
+            if b.kind == BuildingKind::Accumulator {
+                let frac = b.fuel as f32 / alaz_sim::world::ACCUMULATOR_CAP as f32;
+                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &format!("Şarj %{}", (frac * 100.0).round() as u32), frac, Color32::from_rgb(120, 200, 255), 270.0);
+                let (live, fed) = w.electric_state();
+                ui.label(RichText::new(if fed.get(i).copied().unwrap_or(false) { "Dinamo besliyor: şarj oluyor." } else if live.get(i).copied().unwrap_or(false) { "Dinamo yok: şebekeyi şarjıyla ayakta tutuyor." } else if b.fuel == 0 { "Şarj bitti. Dönen bir dinamoya bağla." } else { "Şebekeye bağlı değil." }).small().weak());
+            }
+            if b.kind == BuildingKind::Railway {
+                let powered = w.powered_at(b.x, b.y);
+                match w.rail_partner(i) {
+                    Some(j) => {
+                        let o = &w.buildings[j];
+                        let metres = (((o.x - b.x).pow(2) + (o.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
+                        ui.label(RichText::new(format!("Hat: {metres:.0} m ötedeki ray durağına gidiyor.")).small().weak());
+                    }
+                    None => {
+                        ui.label(RichText::new("160 m içinde başka bir ray durağı yok: vagon gidecek yer bulamıyor.").small().color(Color32::from_rgb(235, 140, 90)));
+                    }
+                }
+                ui.label(RichText::new(if powered { format!("Vagonda: {}", fmt_counts(&b.output)) } else { "Güç yok: vagon durağan (8 m içinde su çarkı, yel değirmeni, buhar ya da elektrik motoru gerek).".to_string() }).small().color(if powered { Color32::from_rgb(180, 200, 180) } else { Color32::from_rgb(235, 140, 90) }));
+            }
+            if matches!(b.kind, BuildingKind::Telegraph | BuildingKind::Radio) {
+                let live = w.electric_live().get(i).copied().unwrap_or(false);
+                if !live {
+                    ui.label(RichText::new("Sessiz: şebeke canlı değil.").small().color(Color32::from_rgb(235, 140, 90)));
+                } else {
+                    let report = w.remote_depots(i);
+                    if report.is_empty() {
+                        ui.label(RichText::new(if b.kind == BuildingKind::Radio { "Menzilde (400 m) başka radyo ya da onun ambarı yok." } else { "Hatta başka telgraf noktası ya da onun ambarı yok." }).small().weak());
+                    }
+                    for (j, total) in report {
+                        let d = &w.buildings[j];
+                        let metres = (((d.x - b.x).pow(2) + (d.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
+                        let name = defs.building(d.kind).name.as_str();
+                        let mood = if total == 0 { "boş" } else if total > 400 { "dolu" } else { "var" };
+                        ui.label(RichText::new(format!("{name}, {metres:.0} m: {total} parça ({mood}). {}", fmt_counts(&d.output))).small());
+                    }
+                    if b.kind == BuildingKind::Radio {
+                        let names = w.forecast().map(|s| match s {
+                            alaz_sim::time::Weather::Clear => "açık",
+                            alaz_sim::time::Weather::Rain => "yağmur",
+                            alaz_sim::time::Weather::Snow => "kar",
+                        });
+                        ui.label(RichText::new(format!("Hava (4 saatlik bloklar): {}", names.join(" → "))).small().color(Color32::from_rgb(170, 200, 235)));
+                    }
+                }
+            }
+            if b.kind == BuildingKind::Cooler {
+                let live = w.electric_live().get(i).copied().unwrap_or(false);
+                ui.label(RichText::new(if live { "Çalışıyor: içindeki yiyecek kilerden 3 kat yavaş bozulur." } else { "Elektrik yok: soğutmuyor, sıradan bir kutu." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
+                ui.label(format!("İçindekiler: {}", fmt_counts(&b.output)));
+                if ui.button("Hepsini yükle (araçlar hariç)").clicked() {
+                    acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for k in ItemKind::ALL {
+                        let n = b.output[k as usize];
+                        if n > 0 && ui.small_button(format!("Al: {} ({})", item_name(k), n)).clicked() {
+                            acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: Some(k) }));
+                        }
+                    }
+                });
+            }
+            if b.kind == BuildingKind::AssemblyRobot {
+                let live = w.electric_live().get(i).copied().unwrap_or(false);
+                let what = b.auto.map(|a| defs.recipes[a as usize].name.as_str());
+                ui.label(RichText::new(match (live, what) {
+                    (false, _) => "Şebeke yok: robot duruyor.".to_string(),
+                    (true, Some(n)) => format!("Zinciri yürütüyor: {n}. Yanındaki makinelerden malzemeyi kendi alır."),
+                    (true, None) => "Boşta: yanında kendi tarifine yetecek malzeme bekliyor (ya da bir tarifi otomatiğe ayarla).".to_string(),
+                }).small().weak());
             }
             if b.kind == BuildingKind::Pump {
                 ui.label(RichText::new("Güç varken 15 m içindeki mağaranın en dip odasını kuru tutar.").small().weak());

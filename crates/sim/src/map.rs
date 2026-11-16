@@ -308,6 +308,33 @@ pub enum ItemKind {
     SmokedFish,
     /// Grain boiled, dried and cracked: keeps well and fills.
     Bulgur,
+    // --- Electricity and the late age (wave 3) ---
+    /// Red-brown aluminium ore from a deep deposit: electrolysis turns it to metal.
+    Bauxite,
+    /// Light bright metal won by electrolysis from bauxite.
+    Aluminium,
+    /// Copper refined in the electrolytic bath: it draws more wire and carries current better.
+    PureCopper,
+    /// Lamp oil run off petroleum or tar: burns clean in a lamp and in a boiler.
+    Kerosene,
+    /// Machine oil from the refinery: thick and slow to burn; it fires a boiler and fills a flask for tool handles.
+    Lubricant,
+    /// Spirit run off fermented fruit or grain: cleans a wound and settles the stomach.
+    Alcohol,
+    /// Manure and lime cooked in a reactor: a field dressed with it yields half as much again at the next harvest.
+    Fertilizer,
+    /// Colour boiled from herbs and set with lime: for ink, and for the coating a chip is printed through.
+    Dye,
+    /// Oil and lime boiled to soap: washes away what makes people ill.
+    Soap,
+    /// A frame of girders and sheet welded true: the bones of a big machine or a vehicle.
+    WeldedFrame,
+    /// A glass tube with the air drawn out and wire sealed in: an electron tube.
+    VacuumTube,
+    /// Silicon drawn as a single crystal: pure enough to print circuits on.
+    PureSilicon,
+    /// A chip printed on pure silicon: many transistors on a fingernail.
+    Chip,
 }
 
 impl ItemKind {
@@ -368,7 +395,7 @@ impl ItemKind {
         crate::rules::rules().garment(self)
     }
 
-    pub const COUNT: usize = 152;
+    pub const COUNT: usize = 165;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -522,6 +549,19 @@ impl ItemKind {
         ItemKind::SmokedMeat,
         ItemKind::SmokedFish,
         ItemKind::Bulgur,
+        ItemKind::Bauxite,
+        ItemKind::Aluminium,
+        ItemKind::PureCopper,
+        ItemKind::Kerosene,
+        ItemKind::Lubricant,
+        ItemKind::Alcohol,
+        ItemKind::Fertilizer,
+        ItemKind::Dye,
+        ItemKind::Soap,
+        ItemKind::WeldedFrame,
+        ItemKind::VacuumTube,
+        ItemKind::PureSilicon,
+        ItemKind::Chip,
     ];
 }
 
