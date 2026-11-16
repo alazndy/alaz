@@ -11,12 +11,14 @@ on:
 permissions:
   contents: write
 
+# The toolchain is pinned: the mesh_hashes test compares meshes byte for byte, and a new compiler can round floats
+# differently. Move the pin together with the expected hashes.
 jobs:
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
       - name: Sürüm
         id: ver
@@ -53,7 +55,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
       # not strictly needed (the window and graphics libraries are loaded at run time, not linked): best effort, so a
       # flaky package mirror does not stop the build
