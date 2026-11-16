@@ -29,7 +29,11 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
-## 0.3.1'de yeni (0.3.0 yayınlanmadı)
+## 0.3.2'de yeni
+
+**Karakter evrimi:** Maymun'dan Bilge'ye 10 aşama (Maymun, Dik yürüyen, Alet yapan, Ateşçi, Toplayıcı, Avcı, Çiftçi, Zanaatkâr, Usta, Bilge). Duruş, kürk, yüz, boy ve yürüyüş algıyla birlikte azar azar değişiyor; kemer, boya, torba, kolye, hasır şapka, kuşak ve ak sakal gibi ayrıntılar sırayla beliriyor. Yeni bir aşamaya geçince görünüş birkaç saniyede kayarak değişir ve bir kart çıkar. Portre de aynı evrimi gösterir.
+
+(0.3.0 ve 0.3.1 yayınlanmadı; aşağıdakiler de bu sürümle geliyor.)
 
 **53 yeni makine**, üç dalgada:
 - **Sanayi:** kok fırını, kireç ve çimento fırınları, tuğla fırını, pudlaj fırını, Bessemer konvertörü, döküm ocağı ve kum kalıp, torna, matkap/freze, pres, testere değirmeni, çıkrık, mekanik dokuma tezgahı, kazan, buhar çekici, haddeleme hattı.
