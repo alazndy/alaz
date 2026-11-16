@@ -25,9 +25,33 @@ cd ALAZ-*-linux-x86_64
 - Sağ üstteki "İlk adımlar" listesi ve üstteki sarı hedef şeridi yolu gösterir.
 - **Hareket:** WASD ile yürü, Shift ile koş.
 - **Fare:** Sağ tıkla topla; imleç neyin üstündeyse adını yazar.
-- **Sekmeler:** I çanta, C yap, B inşa, H hedefler, F1 yardım.
+- **Sekmeler:** I çanta, C yap, B inşa, H hedefler, J günlük, F1 yardım.
 
 Ayrıntılar için README'ye bak.
+
+## 0.3.0'da yeni
+
+**53 yeni makine**, üç dalgada:
+- **Sanayi:** kok fırını, kireç ve çimento fırınları, tuğla fırını, pudlaj fırını, Bessemer konvertörü, döküm ocağı ve kum kalıp, torna, matkap/freze, pres, testere değirmeni, çıkrık, mekanik dokuma tezgahı, kazan, buhar çekici, haddeleme hattı.
+- **Yaşam ve zanaat:** çömlekçi çarkı, yağ presi, tabakhane, kurutma rafı, tüttürme ocağı, kuyu, dibek, su değirmeni, dövme çekici, keçe tokmağı, halat bükme, vinç, cam üfleme, kâğıt ve matbaa, çırçır (pamukla), iplik eğirme makinesi.
+- **Elektrik ve ileri dönem:** ark fırını, rafineri, damıtma kazanı, elektroliz (boksit ve alüminyum), kompresör, demiryolu, buharlı pompa, transformatör, akümülatör, kaynak, kimya reaktörü, soğutucu, telgraf, radyo, vakum pompası, kristal çekme, fotolitografi, CNC, montaj robotu.
+- Eski üretim yolları açık kalıyor; yeni makineler daha hızlı ya da daha verimli yollar ekliyor.
+
+**Kamp ve günlük:** Akşam yanan bir ateşin başına otur: günün özeti, dinlenme ve ısınma, yarın için bir hedef. Günlük (J) gün gün olayları, keşifleri ve bütün bilinen tarifleri tutar; elde kâğıt varsa yerleri de not eder.
+
+**Elementler:** Islak zemin, çamur, su birikintisi, buz; kuru otta rüzgârla yayılan yangın, kül ve yeniden yeşerme. Kamp ateşinin kıvılcımı ve yaz yıldırımı yangın başlatabilir.
+
+**Giysiler artık işe yarıyor:** ısı, yağmur, ısırık, darbe, düşme ve ateş koruması; yük ve aşınma. Giyim sıcaklığı durum kutusunda görünür.
+
+**Görüntü ve performans:**
+- Daha ince pikseller, yumuşak zemin geçişleri, yeni karakter tasarımı, çağa göre kıyafetler ve maymunsu portre.
+- Grafik ayarları (menü → Grafik): piksel inceliği, gölge kalitesi, uzak süsler.
+- Akıcı yürüyüş: dünya parçaları arka planda kuruluyor. Kalabalıkta uzak insanlar sadeleşiyor.
+- Ctrl + / Ctrl - / Ctrl 0 arayüz boyutunu ayarlar ve hatırlar.
+
+**Modlama:** `assets/` klasörüne MagicaVoxel (`.vox`) ya da glTF (`.glb`) model, PNG ikon, arayüz parçası ve zemin dokusu konabilir; kodla çizilenin yerine geçer. `alaz --export-assets klasör` mevcut modelleri ve ikonları düzenlenmek üzere dışa aktarır.
+
+**Kayıtlar:** 0.2.0 kayıtları açılır ve yükseltilir.
 
 ## 0.2.0'da yeni
 - Açılış ekranı ve dünyaya giriş animasyonu (ALAZ_NOFX=1 ile kapatılır).

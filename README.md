@@ -50,6 +50,10 @@ Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen 
 - **Ortak rüzgâr:** Yön ve güç tek kaynaktan gelir. Otlar, yapraklar, dalgalar, bulutlar, duman ve yağmur hep aynı rüzgârla hareket eder.
 - **Büyük dünyalar:** 128 m'den 262 km'ye. Büyük dünyalar Minecraft gibi chunk chunk, oyuncu yaklaştıkça üretilir.
 - **Hikâye ve öğretici:** Açılış anlatısı, her çağa bir sayfa ve kendiliğinden işaretlenen "İlk adımlar" listesi.
+- **Elementler:** Yağmur zemini ıslatır; çamur ve birikinti yavaşlatır, buzda koşan kayar. Kuru otlar rüzgârla yanar, yağmur söndürür, kül bir günde yeşerir.
+- **Giysiler:** Her giysinin ısı, yağmur, ısırık, darbe, düşme ve ateş koruması, yükü ve aşınması var.
+- **Kamp ve günlük:** Akşam ateş başında günün özeti ve yarın için hedef; günlük (J) olayları, keşifleri ve tarifleri tutar.
+- **Modlanabilir görseller:** `assets/` klasörüne konan MagicaVoxel (`.vox`), glTF (`.glb`) modelleri ve PNG ikon/dokular kodla çizilenlerin yerine geçer (bkz. [assets/README.md](assets/README.md)).
 - **Son oyun:** Bilgisayarın tasarım masasında kendi tarifini yazarsın; tarif, oyunun bir değer dengesi denetiminden geçer. Döngü, bu dünyanın durumundan yeni bir dünya başlatır.
 
 ## Kurulum ve çalıştırma
@@ -96,6 +100,7 @@ Varsayılan tuşlar. Hepsi oyun içinden yeniden atanabilir.
 | F | Karakteri takip et | X | Dur |
 | I | Çanta | C | Yap |
 | B | İnşa | H | Hedefler |
+| J | Günlük | Z | Eşya bırak |
 | R | Rotalar | G | Izgaraya oturt |
 | F1 | Yardım | F5 / F9 | Kaydet / yükle |
 | M | Ses | Esc | Menü / iptal |
