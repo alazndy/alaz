@@ -9,7 +9,10 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 egui = { version = "0.37.0", features = ["default_fonts"] }
 egui-wgpu = "0.37.0"
 egui-winit = "0.37.0"
-glam = "0.34.2"
+# libm: rotations come out bit for bit the same on every system (see mesh::DetMath)
+glam = { version = "0.34.2", features = ["libm"] }
+# pure Rust maths for the mesh builders: the system maths libraries round the last bit their own way
+libm = "0.2.16"
 pollster = "1.0.1"
 wgpu = "30.0.1"
 # asset files: MagicaVoxel and glTF models (pure Rust, no image decoder pulled in), PNG pictures, glTF extras

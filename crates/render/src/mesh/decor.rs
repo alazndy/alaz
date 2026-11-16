@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 /// Small living detail on the ground: grass tufts, wild flowers, ferns, mushrooms, reeds, pebbles. Purely visual and
@@ -63,7 +64,7 @@ pub(crate) fn build_decor(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32,
                         for k in 0..4u32 {
                             let a = k as f32 * 1.7 + jit(2);
                             let tall = if steppe { 1.7 } else if jungle { 1.35 } else { 1.0 };
-                            blade(out, x + a.cos() * 0.05, z + a.sin() * 0.05, (0.22 + 0.16 * ((k + seed) % 3) as f32 / 2.0) * tall, (a.cos() * 0.1, a.sin() * 0.1), col);
+                            blade(out, x + a.dcos() * 0.05, z + a.dsin() * 0.05, (0.22 + 0.16 * ((k + seed) % 3) as f32 / 2.0) * tall, (a.dcos() * 0.1, a.dsin() * 0.1), col);
                         }
                     } else if roll < 380 + flowery {
                         // wild flowers in one of several colours, a few to a clump
@@ -99,7 +100,7 @@ pub(crate) fn build_decor(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32,
                         out.set_anchor(x, z);
                         for k in 0..7u32 {
                             let a = k as f32 * 0.9 + jit(2);
-                            limb(out, [x, 0.02, z], [x + a.cos() * 0.26, 0.2, z + a.sin() * 0.26], 0.014, 0.004, [0.16, 0.42 + 0.06 * jit(4), 0.2], 3);
+                            limb(out, [x, 0.02, z], [x + a.dcos() * 0.26, 0.2, z + a.dsin() * 0.26], 0.014, 0.004, [0.16, 0.42 + 0.06 * jit(4), 0.2], 3);
                         }
                     } else if roll < 115 {
                         if file(out, "mushroom", x, z, seed) {
@@ -139,7 +140,7 @@ pub(crate) fn build_decor(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32,
                         out.set_anchor(x, z);
                         for k in 0..3u32 {
                             let a = k as f32 * 2.1 + jit(2);
-                            blade(out, x + a.cos() * 0.03, z + a.sin() * 0.03, 0.2, (a.cos() * 0.08, a.sin() * 0.08), [0.74, 0.66, 0.34]);
+                            blade(out, x + a.dcos() * 0.03, z + a.dsin() * 0.03, 0.2, (a.dcos() * 0.08, a.dsin() * 0.08), [0.74, 0.66, 0.34]);
                         }
                     }
                 }

@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 /// Render-side walking state: where a creature was, which way it faces, and how far into its stride it is.
@@ -34,7 +35,7 @@ impl Walk {
     /// Where to draw it this frame: between the last two simulated positions.
     pub(crate) fn smooth(&mut self, x: f32, z: f32, tick: u64, alpha: f32) -> (f32, f32) {
         if tick != self.tick {
-            let jump = (x - self.sim[0]).hypot(z - self.sim[1]);
+            let jump = (x - self.sim[0]).dhypot(z - self.sim[1]);
             self.prev = if jump > 3.0 { [x, z] } else { self.sim };
             self.sim = [x, z];
             self.tick = tick;
@@ -58,18 +59,18 @@ pub(crate) fn step_walk(w: &mut Walk, x: f32, z: f32, dt: f32, base: f32) -> boo
     let step = (dx * dx + dz * dz).sqrt();
     let moved = step > 0.0002 && step < 3.0;
     let v = if moved { step / dt.max(1e-3) } else { 0.0 };
-    w.speed += (v - w.speed) * (1.0 - (-10.0 * dt).exp());
+    w.speed += (v - w.speed) * (1.0 - (-10.0 * dt).dexp());
     // turning: a spring toward where it is going (no snapping round), its speed kept for the lean
-    let want = if moved { dx.atan2(dz) } else { w.heading };
+    let want = if moved { dx.datan2(dz) } else { w.heading };
     let omega = 11.0;
     let off = wrap_pi(want - w.heading);
     w.spin += (omega * omega * off - 2.0 * omega * w.spin) * dt.min(0.05);
     w.heading += w.spin * dt;
     // walking is about 1.5 m/s; faster is a run, with longer strides
     let pace = if w.speed > 0.05 { (w.speed / 1.5).clamp(1.0, 1.8) } else { 0.0 };
-    w.amp += (pace - w.amp) * (1.0 - (-12.0 * dt).exp());
+    w.amp += (pace - w.amp) * (1.0 - (-12.0 * dt).dexp());
     let stride = base * (1.0 + 0.45 * (pace.max(1.0) - 1.0));
-    w.stride += (stride - w.stride) * (1.0 - (-8.0 * dt).exp());
+    w.stride += (stride - w.stride) * (1.0 - (-8.0 * dt).dexp());
     if moved {
         // a foot travels 2 * stride while planted, over half a cycle (pi)
         w.phase += step * std::f32::consts::PI / (2.0 * w.stride.max(0.05));
@@ -123,7 +124,7 @@ pub(crate) fn push_route(out: &mut Mesh, world: &World, a: &alaz_sim::world::Age
     if matches!(a.task, Task::Gather { .. }) {
         return;
     }
-    let pulse = 0.5 + 0.5 * (tick as f32 / 12.0).sin();
+    let pulse = 0.5 + 0.5 * (tick as f32 / 12.0).dsin();
     push_box(out, [end[0], 0.0, end[1]], [0.04, 1.3, 0.04], [0.9, 0.85, 0.6], 0.5);
     push_box(out, [end[0] + 0.2, 1.0, end[1]], [0.22, 0.28, 0.03], [1.0, 0.3 + 0.4 * pulse, 0.2], 1.0);
     push_box(out, [end[0], 0.0, end[1]], [0.32 + 0.12 * pulse, 0.03, 0.32 + 0.12 * pulse], col, 1.0);
@@ -180,7 +181,7 @@ pub(crate) fn work_cycle(world: &World, a: &alaz_sim::world::Agent, work: Work, 
             } else if s < 0.45 {
                 IMPACT + (1.0 - IMPACT) * (s - 0.07) / 0.38
             } else {
-                0.1 + 0.05 * (secs * 2.0).sin()
+                0.1 + 0.05 * (secs * 2.0).dsin()
             }
         }
         (Work::Drink, _) => secs / 1.3 + off,
@@ -485,10 +486,10 @@ pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dy
                 // it comes to lie along the ground, not through it
                 let g0 = ground_height(world.seed, ax, az);
                 let tip_h = ground_height(world.seed, ax + dx * len * 0.8, az + dz * len * 0.8) - g0;
-                let lie = std::f32::consts::FRAC_PI_2 - (tip_h / (len * 0.8)).atan();
+                let lie = std::f32::consts::FRAC_PI_2 - (tip_h / (len * 0.8)).datan();
                 let raw = ((b.angle as f32 + b.spin as f32 * alpha) / HALF_PI_URAD as f32).min(1.0);
                 let th = raw * lie;
-                let (sn, cs) = th.sin_cos();
+                let (sn, cs) = th.dsin_cos();
                 // left to rot, it sinks into the earth over its last ten seconds
                 let left = LOG_ROT_TICKS.saturating_sub(b.rest) as f32 / 600.0;
                 let sink = (1.0 - left).clamp(0.0, 1.0) * 0.9;
@@ -542,13 +543,13 @@ pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dy
                 let lift = z_m - ground_height(world.seed, bx, bz);
                 let h = b.id.wrapping_mul(2_654_435_761);
                 let a = (h % 628) as f32 / 100.0 + b.angle as f32 / 150.0;
-                let (ox, oz) = (a.cos() * 0.2, a.sin() * 0.2);
+                let (ox, oz) = (a.dcos() * 0.2, a.dsin() * 0.2);
                 out.set_anchor(bx, bz);
                 let y = 0.07 + lift.max(0.0);
                 let item = alaz_sim::map::ItemKind::ALL.get(b.item as usize).copied().unwrap_or(alaz_sim::map::ItemKind::Wood);
                 // afloat: it bobs on the swell
                 let afloat = world.map.terrain(bx.floor() as i32, bz.floor() as i32) == Some(alaz_sim::map::Terrain::Water);
-                let lift = if afloat { lift.max(0.0) + 0.04 + 0.05 * (world.tick as f32 / 25.0 + b.id as f32).sin() } else { lift };
+                let lift = if afloat { lift.max(0.0) + 0.04 + 0.05 * (world.tick as f32 / 25.0 + b.id as f32).dsin() } else { lift };
                 if item != alaz_sim::map::ItemKind::Wood {
                     // something put down: a small bundle in a colour of its own, with a pale halo on the ground
                     let col = piece_colour(item);
@@ -570,7 +571,7 @@ pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dy
                         I::Berries => {
                             for k in 0..5u32 {
                                 let a2 = k as f32 * 1.26;
-                                shapes::sphere(out, [bx + a2.cos() * 0.08, y0 + 0.06, bz + a2.sin() * 0.08], [0.06; 3], col, 5, 3, 0.0, k);
+                                shapes::sphere(out, [bx + a2.dcos() * 0.08, y0 + 0.06, bz + a2.dsin() * 0.08], [0.06; 3], col, 5, 3, 0.0, k);
                             }
                         }
                         _ => {
@@ -598,8 +599,8 @@ pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dy
                 shapes::rock(out, [bx, r, bz], [r * 1.1, r * 0.85, r], [g, g * 0.98, g * 0.95], seed);
                 // tumbling: turned about two axes by how far it has rolled
                 let roll = b.angle as f32 / 1000.0 / r.max(0.05);
-                let (s1, c1) = (roll).sin_cos();
-                let (s2, c2) = (roll * 0.63).sin_cos();
+                let (s1, c1) = (roll).dsin_cos();
+                let (s2, c2) = (roll * 0.63).dsin_cos();
                 for v in &mut out[start..] {
                     let (px, py, pz) = (v.pos[0] - bx, v.pos[1] - r, v.pos[2] - bz);
                     let (py, pz) = (py * c1 - pz * s1, py * s1 + pz * c1);
@@ -672,8 +673,8 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
     if let Some((roll, lean)) = j.lean {
         if roll.abs() > 0.002 || lean > 0.002 {
             let h = j.heading;
-            let fwd = glam::Vec3::new(h.sin(), 0.0, h.cos());
-            let right = glam::Vec3::new(h.cos(), 0.0, -h.sin());
+            let fwd = glam::Vec3::new(h.dsin(), 0.0, h.dcos());
+            let right = glam::Vec3::new(h.dcos(), 0.0, -h.dsin());
             let rot = glam::Quat::from_axis_angle(fwd, roll) * glam::Quat::from_axis_angle(right, lean);
             let foot = glam::Vec3::new(x, 0.0, z);
             for v in &mut out.verts[body_start..] {
@@ -690,9 +691,9 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
         }
     } else if j.depth == 2 {
         let h = j.heading;
-        let (fwd, right) = (glam::Vec3::new(h.sin(), 0.0, h.cos()), glam::Vec3::new(h.cos(), 0.0, -h.sin()));
+        let (fwd, right) = (glam::Vec3::new(h.dsin(), 0.0, h.dcos()), glam::Vec3::new(h.dcos(), 0.0, -h.dsin()));
         // tip forward about the hips, a little more as the stroke pulls, and rock with the waves' slope
-        let tilt = 1.30 + 0.06 * (secs * 2.2 + j.seed as f32).sin();
+        let tilt = 1.30 + 0.06 * (secs * 2.2 + j.seed as f32).dsin();
         let rot = glam::Quat::from_axis_angle(right, tilt);
         let pivot = glam::Vec3::new(x, 1.0, z);
         // the head and shoulders ride just above the surface

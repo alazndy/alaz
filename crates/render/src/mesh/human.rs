@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 /// Chips, sparks and splashes thrown off by a blow, flying out from where it landed and falling back.
@@ -9,7 +10,7 @@ pub(crate) fn push_chips(out: &mut Mesh, work: Work, target: (f32, f32), me: (f3
     }
     // the face of the thing that was hit, toward the worker
     let (dx, dz) = (me.0 - target.0, me.1 - target.1);
-    let d = dx.hypot(dz).max(1e-3);
+    let d = dx.dhypot(dz).max(1e-3);
     let (nx, nz) = (dx / d, dz / d);
     let (spot, y0, col, glow, n, speed) = match work {
         Work::Chop => (0.28, 1.0, [0.78, 0.6, 0.36], 0.0, 6, 1.6),
@@ -22,7 +23,7 @@ pub(crate) fn push_chips(out: &mut Mesh, work: Work, target: (f32, f32), me: (f3
     for i in 0..n {
         let h = (alaz_sim::rng::hash2(0xC41F, seed, i) % 10_000) as f32 / 10_000.0;
         let a = (h - 0.5) * 2.4;
-        let (s, c) = a.sin_cos();
+        let (s, c) = a.dsin_cos();
         // fan out toward the worker and to the sides
         let (vx, vz) = ((nx * c - nz * s) * speed, (nz * c + nx * s) * speed);
         let vy = 1.2 + 1.6 * h;
@@ -35,7 +36,7 @@ pub(crate) fn push_chips(out: &mut Mesh, work: Work, target: (f32, f32), me: (f3
         for i in 0..5 {
             let a = i as f32 * 1.26 + seed as f32;
             let k = age / 0.4 * 0.7;
-            push_box(out, [target.0 + nx * spot + a.cos() * k, y0 + 0.1 + k * 0.6, target.1 + nz * spot + a.sin() * k], [0.025; 3], [1.0, 0.85, 0.4], 1.0);
+            push_box(out, [target.0 + nx * spot + a.dcos() * k, y0 + 0.1 + k * 0.6, target.1 + nz * spot + a.dsin() * k], [0.025; 3], [1.0, 0.85, 0.4], 1.0);
         }
     }
 }
@@ -119,7 +120,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         let (nu, nv) = if lod { (nu.div_ceil(2).max(5), nv.min(3)) } else { (nu, nv) };
         shapes::ellipsoid(out, c, axes, col, nu, nv)
     };
-    let (s, c) = pose.heading.sin_cos();
+    let (s, c) = pose.heading.dsin_cos();
     let (fx, fz, rx, rz) = (s, c, c, -s);
     let id = pose.id as usize;
     // every trait draws on its own hash of the id, so neighbours in the tribe do not share a look
@@ -174,9 +175,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let w = pose.work;
     let working = w != Work::None;
     let still = (1.0 - pose.amp * 4.0).clamp(0.0, 1.0) * if working { 0.0 } else { 1.0 };
-    let swing = pose.phase.sin() * pose.amp;
-    let breathe = (pose.t * 1.9 + id as f32).sin() * 0.008 * still;
-    let bob = pose.phase.sin().abs() * 0.05 * pose.amp + breathe;
+    let swing = pose.phase.dsin() * pose.amp;
+    let breathe = (pose.t * 1.9 + id as f32).dsin() * 0.008 * still;
+    let bob = pose.phase.dsin().abs() * 0.05 * pose.amp + breathe;
     let u = pose.cyc.fract();
     let act = act(w, u);
     // the moment right after a blow lands: the body gives a little
@@ -185,7 +186,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     // sitting at the fire: the hips drop and the back rounds a little
     let (crouch, lean) = if pose.sit && !working { (0.36, lean + 0.14) } else { (crouch, lean) };
     // the early walk rolls the shoulders against the hips
-    let roll = if working { 0.0 } else { 0.12 * stoop * pose.phase.sin() * pose.amp.min(1.0) };
+    let roll = if working { 0.0 } else { 0.12 * stoop * pose.phase.dsin() * pose.amp.min(1.0) };
     let twist = act.twist + roll;
     // on steep ground: climbing bends forward and grabs ahead, going down leans back and skids with arms out
     let moving = (pose.amp * 3.0).min(1.0) * if working { 0.0 } else { 1.0 };
@@ -204,7 +205,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let at = |f: f32, up: f32, side: f32| [x + fx * f + rx * side * build, up * body_k, z + fz * f + rz * side * build];
     // a body part shaped by half-widths across, up and along the facing, leaning forward by `tilt`
     let part = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, tilt: f32, col: [f32; 3], nu: usize| {
-        let (ts, tc) = tilt.sin_cos();
+        let (ts, tc) = tilt.dsin_cos();
         let u = [fx * ts * up, tc * up * body_k, fz * ts * up];
         let f = [fx * tc * fwd, -ts * fwd * body_k, fz * tc * fwd];
         ellipsoid(out, c, [[rx * side * build, 0.0, rz * side * build], u, f], col, nu, 5);
@@ -215,17 +216,17 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         ellipsoid(out, c, [[rx * side * build, 0.0, rz * side * build], u, f], col, nu, 3);
     };
     // the upper body, turned by `twist` over the hips
-    let (ts_, tc_) = (pose.heading + twist).sin_cos();
+    let (ts_, tc_) = (pose.heading + twist).dsin_cos();
     let (ufx, ufz, urx, urz) = (ts_, tc_, tc_, -ts_);
     let ua = |f: f32, up: f32, side: f32| [x + ufx * f + urx * side * build, up * body_k, z + ufz * f + urz * side * build];
     let upart = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, tilt: f32, col: [f32; 3], nu: usize| {
-        let (ts, tc) = tilt.sin_cos();
+        let (ts, tc) = tilt.dsin_cos();
         let u = [ufx * ts * up, tc * up * body_k, ufz * ts * up];
         let f = [ufx * tc * fwd, -ts * fwd * body_k, ufz * tc * fwd];
         ellipsoid(out, c, [[urx * side * build, 0.0, urz * side * build], u, f], col, nu, 5);
     };
     let upart3 = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, tilt: f32, col: [f32; 3], nu: usize| {
-        let (ts, tc) = tilt.sin_cos();
+        let (ts, tc) = tilt.dsin_cos();
         let u = [ufx * ts * up, tc * up * body_k, ufz * ts * up];
         let f = [ufx * tc * fwd, -ts * fwd * body_k, ufz * tc * fwd];
         ellipsoid(out, c, [[urx * side * build, 0.0, urz * side * build], u, f], col, nu, 3);
@@ -233,8 +234,8 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let y = |h: f32| (if h < 0.9 { h * lg } else { h - drop }) + bob - crouch;
     // bending forward turns the whole upper body over the hips, so the spine keeps its length; `lean` is how far
     // ahead the chest goes
-    let bend = lean.atan2(0.4).clamp(-0.6, 1.2);
-    let (bs, bc) = bend.sin_cos();
+    let bend = lean.datan2(0.4).clamp(-0.6, 1.2);
+    let (bs, bc) = bend.dsin_cos();
     let tilt = bend;
     // a point of the upper body, given as it would be standing (`extra` ahead of the spine, height `h`), bent over
     let ub = |extra: f32, h: f32, side: f32| {
@@ -249,8 +250,8 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     for side in [-1.0f32, 1.0] {
         let ph = -side;
         // the foot's swing is the stride, fading in from a standstill; planted feet keep pace with the ground
-        let off = pose.phase.sin() * pose.stride * (0.84 + 0.16 * (1.0 - stoop)) * pose.amp.min(1.0) * (1.0 - 0.85 * slide) * ph;
-        let lift = ((pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI }).cos()).max(0.0) * pose.amp * 0.14 * (1.0 + 1.4 * climb) * (1.0 - slide);
+        let off = pose.phase.dsin() * pose.stride * (0.84 + 0.16 * (1.0 - stoop)) * pose.amp.min(1.0) * (1.0 - 0.85 * slide) * ph;
+        let lift = ((pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI }).dcos()).max(0.0) * pose.amp * 0.14 * (1.0 + 1.4 * climb) * (1.0 - slide);
         let planted = if working { 0.1 * ph } else { 0.0 } + slide * 0.16 * ph;
         let hip = at(0.0, y(0.88), side * 0.1);
         let li = if side < 0.0 { 0 } else { 1 };
@@ -276,7 +277,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             // in the air the knees come up on the rise; falling, the legs hang and kick
             let lift = if pose.air != 0.0 {
                 let up = pose.air.max(0.0);
-                0.08 + 0.2 * up + if pose.air < 0.0 { 0.06 * (pose.t * 13.0 + side * 1.7).sin() * (-pose.air) } else { 0.0 }
+                0.08 + 0.2 * up + if pose.air < 0.0 { 0.06 * (pose.t * 13.0 + side * 1.7).dsin() * (-pose.air) } else { 0.0 }
             } else {
                 lift
             };
@@ -391,8 +392,8 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
 
     // head: turns to look around while standing idle
-    let look = ((pose.t * 0.45 + id as f32 * 1.3).sin() * 1.6).clamp(-1.0, 1.0) * 0.55 * still;
-    let (ls, lc) = (pose.heading + look + twist + act.head[2]).sin_cos();
+    let look = ((pose.t * 0.45 + id as f32 * 1.3).dsin() * 1.6).clamp(-1.0, 1.0) * 0.55 * still;
+    let (ls, lc) = (pose.heading + look + twist + act.head[2]).dsin_cos();
     let (hfx, hfz, hrx, hrz) = (ls, lc, lc, -ls);
     let head = ub(0.05 * bs.max(0.0) + act.head[0], 1.67 + act.head[1], 0.0);
     let hd = |f: f32, up: f32, side: f32| [head[0] + hfx * f + hrx * side, head[1] + up * body_k, head[2] + hfz * f + hrz * side];
@@ -448,7 +449,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         if ev.tooth > 0.03 {
             // a necklace of teeth round the base of the neck (two strands of beads meeting in a longer tooth)
             let k = ev.tooth;
-            let bead = |a: f32| ub(0.03 + 0.1 * a.cos() + skin_out, 1.46 - 0.045 * a.cos(), 0.115 * a.sin());
+            let bead = |a: f32| ub(0.03 + 0.1 * a.dcos() + skin_out, 1.46 - 0.045 * a.dcos(), 0.115 * a.dsin());
             let (l, r, mid) = (bead(-1.25), bead(1.25), bead(0.0));
             limb(out, l, mid, 0.017 * k, 0.017 * k, [0.93, 0.9, 0.8], 4);
             limb(out, mid, r, 0.017 * k, 0.017 * k, [0.93, 0.9, 0.8], 4);
@@ -572,14 +573,14 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                 let off = swing * side * (0.3 + 0.1 * stoop);
                 let walk = at(off + lean * 0.6, 0.86 + bob + 0.05 * pose.amp - reach - drop, side * 0.28);
                 // climbing: hands reach up the slope in turn; sliding: arms out for balance
-                let grab = (pose.phase + if side > 0.0 { 0.0 } else { std::f32::consts::PI }).sin();
+                let grab = (pose.phase + if side > 0.0 { 0.0 } else { std::f32::consts::PI }).dsin();
                 let up = at(0.42 + 0.12 * grab, 1.0 + 0.22 * grab - crouch, side * 0.22);
-                let wide = at(0.05, 1.22 + 0.04 * (pose.t * 6.0 + side).sin() - crouch, side * 0.6);
+                let wide = at(0.05, 1.22 + 0.04 * (pose.t * 6.0 + side).dsin() - crouch, side * 0.6);
                 let mixp = |a: [f32; 3], b: [f32; 3], k: f32| [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
                 let hand = mixp(mixp(walk, up, climb), wide, slide);
                 // a jump swings the arms up and forward; a fall throws them up and out, grabbing at the air
                 let rise = at(0.3, 1.45, side * 0.24);
-                let flail = at(0.08 + 0.1 * (pose.t * 11.0 + side).sin(), 1.75 + 0.1 * (pose.t * 14.0 + side * 2.0).sin(), side * 0.48);
+                let flail = at(0.08 + 0.1 * (pose.t * 11.0 + side).dsin(), 1.75 + 0.1 * (pose.t * 14.0 + side * 2.0).dsin(), side * 0.48);
                 let hand = mixp(mixp(hand, rise, pose.air.max(0.0) * 0.8), flail, (-pose.air).max(0.0));
                 arm(out, side, hand);
             }
@@ -671,7 +672,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                         for i in 0..5 {
                             let a = i as f32 * 1.26 + pose.cyc.floor() * 2.1;
                             let r = 0.08 + 0.4 * k;
-                            let p = [core[0] + a.cos() * r, core[1] + 0.05 + 0.5 * k - 1.4 * k * k, core[2] + a.sin() * r];
+                            let p = [core[0] + a.dcos() * r, core[1] + 0.05 + 0.5 * k - 1.4 * k * k, core[2] + a.dsin() * r];
                             let (c, g) = if i % 2 == 0 { ([1.0, 0.85, 0.4], 1.0) } else { ([0.7, 0.7, 0.74], 0.0) };
                             shapes::sphere(out, p, [0.022; 3], c, 4, 3, 0.0, i);
                             if g > 0.0 {
@@ -698,7 +699,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                         let k = 1.0 - hit;
                         for i in 0..4 {
                             let a = i as f32 * 1.6 + pose.cyc.floor();
-                            let p = [mid[0] + a.cos() * 0.3 * k, 0.05 + 0.3 * k - 0.4 * k * k, mid[2] + a.sin() * 0.3 * k];
+                            let p = [mid[0] + a.dcos() * 0.3 * k, 0.05 + 0.3 * k - 0.4 * k * k, mid[2] + a.dsin() * 0.3 * k];
                             sphere(out, p, [0.04; 3], clay, 4, 3, 0.2, i);
                         }
                     }
@@ -734,7 +735,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                         for i in 0..4 {
                             let a = i as f32 * 1.57 + pose.cyc.floor();
                             let k = u / 0.2;
-                            shapes::sphere(out, [mid[0] + a.cos() * 0.15 * k, 0.04 + 0.2 * k - 0.3 * k * k, mid[2] + a.sin() * 0.15 * k], [0.025; 3], water, 4, 3, 0.0, i);
+                            shapes::sphere(out, [mid[0] + a.dcos() * 0.15 * k, 0.04 + 0.2 * k - 0.3 * k * k, mid[2] + a.dsin() * 0.15 * k], [0.025; 3], water, 4, 3, 0.0, i);
                         }
                     }
                 }
@@ -749,7 +750,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
     // ... and flashes red, then white at the very start
     if pose.hurt > 0.0 {
-        let k = pose.hurt.powf(1.5);
+        let k = pose.hurt.dpowf(1.5);
         let flash = if pose.hurt > 0.85 { [1.0, 0.9, 0.85] } else { [1.0, 0.18, 0.12] };
         for v in &mut out[start..] {
             for i in 0..3 {
@@ -761,7 +762,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
             let u = 1.0 - pose.hurt;
             for i in 0..5u32 {
                 let a = i as f32 * 1.26 + pose.id as f32;
-                let (dx, dz) = (a.cos() * (0.25 + 1.4 * u), a.sin() * (0.25 + 1.4 * u));
+                let (dx, dz) = (a.dcos() * (0.25 + 1.4 * u), a.dsin() * (0.25 + 1.4 * u));
                 let y = 1.25 + 1.6 * u - 5.0 * u * u;
                 shapes::sphere(out, [x + dx, y.max(0.05), z + dz], [0.035; 3], [0.62, 0.06, 0.06], 4, 3, 0.0, i);
             }

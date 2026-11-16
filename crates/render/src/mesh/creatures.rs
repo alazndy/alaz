@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 pub(crate) struct Quad {
@@ -16,16 +17,16 @@ pub(crate) struct Quad {
 pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     out.set_anchor(x, z);
     use shapes::{limb, sphere};
-    let (s, c) = pose.heading.sin_cos();
+    let (s, c) = pose.heading.dsin_cos();
     let (fx, fz, rx, rz) = (s, c, c, -s);
     let at = |f: f32, r: f32, h: f32| [x + fx * f + rx * r, h, z + fz * f + rz * r];
-    let bob = pose.phase.sin().abs() * 0.04 * pose.amp + (pose.t * 1.6).sin() * 0.006 * (1.0 - pose.amp);
+    let bob = pose.phase.dsin().abs() * 0.04 * pose.amp + (pose.t * 1.6).dsin() * 0.006 * (1.0 - pose.amp);
     let top = q.leg_h + q.thick + bob;
     let dark = [q.body[0] * 0.7, q.body[1] * 0.7, q.body[2] * 0.7];
     for (fi, f) in [q.len * 0.7, -q.len * 0.7].into_iter().enumerate() {
         for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
             let ph = if (fi + si) % 2 == 0 { 1.0 } else { -1.0 };
-            let off = pose.phase.sin() * pose.stride * pose.amp.min(1.0) * ph;
+            let off = pose.phase.dsin() * pose.stride * pose.amp.min(1.0) * ph;
             let hip = at(f, side * q.thick * 0.6, q.leg_h + q.thick * 0.6 + bob);
             let foot = at(f + off, side * q.thick * 0.6, (off.abs() * 0.3).min(0.2));
             limb(out, hip, foot, q.thick * 0.28, q.thick * 0.18, dark, 6);
@@ -35,8 +36,8 @@ pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     // standing animals put their heads down to graze now and then, and look around in between
     let still = (1.0 - pose.amp * 4.0).clamp(0.0, 1.0);
     let k = pose.id as f32 * 1.7;
-    let graze = ((pose.t * 0.33 + k).sin() * 1.8 - 0.5).clamp(0.0, 1.0) * still;
-    let look = (pose.t * 0.7 + k * 0.5).sin() * 0.25 * still * (1.0 - graze);
+    let graze = ((pose.t * 0.33 + k).dsin() * 1.8 - 0.5).clamp(0.0, 1.0) * still;
+    let look = (pose.t * 0.7 + k * 0.5).dsin() * 0.25 * still * (1.0 - graze);
     let hy = top + q.neck * 0.5 + (q.head_r * 1.1 - top - q.neck * 0.5) * graze;
     let hf = q.len + q.neck * (0.5 + 0.25 * graze);
     let head_at = at(hf, look * q.neck, hy);
@@ -51,7 +52,7 @@ pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     }
     if q.tail {
         // the tail swishes, quicker while walking
-        let wag = (pose.t * (3.0 + 4.0 * pose.amp) + k).sin() * (0.06 + 0.06 * pose.amp);
+        let wag = (pose.t * (3.0 + 4.0 * pose.amp) + k).dsin() * (0.06 + 0.06 * pose.amp);
         limb(out, at(-q.len, 0.0, top), at(-q.len - 0.18 - q.head_r, wag, top - 0.1 - 0.08 * still), 0.05, 0.02, dark, 6);
     }
 }
@@ -79,7 +80,7 @@ pub(crate) fn push_creature(out: &mut Mesh, kind: AgentKind, x: f32, z: f32, mar
         AgentKind::Bot => {
             sphere(out, [x, 0.5, z], [0.3, 0.42, 0.3], [0.62, 0.66, 0.72], 12, 8, 0.0, 3);
             sphere(out, [x, 1.05, z], [0.22, 0.22, 0.22], [0.72, 0.76, 0.82], 12, 8, 0.0, 4);
-            let (fx, fz) = (pose.heading.sin(), pose.heading.cos());
+            let (fx, fz) = (pose.heading.dsin(), pose.heading.dcos());
             sphere(out, [x + fx * 0.17, 1.08, z + fz * 0.17], [0.1, 0.045, 0.05], [0.3, 0.9, 1.0], 8, 4, 0.0, 5);
             limb(out, [x, 0.0, z], [x, 0.18, z], 0.2, 0.28, [0.4, 0.42, 0.46], 8);
             1.4
@@ -100,7 +101,7 @@ pub(crate) fn push_tracks(out: &mut Mesh, id: u32, x: f32, z: f32, heading: (i64
         (-hx / len, -hz / len)
     } else {
         let a = (id.wrapping_mul(2654435761) >> 8) as f32 * 0.0001;
-        (a.cos(), a.sin())
+        (a.dcos(), a.dsin())
     };
     let col = if wolf { [0.20, 0.17, 0.15] } else { [0.30, 0.25, 0.19] };
     for i in 1..=6 {

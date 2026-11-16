@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 /// The height of the sea's swell at (x, z) metres right now, worked out exactly as the shader draws it (the same six
@@ -33,9 +34,9 @@ pub(crate) fn swell_height(world: &World, x: f32, z: f32, alpha: f32) -> f32 {
         let a = DIRS[i].to_radians();
         let k = std::f64::consts::TAU / LENS[i];
         let w = (9.8 * k).sqrt();
-        let ph = k * (a.cos() * x as f64 + a.sin() * z as f64) - w * t + i as f64 * 1.7;
-        let along = (a.cos() * wa.cos() + a.sin() * wa.sin()).max(0.0);
-        h += HS[i] * amp * (0.12 + 0.88 * along * along) * 1.6 * ph.sin();
+        let ph = k * (a.dcos() * x as f64 + a.dsin() * z as f64) - w * t + i as f64 * 1.7;
+        let along = (a.dcos() * wa.dcos() + a.dsin() * wa.dsin()).max(0.0);
+        h += HS[i] * amp * (0.12 + 0.88 * along * along) * 1.6 * ph.dsin();
     }
     h as f32
 }
@@ -63,12 +64,12 @@ pub(crate) fn push_fish(out: &mut Mesh, world: &World, view: (f32, f32, f32, f32
                     // each one on its own ring, a little behind the one in front
                     let r = 1.0 + 0.35 * k as f32;
                     let a = t * speed * dir + k as f32 * 0.55 + (h & 255) as f32;
-                    let (x, z) = (cx + a.cos() * r, cz + a.sin() * r);
+                    let (x, z) = (cx + a.dcos() * r, cz + a.dsin() * r);
                     if alaz_sim::map::water_depth(&world.map, x.floor() as i32, z.floor() as i32) == 0 {
                         continue;
                     }
                     // heading along the ring
-                    let (hx, hz) = (-a.sin() * dir, a.cos() * dir);
+                    let (hx, hz) = (-a.dsin() * dir, a.dcos() * dir);
                     let len = 0.22 * big;
                     let surface = swell_height(world, x, z, alpha);
                     // a leap: every so often, for a moment, out of the water and back in an arc
@@ -76,12 +77,12 @@ pub(crate) fn push_fish(out: &mut Mesh, world: &World, view: (f32, f32, f32, f32
                     let ph = ((t + k as f32 * 3.1 + (h >> 4 & 31) as f32) % cycle) / 0.7;
                     let leaping = k == 0 && ph < 1.0;
                     let (y, col) = if leaping {
-                        (surface + 0.55 * (ph * std::f32::consts::PI).sin(), [0.78, 0.82, 0.86])
+                        (surface + 0.55 * (ph * std::f32::consts::PI).dsin(), [0.78, 0.82, 0.86])
                     } else {
                         (surface + 0.02, [0.10, 0.19, 0.25])
                     };
                     // a tail beat
-                    let beat = (t * 9.0 + k as f32).sin() * 0.04;
+                    let beat = (t * 9.0 + k as f32).dsin() * 0.04;
                     let head = [x + hx * len * 0.5, y, z + hz * len * 0.5];
                     let tail = [x - hx * len * 0.5 - hz * beat, y + if leaping { -0.06 } else { 0.0 }, z - hz * len * 0.5 + hx * beat];
                     out.set_anchor(x, z);

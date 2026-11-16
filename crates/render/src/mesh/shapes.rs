@@ -1,6 +1,7 @@
 //! Low-poly building blocks. Every face is flat: the albedo goes in the vertex colour and one light level per face
 //! in `uv.x`; the shader cuts that level into a few bands (cel shading).
 
+use super::DetMath;
 use super::Mesh;
 
 /// One texel of the drawn picture, in metres (it has 16 * 4/3 texels to the metre).
@@ -50,13 +51,13 @@ pub fn limb(out: &mut Mesh, a: [f32; 3], b: [f32; 3], r0: f32, r1: f32, col: [f3
     let (cap_a, cap_b) = (!open(a, r0, ax[1] > 0.5), !open(b, r1, ax[1] < -0.5));
     let ring = |k: usize, base: [f32; 3], r: f32| {
         let t = k as f32 * std::f32::consts::TAU / segs as f32;
-        let (s, c) = t.sin_cos();
+        let (s, c) = t.dsin_cos();
         [base[0] + (u[0] * c + w[0] * s) * r, base[1] + (u[1] * c + w[1] * s) * r, base[2] + (u[2] * c + w[2] * s) * r]
     };
     for k in 0..segs {
         let (p0, p1, p2, p3) = (ring(k, a, r0), ring(k + 1, a, r0), ring(k + 1, b, r1), ring(k, b, r1));
         let tm = (k as f32 + 0.5) * std::f32::consts::TAU / segs as f32;
-        let (s, c) = tm.sin_cos();
+        let (s, c) = tm.dsin_cos();
         let n = [u[0] * c + w[0] * s, u[1] * c + w[1] * s, u[2] * c + w[2] * s];
         let l = shade(n);
         tri(out, [p0, p1, p2], l, col, 0.0);
@@ -77,7 +78,7 @@ pub fn sphere(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], nu: usize
     let (nu, nv) = if r[0].max(r[1]).max(r[2]) < 2.5 * TEXEL { (nu.min(4), nv.min(2)) } else { (nu, nv) };
     let pt = |i: usize, j: usize| -> ([f32; 3], [f32; 3]) {
         let (th, ph) = (i as f32 * std::f32::consts::TAU / nu as f32, j as f32 * std::f32::consts::PI / nv as f32);
-        let d = [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()];
+        let d = [ph.dsin() * th.dcos(), ph.dcos(), ph.dsin() * th.dsin()];
         let k = if j == 0 || j == nv { 1.0 } else { 1.0 + wob * hash(seed, (i % nu) as u32, j as u32) };
         ([c[0] + d[0] * r[0] * k, c[1] + d[1] * r[1] * k, c[2] + d[2] * r[2] * k], d)
     };
@@ -109,7 +110,7 @@ pub fn ellipsoid(out: &mut Mesh, c: [f32; 3], axes: [[f32; 3]; 3], col: [f32; 3]
     let l2 = axes.map(|a| (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).max(1e-9));
     let pt = |i: usize, j: usize| -> ([f32; 3], [f32; 3]) {
         let (th, ph) = (i as f32 * std::f32::consts::TAU / nu as f32, j as f32 * std::f32::consts::PI / nv as f32);
-        let d = [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()];
+        let d = [ph.dsin() * th.dcos(), ph.dcos(), ph.dsin() * th.dsin()];
         let mut p = c;
         let mut n = [0.0f32; 3];
         for k in 0..3 {

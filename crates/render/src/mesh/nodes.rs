@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 pub(crate) fn build_nodes(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32), level: u8) {
@@ -21,8 +22,8 @@ pub(crate) fn push_hover_rim(out: &mut Mesh, world: &World, tile: (i32, i32), le
     let inv = 1.0 / verts.len() as f32;
     let c = verts.iter().fold([0.0f32; 3], |a, v| [a[0] + v.pos[0] * inv, a[1] + v.pos[1] * inv, a[2] + v.pos[2] * inv]);
     let (p, y) = (cam.pitch_deg.to_radians(), cam.yaw_deg.to_radians());
-    let fwd = [-(p.cos() * y.sin()), -p.sin(), -(p.cos() * y.cos())];
-    let pulse = 0.5 + 0.5 * (t * 4.0).sin();
+    let fwd = [-(p.dcos() * y.dsin()), -p.dsin(), -(p.dcos() * y.dcos())];
+    let pulse = 0.5 + 0.5 * (t * 4.0).dsin();
     let col = [1.0, 0.86 + 0.1 * pulse, 0.42 + 0.3 * pulse];
     for mut v in verts.verts {
         let d = [v.pos[0] - c[0], (v.pos[1] - c[1]) * 0.8, v.pos[2] - c[2]];
@@ -78,7 +79,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
         let tuft = |out: &mut Mesh, x: f32, z: f32, col: [f32; 3]| {
             for k in 0..5 {
                 let a = k as f32 * 1.3 + jit(2);
-                let (dx, dz) = (a.cos() * 0.14, a.sin() * 0.14);
+                let (dx, dz) = (a.dcos() * 0.14, a.dsin() * 0.14);
                 limb(out, [x + dx * 0.4, 0.0, z + dz * 0.4], [x + dx * 1.4, 0.34 + 0.08 * (k % 3) as f32, z + dz * 1.4], 0.025, 0.004, col, 4);
             }
         };
@@ -127,7 +128,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     let arms = 1 + (seed >> 9) % 2;
                     for k in 0..arms {
                         let a = k as f32 * std::f32::consts::PI + jit(5);
-                        let (ax, az) = (a.cos(), a.sin());
+                        let (ax, az) = (a.dcos(), a.dsin());
                         let y0 = h * (0.4 + 0.15 * k as f32);
                         let out_p = [x + ax * 0.42, y0 + 0.05, z + az * 0.42];
                         limb(out, [x, y0, z], out_p, r * 0.6, r * 0.6, col, 6);
@@ -150,7 +151,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     sphere(out, [top[0], top[1] + cr * 0.3, top[2]], [cr, cr * 0.55, cr], g, 10, 5, 0.12, seed);
                     for k in 0..14u32 {
                         let a = k as f32 * 0.449 + jit(k + 7) * 0.3;
-                        let (ax, az) = (a.cos() * cr * 0.9, a.sin() * cr * 0.9);
+                        let (ax, az) = (a.dcos() * cr * 0.9, a.dsin() * cr * 0.9);
                         let len = height * (0.32 + 0.1 * jit(k + 11).abs());
                         limb(out, [top[0] + ax, top[1] + cr * 0.2, top[2] + az], [top[0] + ax * 1.08, (top[1] - len).max(height * 0.3), top[2] + az * 1.08], 0.09, 0.04, [g[0] * 0.92, g[1] * 0.95, g[2]], 5);
                     }
@@ -200,7 +201,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     // a few branches reaching out under the crown
                     for k in 0..3u32 {
                         let a = k as f32 * 2.1 + jit(2);
-                        limb(out, [x, trunk_top * 0.8, z], [x + a.cos() * cr * 0.8, trunk_top + cr * 0.3, z + a.sin() * cr * 0.8], trunk_r * 0.45, trunk_r * 0.2, bark, 5);
+                        limb(out, [x, trunk_top * 0.8, z], [x + a.dcos() * cr * 0.8, trunk_top + cr * 0.3, z + a.dsin() * cr * 0.8], trunk_r * 0.45, trunk_r * 0.2, bark, 5);
                     }
                     let g = if birch { [g[0] * 1.2, g[1] * 1.15, g[2] * 1.1] } else { g };
                     // the crown is a loose heap of leaf clusters, not one ball
@@ -212,7 +213,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                         let up = if k == 0 { 1.15 } else { 0.55 + 0.7 * ((k * 5) % 7) as f32 / 7.0 };
                         let lr = cr * (0.5 + 0.2 * jit(40 + k % 6).abs());
                         let shade = 0.9 + 0.15 * ((k * 3) % 5) as f32 / 4.0;
-                        sphere(out, [x + a.cos() * cr * ring, trunk_top + cr * up, z + a.sin() * cr * ring], [lr, lr * 0.8, lr], [g[0] * shade, g[1] * shade, g[2]], 7, 4, 0.18, seed ^ (k * 7 + 3));
+                        sphere(out, [x + a.dcos() * cr * ring, trunk_top + cr * up, z + a.dsin() * cr * ring], [lr, lr * 0.8, lr], [g[0] * shade, g[1] * shade, g[2]], 7, 4, 0.18, seed ^ (k * 7 + 3));
                     }
                     out.foliage = false;
                 }
@@ -223,7 +224,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                 sphere(out, [x + 0.22, 0.24, z + 0.12], [0.3, 0.22, 0.3], [g[0] * 1.1, g[1] * 1.05, g[2]], 7, 4, 0.08, seed ^ 2);
                 for k in 0..5 {
                     let a = k as f32 * 1.25 + jit(9);
-                    sphere(out, [x + a.cos() * 0.3, 0.32 + 0.1 * (k % 2) as f32, z + a.sin() * 0.3], [0.05; 3], [0.78, 0.1, 0.2], 5, 4, 0.0, 1);
+                    sphere(out, [x + a.dcos() * 0.3, 0.32 + 0.1 * (k % 2) as f32, z + a.dsin() * 0.3], [0.05; 3], [0.78, 0.1, 0.2], 5, 4, 0.0, 1);
                 }
             }
             NodeKind::ClayDeposit => {
@@ -252,7 +253,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                 sphere(out, [x + 0.15, 0.36, z + 0.78], [0.5, 0.46, 0.3], [0.02, 0.02, 0.03], 10, 6, 0.04, seed ^ 31);
                 for k in 0..5u32 {
                     let a = std::f32::consts::PI * (k as f32 / 4.0);
-                    rock(out, [x + 0.15 - a.cos() * 0.6, 0.3 + a.sin() * 0.62, z + 0.74], [0.17, 0.15, 0.16], [g * 1.05, g * 1.05, g * 1.08], seed ^ (41 + k));
+                    rock(out, [x + 0.15 - a.dcos() * 0.6, 0.3 + a.dsin() * 0.62, z + 0.74], [0.17, 0.15, 0.16], [g * 1.05, g * 1.05, g * 1.08], seed ^ (41 + k));
                 }
                 // moss on the ledges
                 for k in 0..4u32 {
@@ -271,8 +272,8 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     let a = k as f32 * 0.449 + jit(5 + k % 4) * 0.4;
                     let lean = 0.18 + 0.14 * jit(k + 2).abs();
                     let hgt = 1.0 + 0.3 * jit(k + 1);
-                    let top = [x + a.cos() * lean, hgt, z + a.sin() * lean];
-                    limb(out, [x + a.cos() * 0.05, 0.0, z + a.sin() * 0.05], top, 0.03, 0.008, c, 4);
+                    let top = [x + a.dcos() * lean, hgt, z + a.dsin() * lean];
+                    limb(out, [x + a.dcos() * 0.05, 0.0, z + a.dsin() * 0.05], top, 0.03, 0.008, c, 4);
                     if k % 2 == 0 {
                         sphere(out, top, [0.035, 0.09, 0.035], head, 5, 3, 0.0, k);
                     }
@@ -287,7 +288,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                 limb(out, [x + 0.2, 0.1, z + 0.3], [x - 0.45, 0.14, z - 0.25], 0.05, 0.035, c, 5);
                 for k in 0..3u32 {
                     let a = k as f32 * 2.1 + jit(k + 3);
-                    limb(out, [x + a.cos() * 0.2, 0.08, z + a.sin() * 0.2], [x + a.cos() * 0.45, 0.55 + 0.15 * jit(k + 6), z + a.sin() * 0.45], 0.035, 0.012, dark, 4);
+                    limb(out, [x + a.dcos() * 0.2, 0.08, z + a.dsin() * 0.2], [x + a.dcos() * 0.45, 0.55 + 0.15 * jit(k + 6), z + a.dsin() * 0.45], 0.035, 0.012, dark, 4);
                 }
             }
         }

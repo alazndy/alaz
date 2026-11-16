@@ -1,3 +1,4 @@
+use super::DetMath;
 use super::*;
 
 /// A box with a flat light level per face (top lit, sides in between, bottom dark).
@@ -60,7 +61,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
         let r = 0.42 + 0.03 * jit(k + 9);
         let sz = 0.1 + 0.035 * jit(k + 3).abs();
         let g = 0.5 + 0.08 * jit(k + 5);
-        sphere(out, [x + a.cos() * r, sz * 0.6, z + a.sin() * r], [sz * 1.2, sz * 0.8, sz], col([g, g * 0.97, g * 0.93]), 7, 4, 0.18, seed ^ k);
+        sphere(out, [x + a.dcos() * r, sz * 0.6, z + a.dsin() * r], [sz * 1.2, sz * 0.8, sz], col([g, g * 0.97, g * 0.93]), 7, 4, 0.18, seed ^ k);
     }
     // ash bed, scorched black at the middle
     sphere(out, [x, 0.0, z], [0.36, 0.035, 0.36], col([0.36, 0.34, 0.32]), 12, 3, 0.05, seed);
@@ -69,7 +70,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
     let stand = if lit { 0.25 + 0.75 * fuel.sqrt() } else { 0.0 };
     for k in 0..5u32 {
         let a = k as f32 * std::f32::consts::TAU / 5.0 + 0.5 + 0.15 * jit(k + 20);
-        let (ca, sa) = (a.cos(), a.sin());
+        let (ca, sa) = (a.dcos(), a.dsin());
         let foot = [x + ca * 0.32, 0.05, z + sa * 0.32];
         let tip = [x + ca * (0.08 + 0.12 * (1.0 - stand)), 0.06 + 0.26 * stand, z + sa * (0.08 + 0.12 * (1.0 - stand))];
         let mid = [(foot[0] + tip[0]) * 0.5, (foot[1] + tip[1]) * 0.5, (foot[2] + tip[2]) * 0.5];
@@ -80,7 +81,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
             // glowing coals along the burnt end
             let s = out.len();
             let e = [mid[0] * 0.4 + tip[0] * 0.6, mid[1] * 0.4 + tip[1] * 0.6 + 0.02, mid[2] * 0.4 + tip[2] * 0.6];
-            sphere(out, e, [0.03, 0.02, 0.03], [1.0, 0.32 + 0.1 * (t * 3.0 + k as f32).sin(), 0.08], 5, 3, 0.0, k);
+            sphere(out, e, [0.03, 0.02, 0.03], [1.0, 0.32 + 0.1 * (t * 3.0 + k as f32).dsin(), 0.08], 5, 3, 0.0, k);
             glowify(out, s);
         }
     }
@@ -95,7 +96,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
         // smouldering: a thin grey wisp curling up from the ash
         for k in 0..3u32 {
             let age = (t * 0.35 + k as f32 / 3.0).fract();
-            let p = [x + (t * 0.9 + k as f32 * 2.0).sin() * 0.06 * (1.0 + age * 2.0), 0.15 + age * 1.3, z + (t * 0.7 + k as f32).cos() * 0.05];
+            let p = [x + (t * 0.9 + k as f32 * 2.0).dsin() * 0.06 * (1.0 + age * 2.0), 0.15 + age * 1.3, z + (t * 0.7 + k as f32).dcos() * 0.05];
             let r = 0.04 + 0.08 * age;
             let g = 0.55 + 0.1 * age;
             sphere(out, p, [r, r * 0.8, r], [g, g, g], 5, 3, 0.2, k);
@@ -108,17 +109,17 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
     for k in 0..6u32 {
         let a = k as f32 * 1.05 + jit(k + 30);
         let r = 0.08 + 0.08 * jit(k + 40).abs();
-        let pulse = 0.5 + 0.5 * (t * 4.0 + k as f32 * 1.9).sin();
-        sphere(out, [x + a.cos() * r, 0.05, z + a.sin() * r], [0.05, 0.03, 0.05], [1.0, 0.25 + 0.25 * pulse, 0.05], 5, 3, 0.1, k);
+        let pulse = 0.5 + 0.5 * (t * 4.0 + k as f32 * 1.9).dsin();
+        sphere(out, [x + a.dcos() * r, 0.05, z + a.dsin() * r], [0.05, 0.03, 0.05], [1.0, 0.25 + 0.25 * pulse, 0.05], 5, 3, 0.1, k);
     }
     // tongues of flame: each licks up and down at its own pace, the tips swaying
     let tongue = |out: &mut Mesh, k: u32, ring: f32, base_r: f32, h: f32, c: [f32; 3]| {
         let a = k as f32 * 2.399 + jit(k + 50);
         let ph = t * (7.0 + 1.3 * (k % 3) as f32) + k as f32 * 1.7;
-        let lick = 0.75 + 0.25 * ph.sin() + 0.12 * (ph * 2.3).sin();
+        let lick = 0.75 + 0.25 * ph.dsin() + 0.12 * (ph * 2.3).dsin();
         let hh = h * lick * size;
-        let foot = [x + a.cos() * ring, 0.06, z + a.sin() * ring];
-        let sway = |f: f32| [(ph * 0.7 + f).sin() * 0.07 * size, (ph * 0.6 + f + 1.0).cos() * 0.07 * size];
+        let foot = [x + a.dcos() * ring, 0.06, z + a.dsin() * ring];
+        let sway = |f: f32| [(ph * 0.7 + f).dsin() * 0.07 * size, (ph * 0.6 + f + 1.0).dcos() * 0.07 * size];
         let [s1x, s1z] = sway(0.0);
         let [s2x, s2z] = sway(1.4);
         let mid = [foot[0] * 0.6 + x * 0.4 + s1x * 0.5, 0.06 + hh * 0.45, foot[2] * 0.6 + z * 0.4 + s1z * 0.5];
@@ -140,7 +141,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
         let age = (t * 0.55 + k as f32 / 6.0 + 0.3 * jit(k + 60)).fract();
         let cyc = (t * 0.55 + k as f32 / 6.0).floor();
         let a = k as f32 * 2.1 + cyc * 1.3;
-        let p = [x + a.cos() * 0.25 * age + (t * 3.0 + k as f32).sin() * 0.04, 0.4 + age * 1.8 * size, z + a.sin() * 0.25 * age];
+        let p = [x + a.dcos() * 0.25 * age + (t * 3.0 + k as f32).dsin() * 0.04, 0.4 + age * 1.8 * size, z + a.dsin() * 0.25 * age];
         let r = 0.022 * (1.0 - age);
         if r > 0.004 {
             push_box(out, p, [r, r, r], [1.0, 0.75 - 0.4 * age, 0.25], 1.0);
@@ -152,7 +153,7 @@ pub(crate) fn push_campfire(out: &mut Mesh, x: f32, z: f32, fuel: f32, t: f32, t
         let age = (t * 0.22 + k as f32 / 4.0).fract();
         // smoke leans off downwind, the more the stronger it blows
         let [wx, wz, _] = out.wind;
-        let p = [x + (t * 0.5 + k as f32 * 1.7).sin() * 0.12 * age + wx * 1.6 * age * age, 0.9 * size + age * 2.2 * (1.0 - 0.4 * (wx * wx + wz * wz).sqrt()), z + (t * 0.4 + k as f32).cos() * 0.1 * age + wz * 1.6 * age * age];
+        let p = [x + (t * 0.5 + k as f32 * 1.7).dsin() * 0.12 * age + wx * 1.6 * age * age, 0.9 * size + age * 2.2 * (1.0 - 0.4 * (wx * wx + wz * wz).sqrt()), z + (t * 0.4 + k as f32).dcos() * 0.1 * age + wz * 1.6 * age * age];
         let r = (0.06 + 0.2 * age) * (1.0 - age * 0.5);
         let g = 0.42 + 0.2 * age;
         sphere(out, p, [r, r * 0.85, r], [g, g, g * 1.02], 6, 4, 0.25, k);
@@ -171,10 +172,10 @@ pub(crate) fn push_grass_fire(out: &mut Mesh, x: f32, z: f32, age: f32, t: f32) 
     for k in 0..3u32 {
         let (ox, oz) = (0.3 * jit(k + 3), 0.3 * jit(k + 11));
         let ph = t * (6.0 + 1.1 * (k % 3) as f32) + k as f32 * 1.9 + jit(k + 17) * 3.0;
-        let lick = 0.7 + 0.3 * ph.sin() + 0.12 * (ph * 2.3).sin();
+        let lick = 0.7 + 0.3 * ph.dsin() + 0.12 * (ph * 2.3).dsin();
         let h = (0.42 + 0.22 * jit(k + 23).abs()) * lick * size;
         let [wx, wz, _] = out.wind;
-        let sway = [(ph * 0.7).sin() * 0.05 + wx * 0.1, (ph * 0.6 + 1.0).cos() * 0.05 + wz * 0.1];
+        let sway = [(ph * 0.7).dsin() * 0.05 + wx * 0.1, (ph * 0.6 + 1.0).dcos() * 0.05 + wz * 0.1];
         let foot = [x + ox, 0.03, z + oz];
         let mid = [foot[0] + sway[0] * 0.5, 0.03 + h * 0.5, foot[2] + sway[1] * 0.5];
         let tip = [foot[0] + sway[0], 0.03 + h, foot[2] + sway[1]];
@@ -189,13 +190,13 @@ pub(crate) fn push_grass_fire(out: &mut Mesh, x: f32, z: f32, age: f32, t: f32) 
     let a = (t * 0.7 + jit(29) * 0.5).fract();
     let r = 0.02 * (1.0 - a);
     if r > 0.004 {
-        push_box(out, [x + 0.15 * jit(31) + (t * 3.0).sin() * 0.04, 0.3 + a * 1.3, z + 0.15 * jit(37)], [r, r, r], [1.0, 0.75 - 0.4 * a, 0.25], 1.0);
+        push_box(out, [x + 0.15 * jit(31) + (t * 3.0).dsin() * 0.04, 0.3 + a * 1.3, z + 0.15 * jit(37)], [r, r, r], [1.0, 0.75 - 0.4 * a, 0.25], 1.0);
     }
     glowify(out, s);
     // smoke: one grey puff leaning off downwind
     let age_s = (t * 0.25 + (seed % 100) as f32 / 100.0).fract();
     let [wx, wz, _] = out.wind;
-    let p = [x + wx * 1.4 * age_s * age_s + (t * 0.5 + jit(5)).sin() * 0.06, 0.5 + age_s * 1.6, z + wz * 1.4 * age_s * age_s];
+    let p = [x + wx * 1.4 * age_s * age_s + (t * 0.5 + jit(5)).dsin() * 0.06, 0.5 + age_s * 1.6, z + wz * 1.4 * age_s * age_s];
     let r = (0.05 + 0.16 * age_s) * (1.0 - age_s * 0.5);
     let g = 0.34 + 0.2 * age_s;
     sphere(out, p, [r, r * 0.85, r], [g, g, g * 1.02], 5, 3, 0.25, seed);
@@ -258,7 +259,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             // spokes of the wheel, turning with the day clock is overkill: draw it upright
             for k in 0..8 {
                 let a = k as f32 * std::f32::consts::TAU / 8.0 + tick as f32 * if active { 0.02 } else { 0.0 };
-                shapes::limb(out, [x, 1.05, z], [x + a.cos() * 1.0, 1.05 + a.sin() * 1.0, z], 0.06, 0.09, [0.55, 0.40, 0.22], 6);
+                shapes::limb(out, [x, 1.05, z], [x + a.dcos() * 1.0, 1.05 + a.dsin() * 1.0, z], 0.06, 0.09, [0.55, 0.40, 0.22], 6);
             }
             round(out, [x, 1.05, z], [0.18, 0.18, 0.6], [0.35, 0.35, 0.40], tint);
             bx(out, [x, 0.2, z], [0.25, 0.25, 0.7], [0.35, 0.35, 0.40], 0.0);
@@ -305,7 +306,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
         }
         BuildingKind::TripHammer => {
             bx(out, [x, 0.0, z], [0.8, 0.5, 0.3], [0.48, 0.33, 0.18], 0.0);
-            let lift = if active { ((tick as f32) * 0.2).sin().abs() * 0.3 } else { 0.0 };
+            let lift = if active { ((tick as f32) * 0.2).dsin().abs() * 0.3 } else { 0.0 };
             shapes::limb(out, [x - 0.7, 0.9, z], [x + 0.5, 0.75 + lift, z], 0.08, 0.06, [0.50, 0.35, 0.19], 5);
             bx(out, [x + 0.5, 0.5 + lift, z], [0.15, 0.15, 0.15], [0.35, 0.34, 0.36], 0.0);
             bx(out, [x + 0.5, 0.0, z], [0.2, 0.4, 0.2], [0.40, 0.40, 0.42], 0.0);
@@ -330,7 +331,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             bx(out, [x, 0.0, z], [0.5, 1.6, 0.5], [0.52, 0.40, 0.26], 0.0);
             for k in 0..4 {
                 let a = k as f32 * std::f32::consts::TAU / 4.0 + tick as f32 * 0.02;
-                shapes::limb(out, [x, 2.8, z + 0.55], [x + a.cos() * 1.8, 2.8 + a.sin() * 1.8, z + 0.55], 0.05, 0.05, [0.85, 0.82, 0.70], 4);
+                shapes::limb(out, [x, 2.8, z + 0.55], [x + a.dcos() * 1.8, 2.8 + a.dsin() * 1.8, z + 0.55], 0.05, 0.05, [0.85, 0.82, 0.70], 4);
             }
         }
         BuildingKind::Conveyor => {
@@ -345,7 +346,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             let a = tick as f32 * if active { 0.08 } else { 0.0 };
             for k in 0..6 {
                 let t = a + k as f32 * std::f32::consts::TAU / 6.0;
-                shapes::limb(out, [x + 0.9, 0.8, z + 0.5], [x + 0.9 + t.cos() * 0.6, 0.8 + t.sin() * 0.6, z + 0.5], 0.04, 0.04, [0.30, 0.30, 0.34], 4);
+                shapes::limb(out, [x + 0.9, 0.8, z + 0.5], [x + 0.9 + t.dcos() * 0.6, 0.8 + t.dsin() * 0.6, z + 0.5], 0.04, 0.04, [0.30, 0.30, 0.34], 4);
             }
             if active {
                 bx(out, [x, 0.1, z + 0.51], [0.2, 0.15, 0.02], [1.0, 0.5, 0.15], 1.0);
@@ -353,7 +354,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
         }
         BuildingKind::Pump => {
             bx(out, [x, 0.0, z], [0.3, 0.8, 0.3], [0.30, 0.30, 0.34], 0.0);
-            let lift = if active { ((tick as f32) * 0.1).sin() * 0.2 } else { 0.0 };
+            let lift = if active { ((tick as f32) * 0.1).dsin() * 0.2 } else { 0.0 };
             shapes::limb(out, [x - 0.8, 1.2 + lift, z], [x + 0.8, 1.2 - lift, z], 0.06, 0.06, [0.45, 0.31, 0.17], 4);
         }
         BuildingKind::RollingMill => {
@@ -411,13 +412,13 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             round(out, [x, 0.42, z], [0.5, 0.1, 0.5], [0.55, 0.54, 0.52], tint);
             let a = tick as f32 * if active { 0.05 } else { 0.0 };
             round(out, [x, 0.58, z], [0.48, 0.09, 0.48], [0.62, 0.61, 0.58], tint);
-            shapes::limb(out, [x + a.cos() * 0.35, 0.66, z + a.sin() * 0.35], [x + a.cos() * 0.35, 0.95, z + a.sin() * 0.35], 0.04, 0.04, [0.42, 0.29, 0.16], 4);
+            shapes::limb(out, [x + a.dcos() * 0.35, 0.66, z + a.dsin() * 0.35], [x + a.dcos() * 0.35, 0.95, z + a.dsin() * 0.35], 0.04, 0.04, [0.42, 0.29, 0.16], 4);
         }
         BuildingKind::AnimalGin => {
             // an upright post and a long sweep
             bx(out, [x, 0.0, z], [0.12, 1.1, 0.12], [0.45, 0.31, 0.17], 0.0);
             let a = tick as f32 * 0.01;
-            shapes::limb(out, [x, 0.95, z], [x + a.cos() * 2.4, 0.9, z + a.sin() * 2.4], 0.06, 0.05, [0.50, 0.35, 0.19], 5);
+            shapes::limb(out, [x, 0.95, z], [x + a.dcos() * 2.4, 0.9, z + a.dsin() * 2.4], 0.06, 0.05, [0.50, 0.35, 0.19], 5);
         }
         BuildingKind::PitKiln => {
             // a shallow pit ringed with earth, a mound of straw and logs over the pots; smoke and a glow while firing
@@ -425,7 +426,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
             round(out, [x, 0.25, z], [0.7, 0.28, 0.7], [0.70, 0.62, 0.34], tint);
             for k in 0..5 {
                 let a = k as f32 * std::f32::consts::TAU / 5.0;
-                shapes::limb(out, [x + a.cos() * 0.75, 0.15, z + a.sin() * 0.75], [x + a.cos() * 0.1, 0.55, z + a.sin() * 0.1], 0.07, 0.06, [0.42, 0.29, 0.16], 5);
+                shapes::limb(out, [x + a.dcos() * 0.75, 0.15, z + a.dsin() * 0.75], [x + a.dcos() * 0.1, 0.55, z + a.dsin() * 0.1], 0.07, 0.06, [0.42, 0.29, 0.16], 5);
             }
             if active {
                 bx(out, [x, 0.42, z], [0.22, 0.06, 0.22], [1.0, 0.45, 0.10], 1.0);
@@ -440,7 +441,7 @@ pub(crate) fn push_building(out: &mut Mesh, kind: BuildingKind, x: f32, z: f32, 
                     continue; // the gate
                 }
                 let (a0, a1) = (k as f32 / n as f32 * std::f32::consts::TAU, (k + 1) as f32 / n as f32 * std::f32::consts::TAU);
-                let (p0, p1) = ([x + r * a0.cos(), z + r * a0.sin()], [x + r * a1.cos(), z + r * a1.sin()]);
+                let (p0, p1) = ([x + r * a0.dcos(), z + r * a0.dsin()], [x + r * a1.dcos(), z + r * a1.dsin()]);
                 bx(out, [p0[0], 0.0, p0[1]], [0.05, 0.55, 0.05], [0.42, 0.29, 0.16], 0.0);
                 if k != 3 {
                     for h in [0.3f32, 0.75] {
