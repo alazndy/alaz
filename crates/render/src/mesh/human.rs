@@ -49,6 +49,10 @@ pub const OUT_HOOD: u16 = 16;
 pub const OUT_PLATE: u16 = 32;
 pub const OUT_HELM: u16 = 64;
 pub const OUT_APRON: u16 = 128;
+/// A felt cloak: drawn like the hide one, in grey felt.
+pub const OUT_FELT: u16 = 256;
+/// A leather jerkin: drawn like the breastplate, in brown leather.
+pub const OUT_LEATHER: u16 = 512;
 
 /// A person's looks, fixed by the id: skin, hair, dye, build.
 pub struct Look {
@@ -86,7 +90,7 @@ pub fn look(id: u32) -> Look {
 /// What a person wears, from what they carry. A tunic replaces the fibre wrap; the rest layer over each other.
 pub fn outfit_bits(inv: &alaz_sim::world::Inventory) -> u16 {
     use alaz_sim::ItemKind as I;
-    [(I::FiberWrap, OUT_WRAP), (I::HideCloak, OUT_CLOAK), (I::HideBoots, OUT_BOOTS), (I::Tunic, OUT_TUNIC), (I::LinenHood, OUT_HOOD), (I::BronzePlate, OUT_PLATE), (I::SteelHelm, OUT_HELM), (I::WorkApron, OUT_APRON)]
+    [(I::FiberWrap, OUT_WRAP), (I::HideCloak, OUT_CLOAK), (I::HideBoots, OUT_BOOTS), (I::Tunic, OUT_TUNIC), (I::LinenHood, OUT_HOOD), (I::BronzePlate, OUT_PLATE), (I::SteelHelm, OUT_HELM), (I::WorkApron, OUT_APRON), (I::FeltCloak, OUT_FELT), (I::LeatherArmor, OUT_LEATHER)]
         .iter()
         .filter(|(k, _)| inv.counts[*k as usize] > 0)
         .fold(0, |m, (_, b)| m | b)
@@ -139,13 +143,16 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         // garments that come from a model file are stamped on the body's spot; the code-made ones are left out
         o &= !file_outfit(out, x, z, &pose);
     }
-    let (wrap, cloak, boots) = (o & OUT_WRAP != 0, o & OUT_CLOAK != 0, o & OUT_BOOTS != 0);
-    let (tunic, hood, plate, helm, apron) = (o & OUT_TUNIC != 0, o & OUT_HOOD != 0, o & OUT_PLATE != 0, o & OUT_HELM != 0, o & OUT_APRON != 0);
+    let felt = o & OUT_FELT != 0 && o & OUT_CLOAK == 0;
+    let leather = o & OUT_LEATHER != 0 && o & OUT_PLATE == 0;
+    let (wrap, cloak, boots) = (o & OUT_WRAP != 0, o & OUT_CLOAK != 0 || felt, o & OUT_BOOTS != 0);
+    let (tunic, hood, plate, helm, apron) = (o & OUT_TUNIC != 0, o & OUT_HOOD != 0, o & (OUT_PLATE | OUT_LEATHER) != 0, o & OUT_HELM != 0, o & OUT_APRON != 0);
     // cloth is natural linen or dyed one of five ways; metal is bronze or steel
     let linen = [0.84, 0.78, 0.62];
     let dye = lk.dye;
-    let bronze = [0.78, 0.56, 0.24];
-    let bronze_dk = [0.58, 0.4, 0.17];
+    // the breastplate is bronze, or brown leather for the jerkin; the cloak is hide, or grey felt
+    let (bronze, bronze_dk) = if leather { ([0.52, 0.34, 0.19], [0.38, 0.24, 0.13]) } else { ([0.78, 0.56, 0.24], [0.58, 0.4, 0.17]) };
+    let (cl, cl_dk, cl_fluff) = if felt { ([0.50, 0.54, 0.60], [0.38, 0.42, 0.48], [0.62, 0.64, 0.66]) } else { (hide, hide_dk, fluff) };
     let steel = [0.7, 0.74, 0.8];
     let steel_dk = [0.46, 0.5, 0.58];
     let denim = [0.3, 0.35, 0.45];
@@ -320,9 +327,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
     if cloak {
         // a hide mantle over the shoulders with a fur collar, hanging down the back
-        upart(out, ub(-0.02, 1.43, 0.0), 0.28, 0.1, 0.19, tilt, hide, 9);
-        limb(out, ub(-0.1, 1.42, 0.0), at(-0.16, y(0.7) + crouch * 0.4, 0.0), 0.21, 0.27, hide_dk, 8);
-        sphere(out, ub(-0.02, 1.46, 0.0), [0.17, 0.05, 0.16], fluff, 8, 4, 0.12, 2);
+        upart(out, ub(-0.02, 1.43, 0.0), 0.28, 0.1, 0.19, tilt, cl, 9);
+        limb(out, ub(-0.1, 1.42, 0.0), at(-0.16, y(0.7) + crouch * 0.4, 0.0), 0.21, 0.27, cl_dk, 8);
+        sphere(out, ub(-0.02, 1.46, 0.0), [0.17, 0.05, 0.16], cl_fluff, 8, 4, 0.12, 2);
     }
 
     // head: turns to look around while standing idle
@@ -420,7 +427,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         let sh = ub(0.0, 1.42, side * 0.235 * sh_k);
         let mid = [(sh[0] + hand[0]) * 0.5, (sh[1] + hand[1]) * 0.5, (sh[2] + hand[2]) * 0.5];
         let elbow = [mid[0] + urx * side * 0.07 - ufx * 0.03, mid[1] - 0.06, mid[2] + urz * side * 0.07 - ufz * 0.03];
-        let upper = if cloak { hide } else if tunic { dye } else if apron { linen } else if ape { fur } else { skin };
+        let upper = if cloak { cl } else if tunic { dye } else if apron { linen } else if ape { fur } else { skin };
         if plate {
             sphere(out, sh, [0.098, 0.07, 0.098], bronze, 6, 4, 0.0, 1);
         } else {
@@ -661,7 +668,7 @@ fn tool_file(tool: Tool) -> Option<std::sync::Arc<assets::Model>> {
 /// Garments that have a model file (`models/outfit_cloak.vox` ...) are stamped at the person's feet, turned with them;
 /// returns the bits of the ones that were, so the body does not draw its own.
 fn file_outfit(out: &mut Mesh, x: f32, z: f32, pose: &Pose) -> u16 {
-    const FILES: [(u16, &str); 8] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron")];
+    const FILES: [(u16, &str); 10] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron"), (OUT_FELT, "outfit_felt_cloak"), (OUT_LEATHER, "outfit_leather_armor")];
     let mut done = 0;
     for (bit, name) in FILES {
         if pose.outfit & bit != 0 {

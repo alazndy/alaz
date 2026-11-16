@@ -22,6 +22,7 @@ name = "Barınak"
 radius_mm = 1600
 discovery = "shelter"
 cost = [{ item = "wood", n = 10 }]
+alt_cost = [{ item = "wood", n = 4 }, { item = "plank", n = 4 }, { item = "window_pane", n = 2 }]
 
 [[building]]
 kind = "charcoal_kiln"
@@ -140,6 +141,8 @@ radius_mm = 500
 discovery = "smelting"
 # worked by someone standing at it, by an animal at a gin within 6 m, or by a water wheel within 8 m
 cost = [{ item = "hide", n = 2 }, { item = "plank", n = 2 }]
+# a tanned hide stretches further: one piece of leather does it
+alt_cost = [{ item = "leather", n = 1 }, { item = "plank", n = 2 }]
 
 [[building]]
 kind = "trip_hammer"
@@ -423,6 +426,7 @@ radius_mm = 900
 discovery = "machining"
 # powered: thread to cloth by the bolt
 cost = [{ item = "plank", n = 6 }, { item = "gear", n = 4 }, { item = "cast_iron_part", n = 1 }]
+alt_cost = [{ item = "plank", n = 6 }, { item = "precision_gear", n = 2 }, { item = "belt", n = 2 }]
 
 [[building]]
 kind = "boiler"
@@ -451,6 +455,156 @@ radius_mm = 1000
 discovery = "machining"
 # powered rolls: steel to rail and girder
 cost = [{ item = "cast_iron_part", n = 4 }, { item = "steel", n = 4 }, { item = "gear", n = 4 }, { item = "plank", n = 4 }]
+
+# --- Life and craft (wave 2) ---
+[[building]]
+kind = "potter_wheel"
+name = "Çömlekçi çarkı"
+radius_mm = 700
+discovery = "throwing"
+# a kick wheel on a plank frame; an iron wheel makes a better flywheel
+cost = [{ item = "plank", n = 4 }, { item = "stone", n = 4 }, { item = "wood", n = 2 }]
+alt_cost = [{ item = "iron_wheel", n = 1 }, { item = "plank", n = 2 }, { item = "stone", n = 2 }]
+
+[[building]]
+kind = "oil_press"
+name = "Yağ presi"
+radius_mm = 800
+discovery = "oil_pressing"
+# a wedge press on a timber bed: seed squeezed to oil
+cost = [{ item = "plank", n = 6 }, { item = "stone", n = 6 }, { item = "gear", n = 2 }]
+alt_cost = [{ item = "plank", n = 4 }, { item = "stone", n = 6 }, { item = "precision_gear", n = 1 }]
+
+[[building]]
+kind = "tannery"
+name = "Tabakhane"
+radius_mm = 1000
+discovery = "tanning"
+# clay-lined pits of bark liquor under a rail of drying hides
+cost = [{ item = "plank", n = 4 }, { item = "stone", n = 6 }, { item = "clay", n = 4 }]
+
+[[building]]
+kind = "drying_rack"
+name = "Kurutma rafı"
+radius_mm = 600
+discovery = "curing"
+# stands in the open: rain and snow slow the drying to half
+cost = [{ item = "wood", n = 6 }, { item = "fiber", n = 2 }]
+
+[[building]]
+kind = "smokehouse"
+name = "Tüttürme ocağı"
+radius_mm = 900
+discovery = "smoking"
+# a low smouldering fire under hanging meat: warm, never hot
+cost = [{ item = "stone", n = 8 }, { item = "plank", n = 4 }, { item = "clay", n = 3 }]
+alt_cost = [{ item = "brick", n = 10 }, { item = "plank", n = 2 }]
+heat_max = 90
+heat_rate = 10
+
+[[building]]
+kind = "well"
+name = "Kuyu ve çıkrık"
+radius_mm = 700
+discovery = "wells"
+# dug to the water table and lined with stone; a rope and a windlass. Not into bare rock
+cost = [{ item = "stone", n = 12 }, { item = "plank", n = 4 }, { item = "rope", n = 2 }]
+alt_cost = [{ item = "brick", n = 10 }, { item = "mortar", n = 2 }, { item = "rope", n = 2 }]
+
+[[building]]
+kind = "stone_mortar"
+name = "Dibek"
+radius_mm = 600
+discovery = "milling"
+# a hollowed stone and a pestle on a sweep; a hand, an animal at a gin or a stream works it like the hand mill
+cost = [{ item = "stone", n = 5 }, { item = "wood", n = 3 }]
+
+[[building]]
+kind = "water_mill"
+name = "Su değirmeni"
+radius_mm = 1300
+discovery = "mechanics"
+# a wheel in a stream turning millstones: only by water (within 3 tiles), nobody needs to stand at it
+cost = [{ item = "plank", n = 8 }, { item = "stone", n = 6 }, { item = "gear", n = 3 }]
+alt_cost = [{ item = "beam", n = 2 }, { item = "precision_gear", n = 2 }, { item = "stone", n = 6 }]
+
+[[building]]
+kind = "forge_hammer"
+name = "Dövme çekici"
+radius_mm = 900
+discovery = "drawing"
+# powered (8 m of a wheel, windmill, steam or a motor): sheet and wire beaten out
+cost = [{ item = "plank", n = 6 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 3 }, { item = "gear", n = 2 }]
+alt_cost = [{ item = "heavy_shaft", n = 1 }, { item = "plank", n = 4 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "felt_mallet"
+name = "Keçe tokmağı"
+radius_mm = 600
+discovery = "felting"
+cost = [{ item = "wood", n = 4 }, { item = "plank", n = 2 }]
+
+[[building]]
+kind = "ropewalk"
+name = "Halat bükme"
+radius_mm = 1100
+discovery = "ropemaking"
+# a long timber bed with a hook wheel at one end
+cost = [{ item = "plank", n = 4 }, { item = "wood", n = 6 }]
+
+[[building]]
+kind = "crane"
+name = "Vinç"
+radius_mm = 900
+discovery = "hoisting"
+# a mast, a jib, a pulley and rope: big buildings put up within 10 m cost a quarter less
+cost = [{ item = "plank", n = 8 }, { item = "rope", n = 3 }, { item = "gear", n = 3 }, { item = "stone", n = 4 }]
+alt_cost = [{ item = "beam", n = 3 }, { item = "rope", n = 3 }, { item = "precision_gear", n = 1 }, { item = "stone", n = 4 }]
+
+[[building]]
+kind = "glass_furnace"
+name = "Cam üfleme ocağı"
+radius_mm = 900
+discovery = "glassblowing"
+# a furnace with a pot of molten glass and a blowpipe
+cost = [{ item = "fire_brick", n = 6 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 1 }]
+alt_cost = [{ item = "brick", n = 8 }, { item = "stone", n = 4 }, { item = "iron_bloom", n = 1 }]
+heat_max = 1400
+heat_rate = 25
+
+[[building]]
+kind = "paper_vat"
+name = "Kâğıt havuzu"
+radius_mm = 900
+discovery = "papermaking"
+cost = [{ item = "stone", n = 6 }, { item = "plank", n = 3 }, { item = "clay", n = 4 }]
+
+[[building]]
+kind = "printing_press"
+name = "Matbaa"
+radius_mm = 900
+discovery = "printing"
+# a screw press and a case of type
+cost = [{ item = "plank", n = 8 }, { item = "gear", n = 4 }, { item = "iron_bloom", n = 2 }]
+alt_cost = [{ item = "plank", n = 6 }, { item = "precision_gear", n = 2 }, { item = "sheet", n = 2 }]
+
+[[building]]
+kind = "cotton_gin"
+name = "Çırçır makinesi"
+radius_mm = 700
+discovery = "ginning"
+# powered: rollers pull the seed from the boll
+cost = [{ item = "plank", n = 4 }, { item = "gear", n = 3 }, { item = "wood", n = 3 }]
+alt_cost = [{ item = "precision_gear", n = 2 }, { item = "plank", n = 4 }, { item = "wood", n = 3 }]
+
+[[building]]
+kind = "spinning_jenny"
+name = "İplik eğirme makinesi"
+radius_mm = 800
+discovery = "spinning"
+# powered: many spindles on one frame
+cost = [{ item = "plank", n = 6 }, { item = "gear", n = 4 }, { item = "cast_iron_part", n = 1 }, { item = "cloth", n = 2 }]
+alt_cost = [{ item = "plank", n = 6 }, { item = "precision_gear", n = 2 }, { item = "belt", n = 2 }, { item = "cast_iron_part", n = 1 }]
 
 [[recipe]]
 id = "sharp_stone"
@@ -1075,7 +1229,8 @@ id = "sow_flax"
 name = "Keten ek"
 station = "field"
 inputs = [{ item = "flax", n = 2 }]
-outputs = [{ item = "flax", n = 6 }]
+# the flax goes to the loom; the seed heads left over go to the oil press
+outputs = [{ item = "flax", n = 6 }, { item = "linseed", n = 2 }]
 ticks = 108000
 discovery = "farming"
 
@@ -2295,3 +2450,409 @@ item = "work_apron"
 warmth = 22
 tool_save = 30
 fire = 250
+
+# --- Life and craft (wave 2). Appended, so the recipe indexes in saves stay put. ---
+# the potter's wheel throws pots by the batch and turns a fired pot into a lamp
+[[recipe]]
+id = "wheel_pot"
+name = "Çarkta çömlek çevir"
+station = "potter_wheel"
+inputs = [{ item = "clay", n = 3 }]
+outputs = [{ item = "raw_pot", n = 2 }]
+ticks = 480
+discovery = "throwing"
+
+[[recipe]]
+id = "wheel_large_pot"
+name = "Çarkta büyük çömlek çevir"
+station = "potter_wheel"
+inputs = [{ item = "clay", n = 8 }]
+outputs = [{ item = "raw_large_pot", n = 2 }]
+ticks = 900
+discovery = "throwing"
+
+[[recipe]]
+id = "wheel_oil_lamp"
+name = "Yağ kandili çevir"
+station = "potter_wheel"
+inputs = [{ item = "pot", n = 1 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "oil_lamp", n = 1 }]
+ticks = 300
+discovery = "throwing"
+
+[[recipe]]
+id = "press_linseed"
+name = "Keten tohumundan yağ sık"
+station = "oil_press"
+inputs = [{ item = "linseed", n = 3 }]
+outputs = [{ item = "plant_oil", n = 2 }]
+ticks = 900
+discovery = "oil_pressing"
+
+[[recipe]]
+id = "press_seed"
+name = "Tahıl tohumundan yağ sık"
+station = "oil_press"
+inputs = [{ item = "seed", n = 6 }]
+outputs = [{ item = "plant_oil", n = 1 }]
+ticks = 1200
+discovery = "oil_pressing"
+
+[[recipe]]
+id = "tan_hide"
+name = "Postu tabakla"
+station = "tannery"
+inputs = [{ item = "hide", n = 2 }, { item = "wood", n = 2 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "leather", n = 3 }, { item = "pot", n = 1 }]
+ticks = 2400
+discovery = "tanning"
+
+[[recipe]]
+id = "cut_belt"
+name = "Kayış kes"
+station = "tannery"
+inputs = [{ item = "leather", n = 2 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "belt", n = 1 }]
+ticks = 600
+discovery = "tanning"
+
+[[recipe]]
+id = "leather_armor"
+name = "Deri zırh"
+inputs = [{ item = "leather", n = 4 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "leather_armor", n = 1 }]
+ticks = 0
+discovery = "tanning"
+fine_bonus = 0
+steps = [
+  { label = "Derileri gövdeye göre kes", kind = "fit", strikes = 2, window = 22, period = 0, tools = [{ item = "sharp_stone", bonus = 5 }] },
+  { label = "Kat kat dik", kind = "tension", strikes = 3, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "dry_berries"
+name = "Yemişleri kurut"
+station = "drying_rack"
+inputs = [{ item = "berries", n = 4 }]
+outputs = [{ item = "dried_berries", n = 3 }]
+ticks = 1800
+discovery = "curing"
+
+[[recipe]]
+id = "dry_meat"
+name = "Eti kurut"
+station = "drying_rack"
+inputs = [{ item = "raw_meat", n = 2 }]
+outputs = [{ item = "jerky", n = 2 }]
+ticks = 2400
+discovery = "curing"
+
+[[recipe]]
+id = "dry_fish"
+name = "Balığı kurut"
+station = "drying_rack"
+inputs = [{ item = "raw_fish", n = 2 }]
+outputs = [{ item = "jerky", n = 2 }]
+ticks = 2400
+discovery = "curing"
+
+[[recipe]]
+id = "smoke_meat"
+name = "Eti tüttür"
+station = "smokehouse"
+inputs = [{ item = "raw_meat", n = 3 }, { item = "wood", n = 1 }]
+outputs = [{ item = "smoked_meat", n = 3 }]
+ticks = 3000
+discovery = "smoking"
+heat = 70
+
+[[recipe]]
+id = "smoke_cooked_meat"
+name = "Pişmiş eti tüttür"
+station = "smokehouse"
+inputs = [{ item = "cooked_meat", n = 3 }, { item = "wood", n = 1 }]
+outputs = [{ item = "smoked_meat", n = 3 }]
+ticks = 2400
+discovery = "smoking"
+heat = 70
+
+[[recipe]]
+id = "smoke_fish"
+name = "Balığı tüttür"
+station = "smokehouse"
+inputs = [{ item = "raw_fish", n = 3 }, { item = "wood", n = 1 }]
+outputs = [{ item = "smoked_fish", n = 3 }]
+ticks = 3000
+discovery = "smoking"
+heat = 70
+
+[[recipe]]
+id = "draw_water"
+name = "Kuyudan su çek"
+station = "well"
+inputs = [{ item = "pot", n = 1 }]
+outputs = [{ item = "water_pot", n = 1 }]
+ticks = 150
+discovery = "wells"
+
+[[recipe]]
+id = "draw_water_batch"
+name = "Kuyudan dört çömlek su çek"
+station = "well"
+inputs = [{ item = "pot", n = 4 }]
+outputs = [{ item = "water_pot", n = 4 }]
+ticks = 480
+discovery = "wells"
+
+[[recipe]]
+id = "pound_bulgur"
+name = "Bulgur döv"
+station = "stone_mortar"
+inputs = [{ item = "grain", n = 4 }]
+outputs = [{ item = "bulgur", n = 4 }]
+ticks = 800
+discovery = "milling"
+
+# four times the hand mill's flour: a batch twice the size in half the time again
+[[recipe]]
+id = "water_mill_flour"
+name = "Su değirmeninde öğüt"
+station = "water_mill"
+inputs = [{ item = "grain", n = 6 }]
+outputs = [{ item = "flour", n = 6 }]
+ticks = 300
+discovery = "mechanics"
+
+[[recipe]]
+id = "forge_sheet"
+name = "Demir sac döv"
+station = "forge_hammer"
+inputs = [{ item = "iron_bloom", n = 2 }]
+outputs = [{ item = "sheet", n = 2 }]
+ticks = 900
+discovery = "drawing"
+
+[[recipe]]
+id = "forge_wire"
+name = "Bakır tel döv"
+station = "forge_hammer"
+inputs = [{ item = "copper_ingot", n = 1 }]
+outputs = [{ item = "copper_wire", n = 2 }]
+ticks = 1500
+discovery = "drawing"
+
+[[recipe]]
+id = "beat_felt"
+name = "Keçe döv"
+station = "felt_mallet"
+inputs = [{ item = "fiber", n = 6 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "felt", n = 2 }, { item = "pot", n = 1 }]
+ticks = 1200
+discovery = "felting"
+
+[[recipe]]
+id = "felt_cloak"
+name = "Keçe pelerin"
+inputs = [{ item = "felt", n = 3 }, { item = "fiber", n = 1 }]
+outputs = [{ item = "felt_cloak", n = 1 }]
+ticks = 0
+discovery = "felting"
+fine_bonus = 0
+steps = [
+  { label = "Keçeyi omuzlara göre kes", kind = "fit", strikes = 2, window = 24, period = 0, tools = [{ item = "sharp_stone", bonus = 6 }] },
+  { label = "Yakayı dik", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "twist_rope"
+name = "Halat bük"
+station = "ropewalk"
+inputs = [{ item = "fiber", n = 4 }]
+outputs = [{ item = "rope", n = 1 }]
+ticks = 900
+discovery = "ropemaking"
+
+[[recipe]]
+id = "twist_rope_flax"
+name = "Ketenden halat bük"
+station = "ropewalk"
+inputs = [{ item = "flax", n = 3 }]
+outputs = [{ item = "rope", n = 2 }]
+ticks = 900
+discovery = "ropemaking"
+
+[[recipe]]
+id = "blow_glass"
+name = "Kumdan cam üfle"
+station = "glass_furnace"
+inputs = [{ item = "sand", n = 3 }, { item = "charcoal", n = 1 }]
+outputs = [{ item = "glass", n = 2 }]
+ticks = 1500
+discovery = "glassblowing"
+heat = 1200
+
+[[recipe]]
+id = "blow_bottle"
+name = "Şişe üfle"
+station = "glass_furnace"
+inputs = [{ item = "glass", n = 1 }]
+outputs = [{ item = "bottle", n = 2 }]
+ticks = 600
+discovery = "glassblowing"
+heat = 1100
+
+[[recipe]]
+id = "grind_lens"
+name = "Mercek taşla"
+station = "glass_furnace"
+inputs = [{ item = "glass", n = 1 }]
+outputs = [{ item = "lens", n = 1 }]
+ticks = 900
+discovery = "glassblowing"
+heat = 600
+
+[[recipe]]
+id = "blow_window_pane"
+name = "Pencere camı çek"
+station = "glass_furnace"
+inputs = [{ item = "glass", n = 2 }]
+outputs = [{ item = "window_pane", n = 1 }]
+ticks = 1200
+discovery = "glassblowing"
+heat = 1100
+
+[[recipe]]
+id = "make_paper"
+name = "Liften kâğıt çek"
+station = "paper_vat"
+inputs = [{ item = "fiber", n = 4 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "paper", n = 3 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "papermaking"
+
+[[recipe]]
+id = "make_paper_rags"
+name = "Paçavradan kâğıt çek"
+station = "paper_vat"
+inputs = [{ item = "cloth", n = 1 }, { item = "water_pot", n = 1 }]
+outputs = [{ item = "paper", n = 4 }, { item = "pot", n = 1 }]
+ticks = 1800
+discovery = "papermaking"
+
+[[recipe]]
+id = "print_book"
+name = "Kitap bas"
+station = "printing_press"
+inputs = [{ item = "paper", n = 4 }, { item = "charcoal", n = 1 }, { item = "plant_oil", n = 1 }, { item = "leather", n = 1 }]
+outputs = [{ item = "book", n = 1 }]
+ticks = 2400
+discovery = "printing"
+
+[[recipe]]
+id = "oil_flask"
+name = "Yağ şişesi doldur"
+inputs = [{ item = "bottle", n = 1 }, { item = "plant_oil", n = 2 }]
+outputs = [{ item = "oil_flask", n = 1 }]
+ticks = 0
+discovery = "oil_pressing"
+fine_bonus = 0
+
+[[recipe]]
+id = "gin_cotton"
+name = "Pamuğu çırçırla"
+station = "cotton_gin"
+inputs = [{ item = "cotton", n = 3 }]
+outputs = [{ item = "cotton_fiber", n = 2 }]
+ticks = 600
+discovery = "ginning"
+
+[[recipe]]
+id = "sow_cotton"
+name = "Pamuk ek"
+station = "field"
+inputs = [{ item = "cotton", n = 2 }]
+outputs = [{ item = "cotton", n = 6 }]
+ticks = 108000
+discovery = "farming"
+
+[[recipe]]
+id = "weave_cotton"
+name = "Pamuk doku"
+station = "loom"
+inputs = [{ item = "cotton_fiber", n = 3 }]
+outputs = [{ item = "cloth", n = 2 }]
+ticks = 900
+discovery = "ginning"
+
+[[recipe]]
+id = "spin_cotton"
+name = "Pamuk eğir"
+station = "spinning_wheel"
+inputs = [{ item = "cotton_fiber", n = 2 }]
+outputs = [{ item = "thread", n = 3 }]
+ticks = 600
+discovery = "ginning"
+
+[[recipe]]
+id = "jenny_fiber"
+name = "Lifi çok iğle eğir"
+station = "spinning_jenny"
+inputs = [{ item = "fiber", n = 8 }]
+outputs = [{ item = "thread", n = 6 }]
+ticks = 600
+discovery = "spinning"
+
+[[recipe]]
+id = "jenny_flax"
+name = "Keteni çok iğle eğir"
+station = "spinning_jenny"
+inputs = [{ item = "flax", n = 4 }]
+outputs = [{ item = "thread", n = 6 }]
+ticks = 600
+discovery = "spinning"
+
+[[recipe]]
+id = "jenny_cotton"
+name = "Pamuk lifini çok iğle eğir"
+station = "spinning_jenny"
+inputs = [{ item = "cotton_fiber", n = 6 }]
+outputs = [{ item = "thread", n = 8 }]
+ticks = 600
+discovery = "spinning"
+
+# keeping food: what is dried or smoked spoils far slower than what is raw or cooked
+[[perish]]
+item = "dried_berries"
+per_day = 15
+[[perish]]
+item = "jerky"
+per_day = 20
+[[perish]]
+item = "smoked_meat"
+per_day = 35
+[[perish]]
+item = "smoked_fish"
+per_day = 45
+[[perish]]
+item = "bulgur"
+per_day = 8
+
+# felt keeps rain off and warmth in; leather turns blows; oil on the handles saves the tools
+[[garment]]
+item = "felt_cloak"
+warmth = 30
+dry = 25
+burden = 20
+
+[[garment]]
+item = "leather_armor"
+warmth = 15
+bite = 250
+blow = 150
+burden = 80
+tire = 120
+fire = 120
+
+[[garment]]
+item = "oil_flask"
+tool_save = 30

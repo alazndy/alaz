@@ -26,7 +26,7 @@ fn ell(x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
 
 /// The colour of the cell at (x, y) of the picture (0..W-2B, 0..H-2B), or none outside the figure.
 fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
-    use alaz_render::{OUT_APRON, OUT_CLOAK, OUT_HELM, OUT_HOOD, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
+    use alaz_render::{OUT_APRON, OUT_CLOAK, OUT_FELT, OUT_HELM, OUT_HOOD, OUT_LEATHER, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
     let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
     let ape = stage <= 2;
     let stoop = (5 - stage.min(5)) as f32 / 5.0;
@@ -131,6 +131,11 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
             let pauldron = (fx - hx).abs() > 6.0 * sh && fy < 21.5;
             return shade(if pauldron { [bronze[0] * 0.8, bronze[1] * 0.8, bronze[2] * 0.8] } else { bronze });
         }
+        if o & OUT_LEATHER != 0 {
+            let pauldron = (fx - hx).abs() > 6.0 * sh && fy < 21.5;
+            let leather = [0.52, 0.34, 0.19];
+            return shade(if pauldron { leather.map(|c| c * 0.8) } else { leather });
+        }
         if o & OUT_APRON != 0 {
             let strap = (fx - hx).abs() > 2.2 && (fx - hx).abs() < 3.4 && fy < 21.0;
             if strap || ((fx - hx).abs() < 3.4 && fy > 20.5) {
@@ -143,6 +148,9 @@ fn figure(lk: &Look, stage: u8, o: u16, x: i32, y: i32) -> Option<Color32> {
         }
         if o & OUT_CLOAK != 0 {
             return shade(if fy < 19.2 { fluff } else { hide });
+        }
+        if o & OUT_FELT != 0 {
+            return shade(if fy < 19.2 { [0.62, 0.64, 0.66] } else { [0.50, 0.54, 0.60] });
         }
         if o & OUT_TUNIC != 0 {
             let collar = (fx - hx).abs() < 2.6 && fy < 19.5;

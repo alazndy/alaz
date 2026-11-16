@@ -354,6 +354,57 @@ mod mesh_hashes {
         ("building RollingLine false false", 0x2b4d39b3ba430036),
         ("building RollingLine true false", 0xae34ef605223c823),
         ("building RollingLine true true", 0xec8f6cb6f98b5a73),
+        ("building PotterWheel false false", 0x0e470ae4627835b4),
+        ("building PotterWheel true false", 0x71853377b57474c4),
+        ("building PotterWheel true true", 0x8463efc5d602a7d8),
+        ("building OilPress false false", 0x845516f0bbab5832),
+        ("building OilPress true false", 0x1bbb197983e3d6eb),
+        ("building OilPress true true", 0xe7f7b4c4f325b61e),
+        ("building Tannery false false", 0xa3534ba2155593f9),
+        ("building Tannery true false", 0x8974c66e02bd344d),
+        ("building Tannery true true", 0x6647fd0edcd456d1),
+        ("building DryingRack false false", 0xeff2ea5be79d5151),
+        ("building DryingRack true false", 0x370d56b110ccfc81),
+        ("building DryingRack true true", 0x3f5232901f38b5a1),
+        ("building Smokehouse false false", 0xa5bf228279df3452),
+        ("building Smokehouse true false", 0x6564e730137d0f3c),
+        ("building Smokehouse true true", 0x4dac8cfc80dd9a8a),
+        ("building Well false false", 0x01ac745b95250135),
+        ("building Well true false", 0x3a66d1e85f3a2f85),
+        ("building Well true true", 0xdaee8f160bef247d),
+        ("building StoneMortar false false", 0xf97bcd32b80125f9),
+        ("building StoneMortar true false", 0xf8034424dd594538),
+        ("building StoneMortar true true", 0xe816fb2941fc90ec),
+        ("building WaterMill false false", 0x79cb47bbb53d3a37),
+        ("building WaterMill true false", 0xd2aa7c29dc212289),
+        ("building WaterMill true true", 0x27f9f3909a985271),
+        ("building ForgeHammer false false", 0x972081d85f654504),
+        ("building ForgeHammer true false", 0x9fea3fe21f9c5528),
+        ("building ForgeHammer true true", 0x9698670cf99928c0),
+        ("building FeltMallet false false", 0x4b3f4b3afc13498e),
+        ("building FeltMallet true false", 0xf65affa74bd0c662),
+        ("building FeltMallet true true", 0x0b79b63518d45469),
+        ("building Ropewalk false false", 0x4c731f1a3376409d),
+        ("building Ropewalk true false", 0x7680c507ec588b33),
+        ("building Ropewalk true true", 0xdc4549210b668a98),
+        ("building Crane false false", 0x7cf45b3657036c1c),
+        ("building Crane true false", 0x1f5207305d2463b2),
+        ("building Crane true true", 0x67c47790f7660a60),
+        ("building GlassFurnace false false", 0x83750d9f32eac5c5),
+        ("building GlassFurnace true false", 0xa1185644f7aabf83),
+        ("building GlassFurnace true true", 0x49ecc8b01778aeb9),
+        ("building PaperVat false false", 0xd50517552fea2bb7),
+        ("building PaperVat true false", 0xf39fe021b3bc5cab),
+        ("building PaperVat true true", 0x0a871aa427078df3),
+        ("building PrintingPress false false", 0xb01d2e6d458ff83c),
+        ("building PrintingPress true false", 0x5189ade3da6d544e),
+        ("building PrintingPress true true", 0xdb339526ff954210),
+        ("building CottonGin false false", 0x564628b3fa40a95c),
+        ("building CottonGin true false", 0x7247b1feffa3d6ac),
+        ("building CottonGin true true", 0x90b7005b0b9a504f),
+        ("building SpinningJenny false false", 0xefecb232e7cbf406),
+        ("building SpinningJenny true false", 0x7c262dd740a6c082),
+        ("building SpinningJenny true true", 0x4a3d581b7f2ddcb2),
         ("campfire 0", 0xb81451d68c550836),
         ("campfire 0.4", 0xb3ff0ed12254b8e3),
         ("campfire 1", 0x39408f657b7c3591),
@@ -422,6 +473,17 @@ mod mesh_hashes {
         assert_eq!(got.len(), EXPECTED.len());
         let bad: Vec<&str> = got.iter().zip(EXPECTED).filter(|(g, e)| g.0 != e.0 || g.1 != e.1).map(|(g, _)| g.0.as_str()).collect();
         assert!(bad.is_empty(), "meshes changed: {bad:?}");
+    }
+
+    /// Vertices of every building at work (`cargo test --release -p alaz-render machine_vertex_counts -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn machine_vertex_counts() {
+        for kind in BuildingKind::ALL {
+            let mut o = fresh(false);
+            push_building(&mut o, kind, 12.5, 7.25, true, 1234, None);
+            println!("{kind:?}: {} verts", o.len());
+        }
     }
 
     /// Cost of building a crowd's bodies, full against simple build (`cargo test --release -p alaz-render crowd_cost -- --ignored --nocapture`).

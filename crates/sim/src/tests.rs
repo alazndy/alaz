@@ -3016,7 +3016,8 @@ fn the_neolithic_chain_runs_from_wild_grass_to_bread() {
     // grass where the wild crop is grain (dry warm land grows lentils, wet land flax)
     let grain_land = |n: &Node| {
         let (warm, wet) = crate::map::climate(w.seed, n.tx, n.ty);
-        !(wet > 550 || (warm > 580 && wet < 480))
+        // (and not a cotton tuft: some of the tall grass is cotton)
+        !(wet > 550 || (warm > 580 && wet < 480) || crate::world::cotton_tuft(w.seed, n.tx, n.ty, warm, wet))
     };
     let i = w.nodes.iter().position(|n| n.kind == NodeKind::FiberPlant && n.amount == 4 && grain_land(n)).expect("tall grass");
     let (nx, ny) = w.nodes[i].center_mm();
@@ -4562,7 +4563,7 @@ fn sweep_every_building_and_recipe() {
         for k in &def.needs {
             w.agents[0].inventory.counts[*k as usize] += 1;
         }
-        if def.kind == BuildingKind::WaterWheel {
+        if matches!(def.kind, BuildingKind::WaterWheel | BuildingKind::WaterMill) {
             // a wheel goes in a stream: stand on the shore
             let mut sc = crate::debug::Script::new("tp coast");
             let c = sc.tick(&mut w, me);
@@ -4608,7 +4609,7 @@ fn sweep_every_building_and_recipe() {
             if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer) {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Bellows, ax + 1_500, ay + 2_000));
             }
-            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill) || st.needs_power() {
+            if matches!(st, BuildingKind::Bloomery | BuildingKind::BlastFurnace | BuildingKind::Cupola | BuildingKind::Bessemer | BuildingKind::TripHammer | BuildingKind::RollingMill | BuildingKind::HandMill | BuildingKind::StoneMortar) || st.needs_power() {
                 w.buildings.push(crate::buildings::Building::new(BuildingKind::Windmill, ax + 1_500, ay + 6_000));
             }
             // a steam hammer wants steam: a boiler under steam beside it
@@ -5543,4 +5544,618 @@ fn new_stations_take_deposits_and_run_on_auto_like_the_old_ones() {
         w.step(&[]);
     }
     assert!(w.agents[bot.0 as usize].inventory.get(I::Thread) >= 2, "the worker brought thread out of the wheel: {}", w.agents[bot.0 as usize].inventory.get(I::Thread));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Life and craft, wave 2: pottery, oil, leather, food that keeps, wells, mills, felt, rope, cranes, glass, paper, books,
+// cotton.
+// ---------------------------------------------------------------------------------------------------------------
+
+#[test]
+fn life_and_craft_stations_make_their_goods() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    type Case = (BuildingKind, &'static str, Vec<(ItemKind, u16)>, Vec<(ItemKind, u16)>, u64);
+    let cases: Vec<Case> = vec![
+        (BuildingKind::PotterWheel, "wheel_pot", vec![(I::Clay, 3)], vec![(I::RawPot, 2)], 1_000),
+        (BuildingKind::PotterWheel, "wheel_large_pot", vec![(I::Clay, 8)], vec![(I::RawLargePot, 2)], 1_500),
+        (BuildingKind::PotterWheel, "wheel_oil_lamp", vec![(I::Pot, 1), (I::Fiber, 1)], vec![(I::OilLamp, 1)], 800),
+        (BuildingKind::OilPress, "press_linseed", vec![(I::Linseed, 3)], vec![(I::PlantOil, 2)], 1_500),
+        (BuildingKind::OilPress, "press_seed", vec![(I::Seed, 6)], vec![(I::PlantOil, 1)], 2_000),
+        (BuildingKind::Tannery, "tan_hide", vec![(I::Hide, 2), (I::Wood, 2), (I::WaterPot, 1)], vec![(I::Leather, 3), (I::Pot, 1)], 3_000),
+        (BuildingKind::Tannery, "cut_belt", vec![(I::Leather, 2), (I::Fiber, 1)], vec![(I::Belt, 1)], 1_000),
+        (BuildingKind::DryingRack, "dry_berries", vec![(I::Berries, 4)], vec![(I::DriedBerries, 3)], 2_500),
+        (BuildingKind::DryingRack, "dry_meat", vec![(I::RawMeat, 2)], vec![(I::Jerky, 2)], 3_000),
+        (BuildingKind::DryingRack, "dry_fish", vec![(I::RawFish, 2)], vec![(I::Jerky, 2)], 3_000),
+        (BuildingKind::Smokehouse, "smoke_meat", vec![(I::RawMeat, 3), (I::Wood, 1)], vec![(I::SmokedMeat, 3)], 4_000),
+        (BuildingKind::Smokehouse, "smoke_cooked_meat", vec![(I::CookedMeat, 3), (I::Wood, 1)], vec![(I::SmokedMeat, 3)], 4_000),
+        (BuildingKind::Smokehouse, "smoke_fish", vec![(I::RawFish, 3), (I::Wood, 1)], vec![(I::SmokedFish, 3)], 4_000),
+        (BuildingKind::Well, "draw_water", vec![(I::Pot, 1)], vec![(I::WaterPot, 1)], 400),
+        (BuildingKind::Well, "draw_water_batch", vec![(I::Pot, 4)], vec![(I::WaterPot, 4)], 800),
+        (BuildingKind::StoneMortar, "pound_bulgur", vec![(I::Grain, 4)], vec![(I::Bulgur, 4)], 1_500),
+        (BuildingKind::WaterMill, "water_mill_flour", vec![(I::Grain, 6)], vec![(I::Flour, 6)], 700),
+        (BuildingKind::FeltMallet, "beat_felt", vec![(I::Fiber, 6), (I::WaterPot, 1)], vec![(I::Felt, 2), (I::Pot, 1)], 2_000),
+        (BuildingKind::Ropewalk, "twist_rope", vec![(I::Fiber, 4)], vec![(I::Rope, 1)], 1_500),
+        (BuildingKind::Ropewalk, "twist_rope_flax", vec![(I::Flax, 3)], vec![(I::Rope, 2)], 1_500),
+        (BuildingKind::GlassFurnace, "blow_glass", vec![(I::Sand, 3), (I::Charcoal, 1)], vec![(I::Glass, 2)], 8_000),
+        (BuildingKind::GlassFurnace, "blow_bottle", vec![(I::Glass, 1)], vec![(I::Bottle, 2)], 8_000),
+        (BuildingKind::GlassFurnace, "grind_lens", vec![(I::Glass, 1)], vec![(I::Lens, 1)], 8_000),
+        (BuildingKind::GlassFurnace, "blow_window_pane", vec![(I::Glass, 2)], vec![(I::WindowPane, 1)], 8_000),
+        (BuildingKind::PaperVat, "make_paper", vec![(I::Fiber, 4), (I::WaterPot, 1)], vec![(I::Paper, 3), (I::Pot, 1)], 3_000),
+        (BuildingKind::PaperVat, "make_paper_rags", vec![(I::Cloth, 1), (I::WaterPot, 1)], vec![(I::Paper, 4), (I::Pot, 1)], 3_000),
+        (BuildingKind::PrintingPress, "print_book", vec![(I::Paper, 4), (I::Charcoal, 1), (I::PlantOil, 1), (I::Leather, 1)], vec![(I::Book, 1)], 4_000),
+        (BuildingKind::Loom, "weave_cotton", vec![(I::CottonFiber, 3)], vec![(I::Cloth, 2)], 2_000),
+        (BuildingKind::SpinningWheel, "spin_cotton", vec![(I::CottonFiber, 2)], vec![(I::Thread, 3)], 2_000),
+    ];
+    for (kind, id, inputs, outputs, max) in cases {
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        assert!(run_job(&mut w, a, st, id, &inputs, max), "{kind:?} {id} did not finish");
+        for (k, n) in outputs {
+            assert_eq!(out_of(&w, st, k), n, "{kind:?} {id}: {k:?}");
+        }
+    }
+}
+
+#[test]
+fn the_smokehouse_and_the_glass_furnace_stay_cold_without_fire() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    // a smokehouse climbs to its ceiling while it works and no further
+    let mut w = base.clone();
+    let st = push_building(&mut w, BuildingKind::Smokehouse, bx + 4_000, by);
+    assert!(run_job(&mut w, a, st, "smoke_fish", &[(I::RawFish, 3), (I::Wood, 1)], 4_000));
+    let temp = w.buildings[st as usize].temp;
+    assert!(temp >= 20 && temp <= rules().building(BuildingKind::Smokehouse).heat_max, "{temp}");
+    // glass needs real heat: far above what a smokehouse ever reaches, and the lens less
+    let r = |id: &str| rules().recipes[recipe(id).0 as usize].heat;
+    assert!(r("blow_glass") >= 1_100 && r("blow_window_pane") >= 1_100 && r("grind_lens") < r("blow_bottle"));
+    assert!(r("smoke_meat") > 0 && r("smoke_meat") < 100, "smoke is warm, not hot");
+    assert!(rules().building(BuildingKind::GlassFurnace).heat_max > r("blow_glass") as i16);
+}
+
+#[test]
+fn drying_goes_at_half_speed_in_the_rain_and_smoked_food_keeps() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    let progress = |w: &mut World, st: u32| -> u32 {
+        let ticks = rules().recipes[recipe("dry_meat").0 as usize].ticks;
+        w.agents[0].x = w.buildings[st as usize].x + 1_300;
+        w.agents[0].y = w.buildings[st as usize].y;
+        give(w, I::RawMeat, 2);
+        w.step(&[cmd(a, CommandKind::StartJob { building: st, recipe: recipe("dry_meat") })]);
+        for _ in 0..600 {
+            topped_up(w);
+            w.step(&[]);
+        }
+        ticks - w.buildings[st as usize].job.expect("still drying").remaining
+    };
+    let mut clear = base.clone();
+    let rack = push_building(&mut clear, BuildingKind::DryingRack, bx + 4_000, by);
+    assert!(matches!(clear.weather(), crate::time::Weather::Clear));
+    let dry = progress(&mut clear, rack);
+    // find a rainy spell and try again
+    let mut wet = base.clone();
+    let rack = push_building(&mut wet, BuildingKind::DryingRack, bx + 4_000, by);
+    let days = wet.settings.season_days as u64;
+    let mut t = crate::time::TICKS_PER_DAY * 2;
+    while crate::time::weather(wet.seed, t, days) == crate::time::Weather::Clear || crate::time::weather(wet.seed, t + 900, days) == crate::time::Weather::Clear {
+        t += crate::time::TICKS_PER_DAY / 6;
+        assert!(t < crate::time::TICKS_PER_DAY * days * 6, "no rain in sight");
+    }
+    wet.tick = t;
+    let damp = progress(&mut wet, rack);
+    assert!((600..=601).contains(&dry), "{dry}");
+    assert!((290..=310).contains(&damp), "half speed in the rain: {damp}");
+    // smoked and dried food spoils far slower than raw or cooked: one hour's loss from a thousand of each
+    let mut w = base.clone();
+    for k in [I::RawMeat, I::CookedMeat, I::Jerky, I::SmokedMeat, I::SmokedFish, I::DriedBerries, I::Berries, I::Bulgur, I::Grain] {
+        w.agents[0].inventory.counts[k as usize] = 1_000;
+    }
+    w.tick = crate::time::TICKS_PER_DAY / 24 * 5;
+    w.step(&[]);
+    let lost = |k: I| 1_000 - count(&w, 0, k);
+    assert!(lost(I::RawMeat) > 10 * lost(I::SmokedMeat).max(1), "raw {} vs smoked {}", lost(I::RawMeat), lost(I::SmokedMeat));
+    assert!(lost(I::CookedMeat) > 3 * lost(I::SmokedMeat).max(1));
+    assert!(lost(I::Berries) > 10 * lost(I::DriedBerries).max(1));
+    assert!(lost(I::Jerky) <= 3 && lost(I::SmokedFish) <= 4 && lost(I::Bulgur) <= 2);
+}
+
+#[test]
+fn new_foods_feed_and_smoked_meat_settles_the_stomach() {
+    use ItemKind as I;
+    for k in [I::DriedBerries, I::Jerky, I::SmokedMeat, I::SmokedFish, I::Bulgur] {
+        let (mut w, a) = with_agent(3);
+        w.agents[0].hunger = 2_000;
+        w.agents[0].sick = 4_000;
+        give(&mut w, k, 1);
+        w.step(&[cmd(a, CommandKind::Eat { item: k })]);
+        assert!(w.agents[0].hunger > 3_500, "{k:?}: {}", w.agents[0].hunger);
+        assert_eq!(count(&w, 0, k), 0);
+        if matches!(k, I::SmokedMeat | I::SmokedFish) {
+            assert!(w.agents[0].sick < 4_000, "{k:?} is cured meat");
+        }
+    }
+    // bulgur fills like bread and counts as grain
+    let (mut w, a) = with_agent(3);
+    w.agents[0].nutrition = [0; 3];
+    w.agents[0].hunger = 1_000;
+    give(&mut w, I::Bulgur, 1);
+    w.step(&[cmd(a, CommandKind::Eat { item: I::Bulgur })]);
+    assert!(w.agents[0].nutrition[0] > 0 && w.agents[0].nutrition[1] == 0);
+}
+
+#[test]
+fn wells_give_water_anywhere_but_not_in_rock() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    // far from any water, a pot goes down empty and comes up full
+    let mut w = base.clone();
+    let well = push_building(&mut w, BuildingKind::Well, bx + 4_000, by);
+    assert!(run_job(&mut w, a, well, "draw_water", &[(I::Pot, 1)], 400));
+    w.step(&[cmd(a, CommandKind::Collect { building: well, item: None })]);
+    assert_eq!(count(&w, 0, I::WaterPot), 1);
+    assert_eq!(count(&w, 0, I::Pot), 0);
+    // not into bare rock
+    let mut found = false;
+    let rocks = (0..256).flat_map(|y| (0..256).map(move |x| (x, y))).filter(|&(x, y)| (-1..=1).all(|d| w.map.terrain(x + d, y) == Some(Terrain::Rock) && w.map.terrain(x, y + d) == Some(Terrain::Rock)) && w.node_at(x, y).is_none());
+    for (tx, ty) in rocks.take(200) {
+        let (x, y) = (tx as i64 * 1000 + 500, ty as i64 * 1000 + 500);
+        // a small building stands there happily; the well alone is refused
+        if w.can_place(BuildingKind::Pole, x, y).is_ok() {
+            assert_eq!(w.can_place(BuildingKind::Well, x, y), Err(crate::world::Reject::Blocked));
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "a bit of open rock on this map");
+}
+
+#[test]
+fn the_water_mill_wants_a_stream_and_grinds_four_times_the_hand_mill() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    // four times the flour in the same time
+    let (hand, water) = (&rules().recipes[recipe("mill_flour").0 as usize], &rules().recipes[recipe("water_mill_flour").0 as usize]);
+    let rate = |r: &crate::rules::RecipeDef| r.outputs[0].n as f64 / r.ticks as f64;
+    assert!((rate(water) / rate(hand) - 4.0).abs() < 0.01, "{} vs {}", rate(water), rate(hand));
+    // in play: the hand mill with one person at it needs the full 600 ticks, the water mill needs 300 and no one
+    let mut w = base.clone();
+    let hm = push_building(&mut w, BuildingKind::HandMill, bx - 4_000, by);
+    let wm = push_building(&mut w, BuildingKind::WaterMill, bx + 4_000, by);
+    assert!(run_job(&mut w, a, hm, "mill_flour", &[(I::Grain, 3)], 700));
+    assert_eq!(out_of(&w, hm, I::Flour), 3);
+    w.buildings[wm as usize].input[I::Grain as usize] = 6;
+    w.buildings[wm as usize].job = Some(crate::buildings::Job { recipe: recipe("water_mill_flour").0, remaining: 300 });
+    for _ in 0..310 {
+        topped_up(&mut w);
+        w.agents[0].x = bx + 40_000;
+        w.agents[0].y = by;
+        w.step(&[]);
+    }
+    assert!(w.buildings[wm as usize].job.is_none(), "nobody stood at it");
+    assert_eq!(out_of(&w, wm, I::Flour), 6);
+    // it only stands where water is within three tiles
+    let near_water = (3..253).flat_map(|y| (3..253).map(move |x| (x, y))).find(|&(x, y)| base.map.water_within(x, y, 3) && base.map.terrain(x, y) == Some(Terrain::Grass) && base.can_place(BuildingKind::WaterMill, x as i64 * 1000 + 500, y as i64 * 1000 + 500).is_ok());
+    assert!(near_water.is_some(), "a mill site by the water");
+    let dry = (3..253).flat_map(|y| (3..253).map(move |x| (x, y))).find(|&(x, y)| !base.map.water_within(x, y, 4) && base.map.terrain(x, y) == Some(Terrain::Grass) && base.node_at(x, y).is_none());
+    let (dx, dy) = dry.expect("dry ground");
+    assert_eq!(base.can_place(BuildingKind::WaterMill, dx as i64 * 1000 + 500, dy as i64 * 1000 + 500), Err(crate::world::Reject::NeedsWater));
+}
+
+#[test]
+fn the_forge_hammer_the_gin_and_the_jenny_stand_still_without_power() {
+    use ItemKind as I;
+    let (base, a, bx, by) = industry_world();
+    type Case = (BuildingKind, &'static str, Vec<(ItemKind, u16)>, Vec<(ItemKind, u16)>);
+    let cases: Vec<Case> = vec![
+        (BuildingKind::ForgeHammer, "forge_sheet", vec![(I::IronBloom, 2)], vec![(I::Sheet, 2)]),
+        (BuildingKind::ForgeHammer, "forge_wire", vec![(I::CopperIngot, 1)], vec![(I::CopperWire, 2)]),
+        (BuildingKind::CottonGin, "gin_cotton", vec![(I::Cotton, 3)], vec![(I::CottonFiber, 2)]),
+        (BuildingKind::SpinningJenny, "jenny_fiber", vec![(I::Fiber, 8)], vec![(I::Thread, 6)]),
+        (BuildingKind::SpinningJenny, "jenny_flax", vec![(I::Flax, 4)], vec![(I::Thread, 6)]),
+        (BuildingKind::SpinningJenny, "jenny_cotton", vec![(I::CottonFiber, 6)], vec![(I::Thread, 8)]),
+    ];
+    for (kind, id, inputs, outputs) in cases {
+        assert!(kind.needs_power());
+        let ticks = rules().recipes[recipe(id).0 as usize].ticks;
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        assert!(!w.requirement_met(st as usize), "{kind:?}");
+        assert!(!run_job(&mut w, a, st, id, &inputs, ticks as u64 + 600), "{kind:?} {id} ran without power");
+        assert_eq!(w.buildings[st as usize].job.map(|j| j.remaining), Some(ticks), "{kind:?} {id}");
+        let mut w = base.clone();
+        let st = push_building(&mut w, kind, bx + 4_000, by);
+        push_building(&mut w, BuildingKind::Windmill, bx + 9_000, by);
+        assert!(w.requirement_met(st as usize));
+        assert!(run_job(&mut w, a, st, id, &inputs, ticks as u64 + 600), "{kind:?} {id} under power");
+        for (k, n) in outputs {
+            assert_eq!(out_of(&w, st, k), n, "{kind:?} {id}: {k:?}");
+        }
+    }
+    // the jenny draws three times the thread of the wheel in the same time
+    let (wheel, jenny) = (&rules().recipes[recipe("spin_fiber").0 as usize], &rules().recipes[recipe("jenny_fiber").0 as usize]);
+    assert!(jenny.outputs[0].n as u32 * wheel.ticks >= 3 * wheel.outputs[0].n as u32 * jenny.ticks);
+    // the old way to wire and sheet (rolling mill, press) is still there
+    let r = rules();
+    assert!(r.recipes.iter().any(|d| d.id == "copper_wire" && d.station == Some(BuildingKind::RollingMill) && d.discovery != Discovery::Retired));
+    assert!(r.recipes.iter().any(|d| d.id == "press_sheet_iron" && d.station == Some(BuildingKind::Press)));
+}
+
+#[test]
+fn a_crane_makes_big_buildings_cheaper_within_reach() {
+    let (base, a, ..) = industry_world();
+    let windmill = rules().building(BuildingKind::Windmill);
+    assert!(windmill.heavy());
+    let pole = rules().building(BuildingKind::Pole);
+    assert!(!pole.heavy() && !rules().building(BuildingKind::Crane).heavy());
+    let try_build = |w: &mut World, kind: BuildingKind, x: i64, y: i64, items: &[(ItemKind, u16)]| -> Option<[u16; ItemKind::COUNT]> {
+        w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+        for &(k, n) in items {
+            w.agents[0].inventory.counts[k as usize] = n;
+        }
+        w.agents[0].x = x;
+        w.agents[0].y = y + 2_000;
+        let before = w.buildings.len();
+        w.step(&[cmd(a, CommandKind::Build { kind, x, y })]);
+        (w.buildings.len() > before).then_some(w.agents[0].inventory.counts)
+    };
+    let eased: Vec<(ItemKind, u16)> = windmill.cost.iter().map(|c| (c.item, (c.n * 3).div_ceil(4))).collect();
+    assert!(eased.iter().zip(&windmill.cost).any(|(e, c)| e.1 < c.n));
+    let (x, y) = spot_for(&base, BuildingKind::Windmill, &[]);
+    let mut w = base.clone();
+    let full: Vec<(ItemKind, u16)> = windmill.cost.iter().map(|c| (c.item, c.n)).collect();
+    assert!(try_build(&mut w, BuildingKind::Windmill, x, y, &eased).is_none(), "no crane, no discount");
+    assert!(try_build(&mut base.clone(), BuildingKind::Windmill, x, y, &full).is_some(), "the full price builds it there");
+    // a crane 6 m away: built from the eased list, all of it spent
+    push_building(&mut w, BuildingKind::Crane, x - 6_000, y);
+    assert!(w.crane_near(x, y));
+    let left = try_build(&mut w, BuildingKind::Windmill, x, y, &eased).expect("built under the crane");
+    assert!(left.iter().all(|&n| n == 0), "the eased price is spent in full");
+    // out of reach (11.5 m): the discount is gone
+    let mut far = base.clone();
+    push_building(&mut far, BuildingKind::Crane, x - 11_500, y);
+    assert!(!far.crane_near(x, y));
+    assert!(try_build(&mut far, BuildingKind::Windmill, x, y, &eased).is_none());
+    // light buildings pay full price beside a crane
+    let mut w = base.clone();
+    push_building(&mut w, BuildingKind::Crane, x - 6_000, y);
+    let pole_cost: Vec<(ItemKind, u16)> = pole.cost.iter().map(|c| (c.item, c.n)).collect();
+    let left = try_build(&mut w, BuildingKind::Pole, x, y, &pole_cost).expect("pole");
+    assert!(left.iter().all(|&n| n == 0));
+    // and with the crane near the alternative way is eased too
+    let alt = rules().building(BuildingKind::Windmill).alt_cost.iter().map(|c| (c.item, (c.n * 3).div_ceil(4))).collect::<Vec<_>>();
+    let mut w = base.clone();
+    push_building(&mut w, BuildingKind::Crane, x - 6_000, y);
+    assert!(try_build(&mut w, BuildingKind::Windmill, x, y, &alt).is_some());
+}
+
+#[test]
+fn books_and_lenses_steady_the_hand_and_the_tribe_learns_faster() {
+    use ItemKind as I;
+    let view_half = |extra: &[(ItemKind, u16)]| -> u32 {
+        let (mut w, a) = with_agent(3);
+        learn_all(&mut w);
+        give(&mut w, I::Leather, 4);
+        w.agents[0].inventory.counts[I::Fiber as usize] = 2;
+        for &(k, n) in extra {
+            w.agents[0].inventory.counts[k as usize] = n;
+        }
+        w.step(&[cmd(a, CommandKind::Craft { recipe: recipe("leather_armor") })]);
+        w.craft_view(a).expect("playing").half
+    };
+    let plain = view_half(&[]);
+    let booked = view_half(&[(I::Book, 1)]);
+    let lensed = view_half(&[(I::Lens, 1)]);
+    let both = view_half(&[(I::Book, 1), (I::Lens, 1)]);
+    assert!(booked > plain && lensed > plain && both > booked.max(lensed), "{plain} {booked} {lensed} {both}");
+    // a printed book speeds practice (mastery) for everyone and clears the tribe's view of the world
+    let (mut w, _) = with_agent(3);
+    let r = recipe("leather_armor").0 as usize;
+    w.produced[I::LeatherArmor as usize] = 3;
+    assert_eq!(w.mastery(r), 0);
+    let p0 = w.perception_permille();
+    w.produced[I::Book as usize] = 1;
+    assert_eq!(w.mastery(r), 1, "three made is a step of practice once a book is printed");
+    assert!(w.perception_permille() > p0);
+    w.produced[I::Book as usize] = 9;
+    let p9 = w.perception_permille();
+    w.produced[I::Book as usize] = 4;
+    assert_eq!(p9, w.perception_permille(), "four books are all that count");
+}
+
+#[test]
+fn an_oil_lamp_lights_a_cave_twice_as_long_and_oil_saves_tools() {
+    use crate::world::{Reject, Task, CAVE_TORCH_TICKS};
+    let mut w = World::new(3);
+    let id = w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
+    let (ni, n) = w.nodes.iter().enumerate().find(|(_, n)| n.kind == NodeKind::CaveMouth).map(|(i, n)| (i, n.clone())).expect("a cave");
+    let node = NodeId(ni as u32);
+    let a = w.agents.iter_mut().find(|a| a.id == id).unwrap();
+    a.x = n.tx as i64 * 1000 + 500;
+    a.y = n.ty as i64 * 1000 + 1500;
+    // a lamp with no oil is no light
+    give(&mut w, ItemKind::OilLamp, 1);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    assert!(w.events.iter().any(|e| matches!(e, crate::Event::Rejected(_, Reject::NoLight))));
+    // with a spoonful of oil: in, the oil used, the lamp kept, light for twice a torch
+    w.agents[0].inventory.counts[ItemKind::PlantOil as usize] = 2;
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    let a = &w.agents[0];
+    match a.task {
+        Task::Cave { light, .. } => assert!(light > CAVE_TORCH_TICKS * 2 - 5, "{light}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!((a.inventory.get(ItemKind::PlantOil), a.inventory.get(ItemKind::OilLamp)), (1, 1));
+    // oil on the handles: tools wear less (a flask is carried, not used up)
+    let wear1 = |flask: bool, skew: u64| {
+        let (mut w, a) = with_agent(1);
+        w.tick += skew;
+        learn_all(&mut w);
+        w.settings.difficulty = crate::world::Difficulty::Realistic;
+        give(&mut w, ItemKind::Hammer, 1);
+        if flask {
+            w.agents[0].inventory.counts[ItemKind::OilFlask as usize] = 1;
+        }
+        let i = w.nodes.iter().position(|n| n.kind == NodeKind::StoneOutcrop && n.amount == 5).expect("stone");
+        w.set_node_amount(i, 3);
+        let (nx, ny) = w.nodes[i].center_mm();
+        w.agents[0].x = nx;
+        w.agents[0].y = ny + 900;
+        w.step(&[cmd(a, CommandKind::Gather { node: NodeId(i as u32) })]);
+        for _ in 0..90 * 20 {
+            w.step(&[]);
+        }
+        (w.agents[0].wear_of(ItemKind::Hammer), w.agents[0].inventory.get(ItemKind::OilFlask))
+    };
+    let wear = |flask: bool| (0..8).map(|k| wear1(flask, k * 37)).fold((0u16, 0u16), |(a, b), (x, y)| (a + x, b + y));
+    let (plain, oiled) = (wear(false), wear(true));
+    assert!(plain.0 >= 2 && oiled.0 < plain.0, "{oiled:?} vs {plain:?}");
+    assert_eq!(oiled.1, 8, "the flask is kept");
+}
+
+#[test]
+fn felt_and_leather_dress_the_wearer() {
+    use ItemKind as I;
+    assert!(I::FeltCloak.is_tool() && I::LeatherArmor.is_tool() && I::OilFlask.is_tool() && I::Book.is_tool() && I::Lens.is_tool() && I::OilLamp.is_tool());
+    let felt = crate::rules::Gear::of(|k| k == I::FeltCloak);
+    let hide = crate::rules::Gear::of(|k| k == I::HideCloak);
+    assert!(felt.warmth > hide.warmth && felt.dry > hide.dry, "felt is warmer and sheds more rain than hide: {felt:?} vs {hide:?}");
+    let armor = crate::rules::Gear::of(|k| k == I::LeatherArmor);
+    assert!(armor.bite > 0 && armor.blow > 0 && armor.burden > 0);
+    let flask = crate::rules::Gear::of(|k| k == I::OilFlask);
+    assert!(flask.tool_save > 0 && flask.warmth == 0);
+    let all = crate::rules::Gear::of(|k| matches!(k, I::FeltCloak | I::LeatherArmor));
+    assert_eq!(all.warmth, felt.warmth + armor.warmth);
+    // sewn by hand from what the felt mallet and the tannery give
+    for id in ["felt_cloak", "leather_armor"] {
+        let d = &rules().recipes[recipe(id).0 as usize];
+        assert!(d.station.is_none() && !d.steps.is_empty());
+    }
+}
+
+#[test]
+fn leather_and_other_new_materials_pay_for_buildings_the_old_ones_still_do() {
+    let (mut w, a, ..) = industry_world();
+    w.settings.difficulty = Difficulty::Forgiving;
+    let build = |w: &mut World, kind: BuildingKind| -> bool {
+        let before = w.buildings.len();
+        let (x, y) = spot_for(w, kind, &w.buildings.iter().map(|b| (b.x, b.y)).collect::<Vec<_>>());
+        w.agents[0].x = x;
+        w.agents[0].y = y + 1_500;
+        w.step(&[cmd(a, CommandKind::Build { kind, x, y })]);
+        w.buildings.len() > before
+    };
+    for kind in [BuildingKind::Bellows, BuildingKind::Shelter, BuildingKind::PotterWheel, BuildingKind::PowerLoom, BuildingKind::SpinningJenny] {
+        let def = rules().building(kind);
+        assert!(!def.alt_cost.is_empty(), "{kind:?}");
+        // the old cost
+        w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+        for c in &def.cost {
+            give(&mut w, c.item, c.n);
+        }
+        assert!(build(&mut w, kind), "{kind:?} by the old cost");
+        assert_eq!(w.agents[0].inventory.total(), 0);
+        // the other way
+        w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+        for c in &def.alt_cost {
+            give(&mut w, c.item, c.n);
+        }
+        assert!(build(&mut w, kind), "{kind:?} by the other cost");
+        assert_eq!(w.agents[0].inventory.total(), 0, "{kind:?}");
+    }
+    assert!(rules().building(BuildingKind::Bellows).alt_cost.iter().any(|c| c.item == ItemKind::Leather));
+    assert!(rules().building(BuildingKind::Shelter).alt_cost.iter().any(|c| c.item == ItemKind::WindowPane));
+}
+
+#[test]
+fn new_discoveries_open_from_what_the_tribe_holds() {
+    use ItemKind as I;
+    let fresh = || {
+        let (mut w, _) = with_agent(5);
+        w.forget_everything();
+        w.wild.retain(|x| x.species != WildSpecies::Wolf);
+        w
+    };
+    let opens = |w: &mut World, d: Discovery| {
+        w.step(&[]);
+        w.knows(d)
+    };
+    // (what is known, what is in hand, what opens)
+    type Case = (Vec<Discovery>, Vec<(ItemKind, u16)>, Discovery);
+    let cases: Vec<Case> = vec![
+        (vec![Discovery::Pottery], vec![(I::Plank, 2)], Discovery::Throwing),
+        (vec![Discovery::Mechanics], vec![(I::Linseed, 1)], Discovery::OilPressing),
+        (vec![Discovery::Mechanics], vec![(I::Seed, 6)], Discovery::OilPressing),
+        (vec![Discovery::Pottery], vec![(I::Hide, 2)], Discovery::Tanning),
+        (vec![Discovery::Fire], vec![(I::Berries, 3)], Discovery::Curing),
+        (vec![Discovery::Fire], vec![(I::RawFish, 2)], Discovery::Curing),
+        (vec![Discovery::Weaving], vec![(I::Fiber, 8)], Discovery::Ropemaking),
+        (vec![Discovery::Pottery], vec![(I::Rope, 1)], Discovery::Wells),
+        (vec![Discovery::Weaving, Discovery::Pottery], vec![(I::Fiber, 10)], Discovery::Felting),
+        (vec![Discovery::Mechanics], vec![(I::Rope, 1)], Discovery::Hoisting),
+        (vec![], vec![(I::Glass, 1)], Discovery::Glassblowing),
+        (vec![Discovery::Weaving, Discovery::Pottery], vec![(I::Cloth, 1)], Discovery::Papermaking),
+        (vec![Discovery::Mechanics, Discovery::Papermaking], vec![(I::Paper, 2)], Discovery::Printing),
+        (vec![], vec![(I::Cotton, 1)], Discovery::Ginning),
+        (vec![Discovery::Mechanics, Discovery::Weaving], vec![(I::Thread, 2)], Discovery::Ginning),
+        (vec![Discovery::Machining], vec![(I::Thread, 1)], Discovery::Spinning),
+        (vec![Discovery::Mechanics], vec![(I::CopperIngot, 1)], Discovery::Drawing),
+        (vec![Discovery::Mechanics], vec![(I::Sheet, 1)], Discovery::Drawing),
+    ];
+    for (known, held, opened) in cases {
+        let mut w = fresh();
+        for &(k, n) in &held {
+            give(&mut w, k, n);
+        }
+        if !known.is_empty() {
+            assert!(!opens(&mut w, opened), "{opened:?} must not open before what it needs is known");
+        }
+        for k in &known {
+            w.learn(*k);
+        }
+        assert!(opens(&mut w, opened), "{opened:?} from {known:?} and {held:?}");
+    }
+    // the smokehouse is opened by a drying rack that stands
+    let mut w = fresh();
+    w.learn(Discovery::Curing);
+    assert!(!opens(&mut w, Discovery::Smoking));
+    push_building(&mut w, BuildingKind::DryingRack, 5_000, 5_000);
+    assert!(opens(&mut w, Discovery::Smoking), "a drying rack stands: smoking");
+    // the dibek and the water mill open with milling and mechanics, which grain and iron in hand teach
+    assert_eq!(rules().building(BuildingKind::StoneMortar).discovery, Discovery::Milling);
+    assert_eq!(rules().building(BuildingKind::WaterMill).discovery, Discovery::Mechanics);
+    for def in &rules().buildings {
+        assert!(def.discovery != Discovery::Retired || def.kind == BuildingKind::Ruin, "{:?}", def.kind);
+    }
+}
+
+#[test]
+fn every_wave_two_machine_has_work_or_an_effect() {
+    let r = rules();
+    for k in [
+        BuildingKind::PotterWheel,
+        BuildingKind::OilPress,
+        BuildingKind::Tannery,
+        BuildingKind::DryingRack,
+        BuildingKind::Smokehouse,
+        BuildingKind::Well,
+        BuildingKind::StoneMortar,
+        BuildingKind::WaterMill,
+        BuildingKind::ForgeHammer,
+        BuildingKind::FeltMallet,
+        BuildingKind::Ropewalk,
+        BuildingKind::GlassFurnace,
+        BuildingKind::PaperVat,
+        BuildingKind::PrintingPress,
+        BuildingKind::CottonGin,
+        BuildingKind::SpinningJenny,
+    ] {
+        assert!(r.recipes.iter().any(|d| d.station == Some(k) && d.discovery != Discovery::Retired), "{k:?} has no recipe");
+    }
+    // the crane has no recipe: its effect is tested above
+    assert!(r.recipes.iter().all(|d| d.station != Some(BuildingKind::Crane)));
+    assert_eq!(BuildingKind::ALL.len(), 68);
+    // old ways stay
+    for id in ["raw_pot", "fire_pot", "cloth", "linen", "spin_fiber", "mill_flour", "glass", "copper_wire", "press_sheet_iron", "weave_thread", "boiler_coal", "cook_meat", "cook_fish"] {
+        assert!(r.recipes.iter().any(|d| d.id == id && d.discovery != Discovery::Retired), "{id}");
+    }
+}
+
+#[test]
+fn new_stations_run_on_auto_and_workers_carry_for_them() {
+    use ItemKind as I;
+    let (mut w, a, bx, by) = industry_world();
+    let walk = push_building(&mut w, BuildingKind::Ropewalk, bx + 4_000, by);
+    let bot = w.spawn_worker(AgentKind::Bot, bx + 2_000, by);
+    w.agents[bot.0 as usize].inventory.counts[I::Fiber as usize] = 8;
+    w.step(&[cmd(a, CommandKind::SetAuto { building: walk, recipe: Some(recipe("twist_rope")) })]);
+    w.step(&[cmd(a, CommandKind::SetRoute { worker: bot, route: vec![RouteStep::Deposit { building: walk }, RouteStep::Wait { ticks: 1_900 }, RouteStep::Collect { building: walk, item: Some(I::Rope) }] })]);
+    for _ in 0..5_000 {
+        topped_up(&mut w);
+        w.agents[bot.0 as usize].hunger = MAX_STAT as _;
+        w.step(&[]);
+    }
+    assert!(w.agents[bot.0 as usize].inventory.get(I::Rope) >= 2, "{}", w.agents[bot.0 as usize].inventory.get(I::Rope));
+}
+
+#[test]
+fn cotton_grows_wild_everywhere_and_is_sown_in_fields() {
+    use ItemKind as I;
+    // every world has cotton tufts among its tall grass, and the choice is a pure function of the seed and the place
+    for seed in [1u64, 2, 3, 4, 5, 6] {
+        let w = World::with_size(crate::map::tag_seed_v2(seed * 7919), 256, 256);
+        let tufts: Vec<&crate::world::Node> = w.nodes.iter().filter(|n| n.kind == NodeKind::FiberPlant).collect();
+        let cotton = tufts.iter().filter(|n| {
+            let (warm, wet) = crate::map::climate(w.seed, n.tx, n.ty);
+            crate::world::cotton_tuft(w.seed, n.tx, n.ty, warm, wet)
+        });
+        assert!(cotton.count() >= 1, "seed {seed}: no cotton among {} tufts", tufts.len());
+    }
+    // gathering the last armful of such a tuft gives cotton
+    let (mut w, a) = with_agent(11);
+    let spot = w.nodes.iter().enumerate().find(|(_, n)| {
+        let (warm, wet) = crate::map::climate(w.seed, n.tx, n.ty);
+        n.kind == NodeKind::FiberPlant && crate::world::cotton_tuft(w.seed, n.tx, n.ty, warm, wet)
+    }).map(|(i, n)| (i, n.center_mm()));
+    let (i, (nx, ny)) = spot.expect("a cotton tuft");
+    w.set_node_amount(i, 1);
+    w.agents[0].x = nx;
+    w.agents[0].y = ny + 900;
+    w.step(&[cmd(a, CommandKind::Gather { node: NodeId(i as u32) })]);
+    for _ in 0..600 {
+        topped_up(&mut w);
+        w.step(&[]);
+    }
+    assert_eq!(count(&w, 0, I::Cotton), 1, "the last armful of a cotton tuft");
+    // the discovery follows: cotton in hand opens the gin
+    assert!(w.knows(Discovery::Ginning));
+    // and a field sown with it grows more
+    let (mut w, a, bx, by) = industry_world();
+    let field = push_building(&mut w, BuildingKind::Field, bx + 4_000, by);
+    w.agents[0].x = bx + 5_300;
+    w.agents[0].y = by;
+    give(&mut w, I::Cotton, 2);
+    w.step(&[cmd(a, CommandKind::StartJob { building: field, recipe: recipe("sow_cotton") })]);
+    assert!(w.buildings[field as usize].job.is_some());
+    w.buildings[field as usize].job.as_mut().unwrap().remaining = 5;
+    for _ in 0..20 {
+        topped_up(&mut w);
+        w.step(&[]);
+    }
+    assert_eq!(out_of(&w, field, I::Cotton), 6, "two sown, six picked");
+    // flax in the field gives seed heads for the oil press as well
+    let flax = &rules().recipes[recipe("sow_flax").0 as usize];
+    assert!(flax.outputs.iter().any(|o| o.item == I::Linseed));
+}
+
+#[test]
+fn a_wave_two_save_loads_and_older_item_lists_still_read() {
+    // a save with the new machines in it comes back as it was
+    let (mut w, _) = with_agent(7);
+    for (i, k) in [BuildingKind::Crane, BuildingKind::Tannery, BuildingKind::GlassFurnace, BuildingKind::SpinningJenny, BuildingKind::Well].into_iter().enumerate() {
+        let mut b = Building::new(k, 6_000 + i as i64 * 4_000, 6_000);
+        b.output[ItemKind::Book as usize] = 3;
+        b.input[ItemKind::Bulgur as usize] = 2;
+        w.buildings.push(b);
+    }
+    w.mark_seen(ItemKind::SmokedFish);
+    w.mark_seen(ItemKind::Bulgur);
+    w.learn(Discovery::Hoisting);
+    let b = World::from_bytes(&w.to_bytes()).expect("load");
+    assert_eq!(b.hash(), w.hash());
+    assert!(b.has_seen(ItemKind::SmokedFish) && b.knows(Discovery::Hoisting));
+    assert_eq!(b.buildings.last().map(|x| x.kind), Some(BuildingKind::Well));
+    // an item list from before the new items (130 slots) reads into the longer one, the new slots empty
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Holder {
+        #[serde(with = "crate::items_serde")]
+        counts: [u16; ItemKind::COUNT],
+    }
+    let old: Vec<u16> = (0..130).map(|i| i as u16 + 1).collect();
+    let bytes = postcard::to_allocvec(&old).unwrap();
+    let read: Holder = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(read.counts[0], 1);
+    assert_eq!(read.counts[129], 130);
+    assert!(read.counts[130..].iter().all(|&n| n == 0));
 }

@@ -99,10 +99,45 @@ pub enum BuildingKind {
     SteamHammer,
     /// Powered rolls: steel to rail and girder.
     RollingLine,
+    // --- Life and craft (wave 2) ---
+    /// A kick wheel and a lump of clay: pots thrown by the batch, and lamps turned from them.
+    PotterWheel,
+    /// A wedge press: seed squeezed to oil.
+    OilPress,
+    /// Pits of bark liquor: hide soaked to leather, leather cut to belts.
+    Tannery,
+    /// A frame in the sun and the wind: berries, meat and fish dried to keep. It stands still in the rain.
+    DryingRack,
+    /// A low stone hut over a smouldering fire: meat and fish smoked to keep.
+    Smokehouse,
+    /// A stone-lined shaft with a windlass: a pot goes down empty and comes up full of water.
+    Well,
+    /// A hollowed stone and a heavy pestle: grain pounded to bulgur. Worked by a hand, an animal or a stream.
+    StoneMortar,
+    /// A wheel in a stream turning millstones: four times the hand mill's flour, and no one has to stand at it.
+    WaterMill,
+    /// A trip hammer worked by power: sheet and wire beaten out of iron and copper.
+    ForgeHammer,
+    /// A tub and a wooden mallet: fibre beaten with water into felt.
+    FeltMallet,
+    /// A long walk and a hook on a wheel: fibre twisted into rope.
+    Ropewalk,
+    /// A tall jib on a wooden mast: heavy buildings within reach go up for less.
+    Crane,
+    /// A furnace with a glory hole: bottles, lenses and window glass blown and ground.
+    GlassFurnace,
+    /// A vat of pulp and a mould: paper lifted sheet by sheet.
+    PaperVat,
+    /// A screw press with movable type: paper and ink made into books.
+    PrintingPress,
+    /// A powered roller that pulls the seed from the cotton boll.
+    CottonGin,
+    /// A powered frame of many spindles: a dozen threads where the wheel draws one.
+    SpinningJenny,
 }
 
 impl BuildingKind {
-    pub const ALL: [BuildingKind; 51] = [
+    pub const ALL: [BuildingKind; 68] = [
         BuildingKind::Campfire,
         BuildingKind::Shelter,
         BuildingKind::CharcoalKiln,
@@ -154,6 +189,23 @@ impl BuildingKind {
         BuildingKind::Boiler,
         BuildingKind::SteamHammer,
         BuildingKind::RollingLine,
+        BuildingKind::PotterWheel,
+        BuildingKind::OilPress,
+        BuildingKind::Tannery,
+        BuildingKind::DryingRack,
+        BuildingKind::Smokehouse,
+        BuildingKind::Well,
+        BuildingKind::StoneMortar,
+        BuildingKind::WaterMill,
+        BuildingKind::ForgeHammer,
+        BuildingKind::FeltMallet,
+        BuildingKind::Ropewalk,
+        BuildingKind::Crane,
+        BuildingKind::GlassFurnace,
+        BuildingKind::PaperVat,
+        BuildingKind::PrintingPress,
+        BuildingKind::CottonGin,
+        BuildingKind::SpinningJenny,
     ];
 
     /// Part of the electric grid (generates, carries or uses electricity).
@@ -163,7 +215,7 @@ impl BuildingKind {
 
     /// Machines that do nothing without mechanical power (a wheel, wind, steam or a motor within reach, or an animal at a gin).
     pub fn needs_power(self) -> bool {
-        matches!(self, BuildingKind::Lathe | BuildingKind::DrillMill | BuildingKind::Press | BuildingKind::Sawmill | BuildingKind::PowerLoom | BuildingKind::RollingLine)
+        matches!(self, BuildingKind::Lathe | BuildingKind::DrillMill | BuildingKind::Press | BuildingKind::Sawmill | BuildingKind::PowerLoom | BuildingKind::RollingLine | BuildingKind::ForgeHammer | BuildingKind::CottonGin | BuildingKind::SpinningJenny)
     }
 
     /// What the machine has to have around it to work, beyond its inputs.

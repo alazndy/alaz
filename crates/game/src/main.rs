@@ -305,7 +305,9 @@ fn demo_setup(w: &mut World) -> Selection {
         let kinds: Vec<BuildingKind> = list.split(',').filter_map(|n| BuildingKind::ALL.iter().copied().find(|k| alaz_render::assets::snake(&format!("{k:?}")) == n.trim())).collect();
         let (ax, ay) = (w.agents[0].x, w.agents[0].y);
         for (i, kind) in kinds.iter().enumerate() {
-            let (x, y) = (ax - 8_000 + (i % 4) as i64 * 6_000, ay - 8_000 + (i / 4) as i64 * 7_000);
+            // ALAZ_DEMO_GAP=<metres> packs them closer (default 6)
+            let gap = std::env::var("ALAZ_DEMO_GAP").ok().and_then(|v| v.parse::<f64>().ok()).map_or(6_000, |m| (m * 1000.0) as i64);
+            let (x, y) = (ax - gap * 4 / 3 + (i % 4) as i64 * gap, ay - gap * 4 / 3 + (i / 4) as i64 * gap * 7 / 6);
             let mut b = alaz_sim::Building::new(*kind, x, y);
             let def = rules().building(*kind);
             if let Some(ri) = rules().recipes.iter().position(|r| r.station == Some(*kind)) {
@@ -314,7 +316,7 @@ fn demo_setup(w: &mut World) -> Selection {
             }
             w.buildings.push(b);
             let aid = |w: &mut World, k: BuildingKind, dx: i64, dy: i64| w.buildings.push(alaz_sim::Building::new(k, x + dx, y + dy));
-            if kind.needs_power() || matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
+            if (kind.needs_power() && std::env::var_os("ALAZ_DEMO_NOPOWER").is_none()) || matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
                 aid(w, BuildingKind::Windmill, 0, -3_800);
             }
             if matches!(kind, BuildingKind::Bessemer | BuildingKind::Cupola) {
@@ -450,12 +452,13 @@ fn demo_setup(w: &mut World) -> Selection {
     }
     // Dev aids for looking at the character: ALAZ_DEMO_STAGE=0..5 sets the perception stage (and so the body, the
     // interface theme and the font); ALAZ_DEMO_OUTFIT=<mask> puts clothes in the player's hands: 1 fibre wrap, 2 cloak,
-    // 4 boots, 8 tunic, 16 hood, 32 bronze plate, 64 steel helm, 128 apron (ALAZ_DEMO_DRESSED is mask 7).
+    // 4 boots, 8 tunic, 16 hood, 32 bronze plate, 64 steel helm, 128 apron, 256 felt cloak, 512 leather armour
+    // (ALAZ_DEMO_DRESSED is mask 7).
     if let Some(st) = std::env::var("ALAZ_DEMO_STAGE").ok().and_then(|v| v.parse::<usize>().ok()) {
         w.learn_first([0, 4, 11, 21, 32, 43][st.min(5)]);
     }
     if let Some(mask) = std::env::var("ALAZ_DEMO_OUTFIT").ok().and_then(|v| v.parse::<u32>().ok()) {
-        const WEAR: [ItemKind; 8] = [ItemKind::FiberWrap, ItemKind::HideCloak, ItemKind::HideBoots, ItemKind::Tunic, ItemKind::LinenHood, ItemKind::BronzePlate, ItemKind::SteelHelm, ItemKind::WorkApron];
+        const WEAR: [ItemKind; 10] = [ItemKind::FiberWrap, ItemKind::HideCloak, ItemKind::HideBoots, ItemKind::Tunic, ItemKind::LinenHood, ItemKind::BronzePlate, ItemKind::SteelHelm, ItemKind::WorkApron, ItemKind::FeltCloak, ItemKind::LeatherArmor];
         for (i, k) in WEAR.iter().enumerate() {
             if mask & (1 << i) != 0 {
                 w.agents[0].inventory.counts[*k as usize] = 1;

@@ -46,6 +46,28 @@ impl BuildingDef {
             None
         }
     }
+
+    /// A big building: what a crane within reach makes cheaper (twelve items or more to pay, and not a crane itself).
+    pub fn heavy(&self) -> bool {
+        self.kind != BuildingKind::Crane && self.cost.iter().map(|c| c.n as u32).sum::<u32>() >= 12
+    }
+
+    /// The price from what is `has`, with a crane within reach easing a heavy building's cost by a quarter (rounded up).
+    pub fn priced(&self, crane: bool, has: impl Fn(&[ItemCount]) -> bool) -> Option<Vec<ItemCount>> {
+        let ease = |l: &[ItemCount]| -> Vec<ItemCount> {
+            if crane && self.heavy() {
+                l.iter().map(|c| ItemCount { item: c.item, n: (c.n * 3).div_ceil(4) }).collect()
+            } else {
+                l.to_vec()
+            }
+        };
+        let plain = ease(&self.cost);
+        if has(&plain) {
+            return Some(plain);
+        }
+        let alt = ease(&self.alt_cost);
+        (!self.alt_cost.is_empty() && has(&alt)).then_some(alt)
+    }
 }
 
 /// A hand-craft played as a timing game: a marker sweeps back and forth and each strike must land

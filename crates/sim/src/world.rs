@@ -121,6 +121,8 @@ pub const USE_RADIUS_MM: i64 = 3_000;
 pub const BUILD_RADIUS_MM: i64 = 8_000;
 /// Per-item cap of a station's input buffer.
 pub const STATION_INPUT_CAP: u16 = 60;
+/// How far a crane reaches from its mast (mm): heavy buildings put up within it cost a quarter less.
+pub const CRANE_REACH_MM: i64 = 10_000;
 
 /// Spear reach, time to land the throw, and how long a chase may last before the prey escapes.
 const SPEAR_RANGE_MM: i64 = 3_500;
@@ -133,6 +135,12 @@ const COOKED_MEAT_FOOD: i32 = 4_500;
 const BREAD_FOOD: i32 = 5_000;
 /// A bowl of hot lentil soup.
 const SOUP_FOOD: i32 = 4_000;
+/// Food values of what is dried, smoked or pounded to keep.
+const DRIED_BERRIES_FOOD: i32 = 2_200;
+const JERKY_FOOD: i32 = 3_400;
+const SMOKED_MEAT_FOOD: i32 = 4_800;
+const SMOKED_FISH_FOOD: i32 = 3_800;
+const BULGUR_FOOD: i32 = 5_200;
 /// Raw meat makes you sick for this long; wolves bite for this much and make you bleed.
 const RAW_MEAT_SICK_TICKS: i32 = 5_400;
 const WOLF_AGGRO_MM: i64 = 9_000;
@@ -318,6 +326,11 @@ fn food_groups(k: ItemKind) -> [u16; 3] {
         ItemKind::CookedFish => [0, 300, 0],
         ItemKind::Bread => [350, 0, 0],
         ItemKind::Soup => [150, 200, 100],
+        ItemKind::DriedBerries => [0, 0, 250],
+        ItemKind::Jerky => [0, 300, 0],
+        ItemKind::SmokedMeat => [0, 380, 0],
+        ItemKind::SmokedFish => [0, 320, 0],
+        ItemKind::Bulgur => [380, 0, 0],
         _ => [0, 0, 0],
     }
 }
@@ -440,6 +453,37 @@ pub enum Discovery {
     Converter,
     /// Steam known, a cast-iron part in hand: lathe, drill, press, power loom, steam hammer, rolling line.
     Machining,
+    // --- Life and craft (wave 2) ---
+    /// Potters with a plank in hand: the kick wheel.
+    Throwing,
+    /// Machines known and a seed to squeeze (linseed, or grain): the oil press.
+    OilPressing,
+    /// Potters with a hide in hand: the tannery.
+    Tanning,
+    /// Cooks with berries, meat or fish in hand: the drying rack.
+    Curing,
+    /// A drying rack stands: the smokehouse.
+    Smoking,
+    /// Fibre twisted by people who weave: the ropewalk.
+    Ropemaking,
+    /// Rope in hand among potters: the well and its windlass.
+    Wells,
+    /// Weavers and potters with plenty of fibre: the felt mallet.
+    Felting,
+    /// Machines known and a rope in hand: the crane.
+    Hoisting,
+    /// Glass in hand: the glassblower's furnace.
+    Glassblowing,
+    /// Weavers and potters with cloth in hand: the paper vat.
+    Papermaking,
+    /// Machines known and paper in hand: the printing press.
+    Printing,
+    /// Cotton in hand (or machines and thread): the cotton gin.
+    Ginning,
+    /// Machines known and thread in hand: the spinning jenny.
+    Spinning,
+    /// Machines known, copper or steel or sheet in hand: the forge hammer.
+    Drawing,
 }
 
 impl Discovery {
@@ -734,8 +778,10 @@ pub(crate) fn knap_needed(seed: u64, agent: AgentId, recipe: u16, step: u8, salt
 fn craft_geometry(stage: u8, mastery: u32, mg: &crate::rules::Minigame, inv: &Inventory, seed: u64, agent: AgentId, recipe: u16, step: u8, done: u8, salt: u16, stack: &[(i8, u8); 8]) -> Geometry {
     use crate::rules::MinigameKind;
     // clumsy hands at first, surer with every step the tribe has evolved: -2 at stage 0, +8 at stage 5
+    // a book to read the method from steadies the hand, and a lens helps at fine work
+    let read = 3 * (inv.get(ItemKind::Book) > 0) as u32 + 2 * (inv.get(ItemKind::Lens) > 0) as u32;
     // and practised hands: a thing made many times is made more surely
-    let bonus: u32 = (mg.tools.iter().filter(|t| inv.get(t.item) > 0).map(|t| t.bonus).sum::<u32>() + 2 * stage as u32 + mastery).saturating_sub(2);
+    let bonus: u32 = (mg.tools.iter().filter(|t| inv.get(t.item) > 0).map(|t| t.bonus).sum::<u32>() + 2 * stage as u32 + mastery + read).saturating_sub(2);
     let n = step as i32 * 16 + done as i32;
     let h = |tag: u64| crate::rng::hash2(seed ^ tag, agent.0 as i32 * 256 + n, recipe as i32 * 65_536 + salt as i32);
     let mut g = Geometry { span: 0, center: 0, half: 0, power: 0, power_half: 0, tx: 0, ty: 0 };
@@ -991,6 +1037,13 @@ fn is_power_source(bs: &[Building], i: usize) -> bool {
     matches!(w.kind, BuildingKind::WaterWheel | BuildingKind::Windmill)
         || w.steaming()
         || (w.kind == BuildingKind::SteamEngine && bs.iter().any(|b| b.kind == BuildingKind::Boiler && b.steaming() && dist2(b.x, b.y, w.x, w.y) <= 6_000 * 6_000))
+}
+
+/// Is the tall grass on this tile cotton? In the warm country (half the tufts) and, rarely, anywhere else (one in
+/// twenty), so every world has some. A pure function of the seed and the place.
+pub fn cotton_tuft(seed: u64, tx: i32, ty: i32, warm: i32, wet: i32) -> bool {
+    let roll = crate::rng::hash2(seed ^ 0xC077, tx, ty) % 20;
+    if warm > 520 && wet < 560 { roll < 10 } else { roll == 0 }
 }
 
 /// Put everything a building accepts into it. Depots take all but tools; stations take recipe inputs.
@@ -1627,7 +1680,9 @@ impl World {
     /// How much the tribe understands of the world, 0..=1000, from what it has discovered, achieved and handled.
     /// It sharpens how things look and how they are named. Derived, never stored.
     pub fn perception_permille(&self) -> u32 {
-        let score = self.known.count_ones() + 2 * self.milestones.count_ones() + (self.seen.count_ones() + self.seen_hi.count_ones()) / 2;
+        // each book printed (the first four) spreads what is known a little further
+        let books = self.produced[ItemKind::Book as usize].min(4);
+        let score = self.known.count_ones() + 2 * self.milestones.count_ones() + (self.seen.count_ones() + self.seen_hi.count_ones()) / 2 + 3 * books;
         (score * 1000 / PERCEPTION_FULL_SCORE).min(1000)
     }
 
@@ -1635,7 +1690,9 @@ impl World {
     pub fn mastery(&self, recipe: usize) -> u32 {
         let rules_now = self.rules_arc();
         let Some(first) = (&*rules_now).recipes.get(recipe).and_then(|r| r.outputs.first()) else { return 0 };
-        (self.produced[first.item as usize] / 5).min(4)
+        // once a book has been printed the tribe has its crafts written down: practice sinks in faster
+        let per = if self.produced[ItemKind::Book as usize] > 0 { 3 } else { 5 };
+        (self.produced[first.item as usize] / per).min(4)
     }
 
     /// Stages of perception 0..=5, from the animal view to the modern one.
@@ -1734,6 +1791,14 @@ impl World {
         {
             return Err(Reject::NeedsWater);
         }
+        // a mill wheel stands in a stream, like a water wheel
+        if kind == BuildingKind::WaterMill && !self.map.water_within(x.div_euclid(TILE_MM) as i32, y.div_euclid(TILE_MM) as i32, 3) {
+            return Err(Reject::NeedsWater);
+        }
+        // a well cannot be sunk into bare rock
+        if kind == BuildingKind::Well && self.map.terrain_mm(x, y) == Some(Terrain::Rock) {
+            return Err(Reject::Blocked);
+        }
         for (ox, oy) in [(0, 0), (r, 0), (-r, 0), (0, r), (0, -r)] {
             match self.map.terrain_mm(x + ox, y + oy) {
                 None | Some(Terrain::Water) => return Err(Reject::Blocked),
@@ -1826,10 +1891,17 @@ impl World {
                     _ if !human => {}
                     None => {}
                     Some((nx, ny)) if dist2(a.x, a.y, nx, ny) > 3_000 * 3_000 => self.events.push(Event::Rejected(id, Reject::TooFar)),
-                    Some(_) if a.inventory.get(ItemKind::Torch) == 0 => self.events.push(Event::Rejected(id, Reject::NoLight)),
+                    Some(_) if a.inventory.get(ItemKind::Torch) == 0 && !(a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::PlantOil) > 0) => self.events.push(Event::Rejected(id, Reject::NoLight)),
                     Some(_) => {
-                        a.inventory.counts[ItemKind::Torch as usize] -= 1;
-                        a.task = Task::Cave { node: *node, depth: 0, light: CAVE_TORCH_TICKS, act: 0, work: 0 };
+                        // a lamp (kept) with a spoonful of oil burns twice as long as a torch, which is used up
+                        let light = if a.inventory.get(ItemKind::OilLamp) > 0 && a.inventory.get(ItemKind::PlantOil) > 0 {
+                            a.inventory.counts[ItemKind::PlantOil as usize] -= 1;
+                            CAVE_TORCH_TICKS * 2
+                        } else {
+                            a.inventory.counts[ItemKind::Torch as usize] -= 1;
+                            CAVE_TORCH_TICKS
+                        };
+                        a.task = Task::Cave { node: *node, depth: 0, light, act: 0, work: 0 };
                     }
                 }
             }
@@ -1930,6 +2002,11 @@ impl World {
                     ItemKind::CookedFish => COOKED_MEAT_FOOD * 4 / 5,
                     ItemKind::Bread => BREAD_FOOD,
                     ItemKind::Soup => SOUP_FOOD,
+                    ItemKind::DriedBerries => DRIED_BERRIES_FOOD,
+                    ItemKind::Jerky => JERKY_FOOD,
+                    ItemKind::SmokedMeat => SMOKED_MEAT_FOOD,
+                    ItemKind::SmokedFish => SMOKED_FISH_FOOD,
+                    ItemKind::Bulgur => BULGUR_FOOD,
                     _ => return,
                 };
                 let a = &mut self.agents[idx];
@@ -1943,7 +2020,7 @@ impl World {
                     match item {
                         // raw meat makes you sick; a hot meal helps you get over it
                         ItemKind::RawMeat => a.sick = a.sick.max(RAW_MEAT_SICK_TICKS),
-                        ItemKind::CookedMeat | ItemKind::CookedFish => a.sick /= 2,
+                        ItemKind::CookedMeat | ItemKind::CookedFish | ItemKind::SmokedMeat | ItemKind::SmokedFish => a.sick /= 2,
                         // raw fish less so than raw meat
                         ItemKind::RawFish => a.sick = a.sick.max(RAW_MEAT_SICK_TICKS / 2),
                         _ => {}
@@ -2254,7 +2331,8 @@ impl World {
                     return self.reject(id, Reject::TooFar);
                 }
                 let free = self.settings.difficulty == Difficulty::Creative;
-                let cost: Vec<ItemCount> = def.cost_for(|c| self.agents[idx].inventory.has(c)).map(|c| c.to_vec()).unwrap_or_else(|| def.cost.clone());
+                let crane = self.crane_near(x, y);
+                let cost: Vec<ItemCount> = def.priced(crane, |c| self.agents[idx].inventory.has(c)).unwrap_or_else(|| def.priced(crane, |_| true).unwrap_or_default());
                 if !free && !self.agents[idx].inventory.has(&cost) {
                     return self.reject(id, Reject::NoMaterials);
                 }
@@ -2810,7 +2888,12 @@ impl World {
                             (NodeKind::FiberPlant, 1) => {
                                 // the wild crop of the place: lentils on dry warm land, flax where it is wet, else grain
                                 let (warm, wet) = crate::map::climate(seed, n.tx, n.ty);
-                                if wet > 550 {
+                                if cotton_tuft(seed, n.tx, n.ty, warm, wet) {
+                                    ItemKind::Cotton
+                                } else if wet > 550 && crate::rng::hash2(seed ^ 0x11C5, n.tx, n.ty) % 3 == 0 {
+                                    // some flax tufts have gone to seed
+                                    ItemKind::Linseed
+                                } else if wet > 550 {
                                     ItemKind::Flax
                                 } else if warm > 580 && wet < 480 {
                                     ItemKind::Lentil
@@ -3202,6 +3285,8 @@ impl World {
         let realistic = self.settings.difficulty == Difficulty::Realistic;
         let tick = self.tick;
         let second = self.tick % crate::time::TICKS_PER_SECOND == 0;
+        // a drying rack stands in the open: rain and snow slow its drying to half
+        let wet_sky = !matches!(self.weather(), crate::time::Weather::Clear);
         for (i, b) in self.buildings.iter_mut().enumerate() {
             let powered = false; // water wheels drive machines through the power checks below, not a speed-up aura
             let ploughed = b.kind == BuildingKind::Field && b.job.is_some() && plow_team_at(&self.agents, b.x, b.y);
@@ -3275,7 +3360,7 @@ impl World {
             let mut mill_power = 1u32;
             let mut by_animal = false;
             let mut by_water = false;
-            if b.kind == BuildingKind::HandMill {
+            if matches!(b.kind, BuildingKind::HandMill | BuildingKind::StoneMortar) {
                 let (hands, animals, water) = power_at(b.x, b.y, true);
                 by_animal = animals > 0;
                 by_water = water > 0;
@@ -3290,7 +3375,8 @@ impl World {
             if b.kind == BuildingKind::SteamHammer {
                 mill_power = if steam_only.iter().any(|&(sx, sy)| dist2(sx, sy, b.x, b.y) <= 8_000 * 8_000) { 3 } else { 0 };
             }
-            if let Some(job) = b.job.as_mut().filter(|_| lit && hot_enough && growing && mill_power > 0) {
+            let sky_ok = b.kind != BuildingKind::DryingRack || !wet_sky || tick % 2 == 0;
+            if let Some(job) = b.job.as_mut().filter(|_| lit && hot_enough && growing && mill_power > 0 && sky_ok) {
                 job.remaining = job.remaining.saturating_sub(if powered { 2 } else { 1 } * if ploughed { 2 } else { 1 } * mill_power);
                 if job.remaining == 0 && by_animal && self.milestones & Milestone::AnimalPower.bit() == 0 {
                     animal_milled = true;
@@ -3858,6 +3944,53 @@ impl World {
         if self.knows(Discovery::Steam) && n(ItemKind::CastIronPart) >= 1 {
             self.discover(Discovery::Machining);
         }
+        // life and craft: each opens from what is in hand among people who can use it
+        let has_rack = self.buildings.iter().any(|b| b.kind == BuildingKind::DryingRack);
+        if self.knows(Discovery::Pottery) && n(ItemKind::Plank) >= 2 {
+            self.discover(Discovery::Throwing);
+        }
+        if self.knows(Discovery::Mechanics) && (n(ItemKind::Linseed) >= 1 || n(ItemKind::Seed) >= 6) {
+            self.discover(Discovery::OilPressing);
+        }
+        if self.knows(Discovery::Pottery) && n(ItemKind::Hide) >= 2 {
+            self.discover(Discovery::Tanning);
+        }
+        if self.knows(Discovery::Fire) && (n(ItemKind::Berries) >= 3 || n(ItemKind::RawMeat) >= 2 || n(ItemKind::RawFish) >= 2) {
+            self.discover(Discovery::Curing);
+        }
+        if self.knows(Discovery::Curing) && has_rack {
+            self.discover(Discovery::Smoking);
+        }
+        if self.knows(Discovery::Weaving) && n(ItemKind::Fiber) >= 8 {
+            self.discover(Discovery::Ropemaking);
+        }
+        if self.knows(Discovery::Pottery) && n(ItemKind::Rope) >= 1 {
+            self.discover(Discovery::Wells);
+        }
+        if self.knows(Discovery::Weaving) && self.knows(Discovery::Pottery) && n(ItemKind::Fiber) >= 10 {
+            self.discover(Discovery::Felting);
+        }
+        if self.knows(Discovery::Mechanics) && n(ItemKind::Rope) >= 1 {
+            self.discover(Discovery::Hoisting);
+        }
+        if n(ItemKind::Glass) >= 1 {
+            self.discover(Discovery::Glassblowing);
+        }
+        if self.knows(Discovery::Weaving) && self.knows(Discovery::Pottery) && n(ItemKind::Cloth) >= 1 {
+            self.discover(Discovery::Papermaking);
+        }
+        if self.knows(Discovery::Mechanics) && self.knows(Discovery::Papermaking) && n(ItemKind::Paper) >= 2 {
+            self.discover(Discovery::Printing);
+        }
+        if n(ItemKind::Cotton) >= 1 || (self.knows(Discovery::Mechanics) && self.knows(Discovery::Weaving) && n(ItemKind::Thread) >= 2) {
+            self.discover(Discovery::Ginning);
+        }
+        if self.knows(Discovery::Machining) && n(ItemKind::Thread) >= 1 {
+            self.discover(Discovery::Spinning);
+        }
+        if self.knows(Discovery::Mechanics) && (n(ItemKind::CopperIngot) >= 1 || n(ItemKind::Sheet) >= 1 || n(ItemKind::Steel) >= 1) {
+            self.discover(Discovery::Drawing);
+        }
         let has_animal = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Dog | AgentKind::Ox | AgentKind::Horse));
         let has_draught = self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse));
         if has_draught && self.knows(Discovery::Bronzework) {
@@ -3989,6 +4122,11 @@ impl World {
         }
         let live = self.electric_live();
         self.buildings.iter().zip(&live).any(|(b, &on)| on && b.kind == BuildingKind::ElectricMotor && dist2(b.x, b.y, x, y) <= 8_000 * 8_000)
+    }
+
+    /// Is there a crane within reach of a building site at (x, y)? It makes heavy buildings cheaper.
+    pub fn crane_near(&self, x: i64, y: i64) -> bool {
+        self.buildings.iter().any(|b| b.kind == BuildingKind::Crane && dist2(b.x, b.y, x, y) <= CRANE_REACH_MM * CRANE_REACH_MM)
     }
 
     /// Does the machine at `i` have what it needs round it (see `BuildingKind::requirement`)? Machines without a

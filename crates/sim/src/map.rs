@@ -263,6 +263,51 @@ pub enum ItemKind {
     Rail,
     /// A rolled girder.
     Beam,
+    // --- Life and craft (wave 2) ---
+    /// Pressed vegetable oil: lamp fuel, ink, and a rag of it keeps tools from wearing.
+    PlantOil,
+    /// Flax seed, the oil press's seed; it comes with the flax harvest.
+    Linseed,
+    /// Hide tanned and supple: bellows, belts, armour.
+    Leather,
+    /// A leather drive belt cut and stitched on the tannery bench.
+    Belt,
+    /// A jerkin of thick leather: turns bites and blows aside; worn while carried.
+    LeatherArmor,
+    /// Rope twisted on the ropewalk: strong enough for a well or a crane.
+    Rope,
+    /// Fibre beaten with water until it mats: dense, warm, and it sheds rain.
+    Felt,
+    /// A cloak of felt: warm and keeps the rain off; worn while carried.
+    FeltCloak,
+    /// A cotton boll with its seeds still in; grows wild in the warm, sown in a field.
+    Cotton,
+    /// Cotton ginned clean of its seed: soft long fibre for thread and cloth.
+    CottonFiber,
+    /// A sheet of paper lifted from the vat.
+    Paper,
+    /// A printed book: crafts come out finer for whoever carries one, and the tribe understands more; kept.
+    Book,
+    /// A blown glass bottle.
+    Bottle,
+    /// A ground glass lens: a steadier hand at fine work; kept.
+    Lens,
+    /// A pane of window glass.
+    WindowPane,
+    /// A clay lamp: burns oil instead of a torch in a cave and lasts twice as long; kept.
+    OilLamp,
+    /// A flask of lamp oil rubbed into tool handles and edges: tools wear less; kept.
+    OilFlask,
+    /// Berries dried in the sun: keep for months.
+    DriedBerries,
+    /// Meat or fish dried in strips: keeps and feeds.
+    Jerky,
+    /// Meat smoked over a slow fire: keeps for weeks.
+    SmokedMeat,
+    /// Fish smoked over a slow fire: keeps for weeks.
+    SmokedFish,
+    /// Grain boiled, dried and cracked: keeps well and fills.
+    Bulgur,
 }
 
 impl ItemKind {
@@ -304,6 +349,12 @@ impl ItemKind {
                 | ItemKind::SteelHelm
                 | ItemKind::WorkApron
                 | ItemKind::SandMold
+                | ItemKind::LeatherArmor
+                | ItemKind::FeltCloak
+                | ItemKind::Book
+                | ItemKind::Lens
+                | ItemKind::OilLamp
+                | ItemKind::OilFlask
         )
     }
 
@@ -317,7 +368,7 @@ impl ItemKind {
         crate::rules::rules().garment(self)
     }
 
-    pub const COUNT: usize = 130;
+    pub const COUNT: usize = 152;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -449,6 +500,28 @@ impl ItemKind {
         ItemKind::HeavyShaft,
         ItemKind::Rail,
         ItemKind::Beam,
+        ItemKind::PlantOil,
+        ItemKind::Linseed,
+        ItemKind::Leather,
+        ItemKind::Belt,
+        ItemKind::LeatherArmor,
+        ItemKind::Rope,
+        ItemKind::Felt,
+        ItemKind::FeltCloak,
+        ItemKind::Cotton,
+        ItemKind::CottonFiber,
+        ItemKind::Paper,
+        ItemKind::Book,
+        ItemKind::Bottle,
+        ItemKind::Lens,
+        ItemKind::WindowPane,
+        ItemKind::OilLamp,
+        ItemKind::OilFlask,
+        ItemKind::DriedBerries,
+        ItemKind::Jerky,
+        ItemKind::SmokedMeat,
+        ItemKind::SmokedFish,
+        ItemKind::Bulgur,
     ];
 }
 

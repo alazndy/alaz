@@ -64,6 +64,16 @@ Dosya adı = oyundaki şeyin adı (küçük harf, `_` ile):
     (tornanın aynası, presin kolu, çekicin başı, haddelerin silindirleri, çarklar) dışa aktarmada `spin_` / `spinx_` /
     `spinz_` / `piston_` adlı düğümler olarak yazılır (hız ve genlik `extras` içinde), yani dışa aktarılan dosya
     aynı kuralla oynar; kendi modelinde de aynı adları ver. Çalışırken parlayan ağızlar `lit_extra` içindedir.
+  * **Yaşam ve zanaat makineleri** (2. dalga): `potter_wheel`, `oil_press`, `tannery`, `drying_rack`, `smokehouse`, `well`,
+    `stone_mortar`, `water_mill`, `forge_hammer`, `felt_mallet`, `ropewalk`, `crane`, `glass_furnace`, `paper_vat`,
+    `printing_press`, `cotton_gin`, `spinning_jenny`. Bunlar da `crates/render/src/mesh/machines.rs`'te kodla yazılır ve
+    aynı kancadan geçer. Hareketli parçalar dışa aktarmada şu düğümler olur: `spin_kickwheel`, `spin_head` (çömlekçi
+    çarkı), `spin_lever` + `piston_platen` (yağ presi), `piston_paddle` (tabakhane), `spinx_windlass` + `piston_bucket`
+    (kuyu), `piston_pestle` (dibek), `spinz_wheel` (su değirmeni), `piston_head` + `spinx_cam` + `spinx_flywheel`
+    (dövme çekici), `piston_mallet` (keçe tokmağı), `spinx_hookwheel` (halat bükme), `spinz_pulley` + `piston_load` +
+    `spinz_windlass` (vinç), `piston_mould` (kâğıt havuzu), `spin_bar` + `piston_platen` (matbaa), `spinz_roller_a/b` +
+    `spinx_pulley` (çırçır), `spin_spindle_0..5` + `spinz_drive` (iplik eğirme makinesi). Kurutma rafı çalışırken
+    şeritlerin renk değiştirmesiyle, tüttürme ocağı dumanla, cam ocağı ağız parıltısıyla gösterir (`lit_extra`/`idle_extra`).
 * **Doğa** (`NodeKind`): `stone_outcrop`, `iron_outcrop`, `copper_outcrop`, `tin_outcrop`, `berry_bush`,
   `clay_deposit`, `herb_patch`, `cave_mouth`, `fiber_plant`, `deadwood`, `tree`.
   * Ağaçlar için tür adları da var, bulunursa `tree`'den önce onlar kullanılır:
@@ -73,7 +83,8 @@ Dosya adı = oyundaki şeyin adı (küçük harf, `_` ile):
   `dry_grass`, `rubble`.
 * **Elde tutulanlar** (isteğe bağlı override): `tool_stone_axe`, `tool_metal_axe`, `tool_metal_pick`, `tool_spear`;
   **giysiler**: `outfit_wrap`, `outfit_cloak`, `outfit_boots`, `outfit_tunic`, `outfit_hood`, `outfit_plate`,
-  `outfit_helm`, `outfit_apron`. Giysi dosyası varsa o giysinin kodla çizilen hâli çizilmez.
+  `outfit_helm`, `outfit_apron`, `outfit_felt_cloak` (keçe pelerin), `outfit_leather_armor` (deri zırh). Giysi dosyası varsa o
+  giysinin kodla çizilen hâli çizilmez.
 * **Çeşitlilik**: `<ad>.vox`, `<ad>_1.vox`, `<ad>_2.vox` ... Birden çok dosya varsa konuma göre (seed ile, her
   seferinde aynı) biri seçilir. `.glb` ile `.vox` karışık olabilir.
 
@@ -149,6 +160,9 @@ offset = [0.0, 0.0, 0.0]  # metre, modeli kaydır
 `alaz --export-assets` çıktısındaki `icons/` klasörüne bak (her eşyaya bir dosya). Sanayi eşyaları da dahil:
 `tar`, `lime`, `mortar`, `cement`, `concrete`, `brick`, `pipe`, `iron_cylinder`, `iron_wheel`, `sand_mold`, `shaft`,
 `bolt_nut`, `piston`, `precision_gear`, `cylinder_block`, `sheet`, `sheet_part`, `thread`, `heavy_shaft`, `rail`, `beam`.
+Yaşam ve zanaat eşyaları da: `plant_oil`, `linseed`, `leather`, `belt`, `leather_armor`, `rope`, `felt`, `felt_cloak`, `cotton`,
+`cotton_fiber`, `paper`, `book`, `bottle`, `lens`, `window_pane`, `oil_lamp`, `oil_flask`, `dried_berries`, `jerky`,
+`smoked_meat`, `smoked_fish`, `bulgur`.
 
 * Biçim: PNG, RGBA (şeffaflık olur). Boyut serbest ama **kare**; 32×32 ya da 64×64 öneriyoruz.
 * Çizim: **nearest** (piksel piksel, yumuşatma yok), yuvaya sığacak kare boyutuna ölçeklenir.

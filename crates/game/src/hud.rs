@@ -205,6 +205,28 @@ pub fn item_name(k: ItemKind) -> &'static str {
         ItemKind::HeavyShaft => "Büyük mil",
         ItemKind::Rail => "Ray",
         ItemKind::Beam => "Kiriş",
+        ItemKind::PlantOil => "Bitkisel yağ",
+        ItemKind::Linseed => "Keten tohumu",
+        ItemKind::Leather => "Deri",
+        ItemKind::Belt => "Kayış",
+        ItemKind::LeatherArmor => "Deri zırh",
+        ItemKind::Rope => "Halat",
+        ItemKind::Felt => "Keçe",
+        ItemKind::FeltCloak => "Keçe pelerin",
+        ItemKind::Cotton => "Pamuk",
+        ItemKind::CottonFiber => "Pamuk lifi",
+        ItemKind::Paper => "Kâğıt",
+        ItemKind::Book => "Kitap",
+        ItemKind::Bottle => "Şişe",
+        ItemKind::Lens => "Mercek",
+        ItemKind::WindowPane => "Pencere camı",
+        ItemKind::OilLamp => "Yağ kandili",
+        ItemKind::OilFlask => "Yağ şişesi",
+        ItemKind::DriedBerries => "Kuru yemiş",
+        ItemKind::Jerky => "Kurutulmuş et",
+        ItemKind::SmokedMeat => "Tütsülenmiş et",
+        ItemKind::SmokedFish => "Tütsülenmiş balık",
+        ItemKind::Bulgur => "Bulgur",
 
 
 
@@ -389,6 +411,21 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Discovered(Discovery::Foundry) => "Pik demir yeniden eritilip kalıba dökülür. Kupol ocağı pik demiri kum kalıplara döker (kalıp her dökümden sonra geri gelir); kum kalıp tezgahı kalıpları hazırlar. Pudlaj fırını pik demiri toplu dövme demire çevirir.".into(),
         Event::Discovered(Discovery::Converter) => "Erimiş pik demirin içinden güçlü hava üflenirse karbonu yanar, çelik kalır. Bessemer konvertörü bunu toplu yapar; ama makineyle çalışan bir körük ister.".into(),
         Event::Discovered(Discovery::Machining) => "Dökme demir parçalar artık tezgahta işlenir. Torna mil, cıvata ve piston; matkap ve freze hassas dişli ve silindir bloğu; pres sac verir. Buhar çekici büyük mil ve ray döver, haddeleme hattı ray ve kiriş çeker, mekanik tezgah ipliği toplu kumaşa dokur. Hepsi güç ister.".into(),
+        Event::Discovered(Discovery::Throwing) => "Dönen çamur kendiliğinden düzgün çömlek olur. Çömlekçi çarkı çömlekleri toplu çevirir, pişmiş çömlekten yağ kandili yapar.".into(),
+        Event::Discovered(Discovery::OilPressing) => "Tohum sıkılınca yağ verir. Yağ presi keten (ya da tahıl) tohumundan bitkisel yağ çıkarır; yağ kandili mağarada meşaleden iki kat uzun yanar, bir şişe yağ aletlerin aşınmasını azaltır.".into(),
+        Event::Discovered(Discovery::Tanning) => "Post kabuk suyunda yumuşayıp dayanıklı deri olur. Tabakhane deri verir, deriden kayış kesilir; deri körük, kayış ve zırhta kullanılır.".into(),
+        Event::Discovered(Discovery::Curing) => "Et, balık ve yemiş güneşte kurutulunca aylarca bozulmaz. Kurutma rafı kurur; yağmurda yarı hızda çalışır.".into(),
+        Event::Discovered(Discovery::Smoking) => "Yavaş dumanda tütsülenen et ve balık haftalarca saklanır. Tüttürme ocağını kur: ısı az, duman bol.".into(),
+        Event::Discovered(Discovery::Ropemaking) => "Lif bükülünce halat olur. Halat bükme tezgahı lif ve ketenden uzun halat yapar; kuyu ve vinç halat ister.".into(),
+        Event::Discovered(Discovery::Wells) => "Halatla bir kuyu kazılır: boş çömlek iner, dolu çıkar. Nehir olmasa da su çekersin (kayaya kuyu açılmaz).".into(),
+        Event::Discovered(Discovery::Felting) => "Islak lif tokmaklanınca keçe olur. Keçe tokmağı keçe verir; keçe pelerin sıcak tutar ve yağmuru geçirmez.".into(),
+        Event::Discovered(Discovery::Hoisting) => "Direk, bom ve makara: vinç, 10 m içinde yapılan büyük yapıların malzemesinden dörtte birini tasarruf ettirir.".into(),
+        Event::Discovered(Discovery::Glassblowing) => "Erimiş cam üflenir ya da taşlanır. Cam üfleme ocağı şişe, mercek ve pencere camı yapar; mercek ince işte eli kararlı tutar.".into(),
+        Event::Discovered(Discovery::Papermaking) => "Lif ve paçavra suda ezilip kâğıt olur. Kâğıt havuzu sayfa sayfa kâğıt çeker.".into(),
+        Event::Discovered(Discovery::Printing) => "Hareketli harfler ve vida: matbaa kâğıt, mürekkep ve deriden kitap basar. Kitap taşıyanın işi daha ince çıkar, kabile bildiklerini daha çabuk öğrenir.".into(),
+        Event::Discovered(Discovery::Ginning) => "Pamuk kozasının çekirdeği çırçır makinesiyle ayrılır; pamuk lifi iplik ve kumaş olur. Pamuk tarlada da ekilir.".into(),
+        Event::Discovered(Discovery::Spinning) => "Çok iğli makine çıkrığın üç katı iplik eğirir. İplik eğirme makinesi güç ister.".into(),
+        Event::Discovered(Discovery::Drawing) => "Güçle çalışan çekiç sac ve tel döver. Dövme çekici haddehane ve prese giden başka bir yoldur.".into(),
         Event::Discovered(Discovery::Medicine) => "Acı otlar karın ve yara için iyidir. Çiğneyebilir ya da iki otu sargıya çevirebilirsin.".into(),
         Event::Struck { .. } => return None,
         Event::Broke { agent, item } => {
@@ -427,7 +464,7 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
             Reject::NoIdea => "Bunları birbirine vurdun, bağladın, denedin... hiçbir şey olmadı.".into(),
             Reject::NeedsWater => "Su çarkı akan suyun (3 kare) yakınına kurulur.".into(),
             Reject::Escaped => "Av kaçtı. Daha yakından dene.".into(),
-            Reject::NoLight => "Mağaraya girmek için meşale gerek: iki dal ve bir lifle Yap sekmesinde yapılır, yakmak için çakmaktaşı lazım.".into(),
+            Reject::NoLight => "Mağaraya girmek için meşale gerek: iki dal ve bir lifle Yap sekmesinde yapılır, yakmak için çakmaktaşı lazım. Yağ kandili ve bir kaşık bitkisel yağ da ışık verir.".into(),
             Reject::NeedsTool { tool, tier } => {
                 use alaz_sim::rules::ToolKind;
                 let metal = ["taş", "bakır", "bronz", "demir", "çelik"].get(*tier as usize).copied().unwrap_or("daha sert");
@@ -564,6 +601,23 @@ pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
         BuildingKind::Boiler => "Büyük kazan: kömür, kok, katran ya da petrolle buhar kaldırır. 8 m içindeki makineleri çevirir, 6 m içindeki buhar makinelerine de buhar verir.",
         BuildingKind::SteamHammer => "8 m içinde buhar isterken: büyük mil ve ray döver.",
         BuildingKind::RollingLine => "Güçle çalışır: çelikten ray ve kiriş çeker.",
+        BuildingKind::PotterWheel => "Çömlekleri toplu çevirir: 3 kilden 2 ham çömlek, büyük çömlek; pişmiş çömlekten yağ kandili. Güç istemez.",
+        BuildingKind::OilPress => "Keten tohumundan (ya da tahıl tohumundan) bitkisel yağ sıkar: 3 tohumdan 2 yağ. Yağ: kandil, mürekkep, alet bakımı.",
+        BuildingKind::Tannery => "Postu kabuk suyunda tabaklar: 2 postan 3 deri; deriden kayış keser. Her seferinde bir dolu çömlek ister.",
+        BuildingKind::DryingRack => "Yemişi, eti ve balığı kurutur; kuru gıda aylarca bozulmaz. Yağmurda ve karda yarı hızda kurur.",
+        BuildingKind::Smokehouse => "Et ve balığı tüttürür (hafif ısı, odun duman); tütsülenmiş gıda haftalarca bozulmaz.",
+        BuildingKind::Well => "Boş çömleği doldurur: nehir uzakta olsa da su. Kayaya açılmaz.",
+        BuildingKind::StoneMortar => "Tahılı bulgura döver: 4 tahıldan 4 bulgur. El değirmeni gibi birinin başında durması (ya da manej, su çarkı) gerekir.",
+        BuildingKind::WaterMill => "Akarsuyun gücüyle un öğütür: el değirmeninin 4 katı hızlı, başında kimse durmasa da. Suyun 3 karo yakınına kurulur.",
+        BuildingKind::ForgeHammer => "Güçle çalışır: demirden sac, bakırdan tel döver (haddehane ve presin yanında ikinci yol).",
+        BuildingKind::FeltMallet => "Lifi suyla tokmaklayıp keçe yapar: 6 lifle 1 çömlek su, 2 keçe. Keçeden pelerin dikilir.",
+        BuildingKind::Ropewalk => "Lif ve ketenden halat bükür: 4 lifle 1, 3 ketenle 2 halat. Kuyu ve vinç halat ister.",
+        BuildingKind::Crane => "10 m içinde yapılan büyük yapıların malzemesinden dörtte birini tasarruf ettirir (12 ve üstü kalemli yapılar).",
+        BuildingKind::GlassFurnace => "Kumdan cam üfler; camı şişeye, mercek ve pencere camına çevirir. Çok sıcak ister (1100 °C ve üstü).",
+        BuildingKind::PaperVat => "Lif ya da paçavradan kâğıt çeker: 4 lifle 3 kâğıt, 1 kumaşla 4 kâğıt. Her seferinde bir dolu çömlek ister.",
+        BuildingKind::PrintingPress => "4 kâğıt, kömür, yağ ve deriden kitap basar. Kitap taşıyanın işi ince çıkar; kitap basılınca pratik çabuk oturur.",
+        BuildingKind::CottonGin => "Güçle çalışır: 3 pamuktan tohumu ayırıp 2 pamuk lifi verir. Pamuk yabanda bulunur, tarlada ekilir.",
+        BuildingKind::SpinningJenny => "Güçle çalışır: çok iğli; çıkrığın üç katı iplik eğirir (8 lifle 6 iplik).",
         _ => return None,
     })
 }
@@ -608,7 +662,7 @@ fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::w
 /// Perception level of the tribe, mirrored here so panels can dress themselves for the era.
 pub(crate) static ERA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
-pub const DISCOVERIES: [Discovery; 39] = [
+pub const DISCOVERIES: [Discovery; 54] = [
     Discovery::SharpStone,
     Discovery::StoneAxe,
     Discovery::Hammer,
@@ -648,6 +702,21 @@ pub const DISCOVERIES: [Discovery; 39] = [
     Discovery::Foundry,
     Discovery::Converter,
     Discovery::Machining,
+    Discovery::Throwing,
+    Discovery::OilPressing,
+    Discovery::Tanning,
+    Discovery::Curing,
+    Discovery::Smoking,
+    Discovery::Ropemaking,
+    Discovery::Wells,
+    Discovery::Felting,
+    Discovery::Hoisting,
+    Discovery::Glassblowing,
+    Discovery::Papermaking,
+    Discovery::Printing,
+    Discovery::Ginning,
+    Discovery::Spinning,
+    Discovery::Drawing,
 ];
 
 pub fn discovery_name(d: Discovery) -> &'static str {
@@ -692,6 +761,21 @@ pub fn discovery_name(d: Discovery) -> &'static str {
         Discovery::Foundry => "Dökümhane",
         Discovery::Converter => "Konvertör",
         Discovery::Machining => "Tezgahçılık",
+        Discovery::Throwing => "Çömlekçilik çarkı",
+        Discovery::OilPressing => "Yağ sıkma",
+        Discovery::Tanning => "Tabaklama",
+        Discovery::Curing => "Saklama",
+        Discovery::Smoking => "Tütsüleme",
+        Discovery::Ropemaking => "Halatçılık",
+        Discovery::Wells => "Kuyu",
+        Discovery::Felting => "Keçecilik",
+        Discovery::Hoisting => "Vinç",
+        Discovery::Glassblowing => "Camcılık",
+        Discovery::Papermaking => "Kâğıtçılık",
+        Discovery::Printing => "Matbaa",
+        Discovery::Ginning => "Pamuk",
+        Discovery::Spinning => "İplikçilik",
+        Discovery::Drawing => "Demir çekme",
     }
 }
 
@@ -1454,13 +1538,30 @@ fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &
     });
 }
 
+/// The groups of the build list, in the order they are shown.
+const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
+
+/// Which group of the build list a building stands in.
+fn build_group(kind: BuildingKind) -> usize {
+    use BuildingKind as B;
+    match kind {
+        B::Campfire | B::CharcoalKiln | B::Furnace | B::PitKiln | B::Bloomery | B::BlastFurnace | B::CokeOven | B::LimeKiln | B::CementKiln | B::BrickKiln | B::PuddlingFurnace | B::Bessemer | B::Cupola | B::GlassFurnace | B::Smokehouse => 0,
+        B::Workbench | B::Workshop | B::Anvil | B::IronAnvil | B::SteelAnvil | B::Loom | B::SpinningWheel | B::MoldingBench | B::PotterWheel | B::Tannery | B::FeltMallet | B::Ropewalk | B::PaperVat | B::PrintingPress => 1,
+        B::Field | B::Pen | B::HandMill | B::StoneMortar | B::WaterMill | B::DryingRack | B::OilPress | B::Well => 2,
+        B::WaterWheel | B::Windmill | B::AnimalGin | B::SteamEngine | B::Boiler | B::Bellows => 3,
+        B::TripHammer | B::Lathe | B::DrillMill | B::Press | B::Sawmill | B::PowerLoom | B::SteamHammer | B::RollingLine | B::RollingMill | B::ForgeHammer | B::CottonGin | B::SpinningJenny | B::Conveyor | B::Crane => 4,
+        B::Dynamo | B::Pole | B::ElectricMotor | B::ElectricLamp | B::Computer => 5,
+        B::Shelter | B::Depot | B::Cellar | B::MineShaft | B::Pump | B::Ruin => 6,
+    }
+}
+
 fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, acts: &mut Vec<UiAction>) {
     let defs = rules();
     let known: Vec<_> = defs.buildings.iter().filter(|b| w.knows(b.discovery)).collect();
     if known.is_empty() {
         ui.label("Henüz bir şey inşa etmeyi bilmiyorsun.");
     }
-    for b in known {
+    let card = |ui: &mut egui::Ui, b: &alaz_sim::rules::BuildingDef, acts: &mut Vec<UiAction>| {
         egui::Frame::new().fill(Color32::from_black_alpha(90)).inner_margin(8).corner_radius(0).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -1475,6 +1576,9 @@ fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: 
                     if let Some(note) = machine_note(b.kind) {
                         ui.label(RichText::new(note).small().weak());
                     }
+                    if b.heavy() && w.knows(Discovery::Hoisting) {
+                        ui.label(RichText::new("Büyük yapı: vinç yakınında dörtte bir ucuz.").small().weak());
+                    }
                     if let Some(req) = b.kind.requirement() {
                         if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
                             ui.label(RichText::new(requirement_note(req)).small().color(Color32::from_rgb(220, 180, 110)));
@@ -1488,6 +1592,23 @@ fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: 
                     }
                 });
             });
+        });
+    };
+    // grouped by what the building is for; a group opens by itself while there is something in it to build now
+    for (gi, name) in BUILD_GROUPS.iter().enumerate() {
+        let group: Vec<_> = known.iter().copied().filter(|b| build_group(b.kind) == gi).collect();
+        if group.is_empty() {
+            continue;
+        }
+        let ready = group.iter().filter(|b| b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory)).count();
+        let title = if ready > 0 { format!("{name} ({} / {} hazır)", ready, group.len()) } else { format!("{name} ({})", group.len()) };
+        // early on, with a handful of buildings known, everything is open; later the groups fold up to a line each
+        // (ALAZ_DEMO_GROUP=<n> keeps group n open for screenshots)
+        let open = known.len() <= 8 || std::env::var("ALAZ_DEMO_GROUP").ok().and_then(|v| v.parse::<usize>().ok()) == Some(gi);
+        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("build_group", gi)).default_open(open).show(ui, |ui| {
+            for b in group {
+                card(ui, b, acts);
+            }
         });
     }
     ui.add_space(4.0);
@@ -2700,6 +2821,19 @@ fn draw_building(
                 } else {
                     design_table(ui, w, acts);
                 }
+            }
+            if b.kind == BuildingKind::DryingRack {
+                let wet = !matches!(w.weather(), alaz_sim::time::Weather::Clear);
+                ui.label(RichText::new(if wet { "Yağmur ya da kar var: kurutma yarı hızda gidiyor." } else { "Hava açık: tam hızda kuruyor." }).small().color(if wet { Color32::from_rgb(235, 140, 90) } else { Color32::from_rgb(130, 200, 130) }));
+            }
+            if b.kind == BuildingKind::Smokehouse {
+                ui.label(RichText::new(if b.temp >= 70 { "Duman yeterince ılık: et tütsüleniyor." } else { "Odun yükle ve bir iş başlat: hafif ısı 70 °C'ye varınca tütsü başlar." }).small().weak());
+            }
+            if b.kind == BuildingKind::Crane {
+                ui.label(RichText::new("10 m içine kurulan büyük yapılar (12 kalem ve üstü) dörtte bir ucuz: Yapılar sekmesinde 'Büyük yapı' yazanlar.").small().weak());
+            }
+            if b.kind == BuildingKind::WaterMill {
+                ui.label(RichText::new("Akarsu çarkı döndürür: başında kimse durmasa da öğütür.").small().weak());
             }
             if b.kind == BuildingKind::Boiler {
                 ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor, 6 m içindeki buhar makineleri de buhar alıyor." } else { "Kömür, kok, katran ya da petrol ve iki dolu çömlek yükle: kazan 120 °C'yi geçince çalışır." }).small().weak());

@@ -23,7 +23,7 @@ pub use egui;
 pub use glam;
 pub use quality::{PixelDetail, Quality, ShadowQuality};
 pub use mesh::{ground_height, look, node_bounds, outfit_bits, Look};
-pub use mesh::{OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_HELM, OUT_HOOD, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
+pub use mesh::{OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_FELT, OUT_HELM, OUT_HOOD, OUT_LEATHER, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
 pub use renderer::{RenderStats, Renderer};
 
 use alaz_sim::BuildingKind;
