@@ -4,10 +4,10 @@
 
 use alaz_render::egui::{self, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Ui, Vec2};
 
-/// One pixel of the minigame art, in points: 2 at scale 1, and a whole number of screen pixels at any other scale
-/// (`set_unit` is called once per frame from the interface scale). Kept per thread: the interface runs on one, and
-/// tests that build interfaces of other sizes side by side must not change each other's unit.
 thread_local! {
+    /// One pixel of the minigame art, in points: 2 at scale 1, and a whole number of screen pixels at any other
+    /// scale (`set_unit` is called once per frame from the interface scale). Kept per thread: the interface runs on
+    /// one, and tests that build interfaces of other sizes side by side must not change each other's unit.
     static UNIT: std::cell::Cell<f32> = const { std::cell::Cell::new(2.0) };
 }
 
