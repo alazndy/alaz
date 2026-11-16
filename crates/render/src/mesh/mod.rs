@@ -12,6 +12,7 @@ mod buildings;
 mod common;
 mod creatures;
 mod decor;
+mod evo;
 mod human;
 mod machines;
 mod nodes;
@@ -20,6 +21,7 @@ mod terrain;
 mod water;
 
 pub use common::ground_height;
+pub use evo::{evo_pos, evo_stage, smooth, Evo, EVO_STAGES, EVO_STARTS};
 pub use nodes::node_bounds;
 pub(crate) use bodies::*;
 pub(crate) use buildings::*;

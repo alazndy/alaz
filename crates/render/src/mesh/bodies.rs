@@ -341,8 +341,9 @@ pub(crate) struct Pose {
     /// Clothes worn (bit 1 wrap, 2 cloak, 4 boots) and the person's id, which varies skin and hair.
     pub(crate) outfit: u16,
     pub(crate) id: u32,
-    /// How far the tribe has evolved, 0 (ape) to 5 (sage): posture, height and body hair follow.
-    pub(crate) stage: u8,
+    /// How far the tribe has evolved as a stage coordinate, 0 (ape) to 9 (sage), fractional between the named
+    /// stages: posture, height, proportions, body hair and trinkets all follow it (see `Evo`).
+    pub(crate) evo: f32,
     /// Rise of the ground along the heading (metres per metre): steep climbs and slides change the gait.
     pub(crate) slope: f32,
     /// Flinch after a blow, 1 to 0.
@@ -361,7 +362,7 @@ pub(crate) struct Pose {
 
 impl Pose {
     pub(crate) fn idle(t: f32) -> Pose {
-        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, stage: 5, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false }
+        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, evo: 9.0, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false }
     }
 }
 

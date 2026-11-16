@@ -560,6 +560,8 @@ impl Renderer {
             }
             // a person a few dozen pixels tall (zoomed far out) is drawn in a simpler build; the player never is
             let lod_humans = human_lod(&cam);
+            // how evolved the people look: the caller's smoothed value, or the world's perception as it stands
+            let evo = self.evo.unwrap_or_else(|| crate::evo_pos(world.perception_permille() as f32));
             let mut body_jobs: Vec<BodyJob> = Vec::with_capacity(world.agents.len());
             for a in &world.agents {
                 let (x, z) = (a.x as f32 / 1000.0, a.y as f32 / 1000.0);
@@ -591,7 +593,7 @@ impl Renderer {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (ground_height(world.seed, x + sx, z + sz) - ground_height(world.seed, x - sx, z - sz)) / 1.2
                 };
-                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, stage: world.perception_level(), slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated() };
+                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated() };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;
@@ -630,6 +632,20 @@ impl Renderer {
                     secs,
                     seed: a.id.0,
                 });
+            }
+            if let (Some((outfit, mode)), Some(me_job)) = (self.lineup.as_ref(), body_jobs.iter().find(|j| j.is_me)) {
+                // a row across the screen, facing the camera, a few metres in front of the player
+                let yaw = cam.yaw_deg.to_radians();
+                let (rx, rz) = (yaw.cos(), -yaw.sin());
+                let (cx, cz) = (me_job.x + yaw.sin() * 2.6, me_job.z + yaw.cos() * 2.6);
+                for i in 0..EVO_STAGES {
+                    let o = (i as f32 - (EVO_STAGES - 1) as f32 * 0.5) * 1.12;
+                    let (x, z) = (cx + rx * o, cz + rz * o);
+                    let f = i as f32;
+                    let walk = mode == "walk";
+                    let pose = Pose { heading: yaw, phase: secs * 5.0 + f * 0.7, amp: if walk { 1.0 } else { 0.0 }, t: secs, outfit: *outfit, id: self.lineup_id, evo: f, slope: 0.0, lod: mode == "lod", sit: mode == "sit", ..Pose::idle(secs) };
+                    body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32 });
+                }
             }
             let (body_mesh, me_range) = build_bodies(&body_jobs, art, wind);
             let base = dynamic.len() as u32;

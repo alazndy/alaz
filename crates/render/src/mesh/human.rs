@@ -124,15 +124,21 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let id = pose.id as usize;
     // every trait draws on its own hash of the id, so neighbours in the tribe do not share a look
     let lk = look(pose.id);
-    // the further from the ape, the straighter, taller and smoother: hunched and furry at stage 0
-    let stoop = (5 - pose.stage.min(5)) as f32 / 5.0;
-    let ape = stoop > 0.55;
+    // the further from the ape, the straighter, taller and smoother: hunched and furry at the first stage; every
+    // channel of `ev` slides with the stage coordinate, so nothing here ever jumps
+    let ev = Evo::at(pose.evo);
+    let stoop = ev.stoop;
+    let mixc = |a: [f32; 3], b: [f32; 3], k: f32| [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
     let fur = [0.33, 0.23, 0.15];
     let base_skin = lk.skin;
-    let skin = [0, 1, 2].map(|i| base_skin[i] + (fur[i] - base_skin[i]) * stoop * 0.5);
+    let skin = mixc(base_skin, fur, stoop * 0.5);
     let skin_dk = [skin[0] * 0.86, skin[1] * 0.8, skin[2] * 0.78];
-    let hair = lk.hair;
+    // body hair: the skin's colour thickening to fur
+    let furc = |c: [f32; 3]| mixc(c, fur, ev.fur);
+    // hair greys at the last stage
+    let hair = mixc(lk.hair, [0.76, 0.74, 0.7], ev.gray * 0.9);
     let brow = hair.map(|c| c * 0.55);
+    let wood = [0.46, 0.32, 0.18];
     let hide = [0.56, 0.37, 0.21];
     let hide_dk = [0.40, 0.26, 0.15];
     let fluff = [0.86, 0.80, 0.66];
@@ -162,6 +168,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     // build and height differ a little from person to person, so a tribe is not a row of copies
     let build = 0.94 + 0.04 * ((id * 7) % 4) as f32;
     let body_k = (0.86 + 0.14 * (1.0 - stoop)) * (0.97 + 0.02 * ((id * 5) % 3) as f32);
+    // legs run short against the trunk in the early stages: heights below the hip shrink, the rest moves down with them
+    let lg = ev.leg;
+    let drop = 0.9 * (1.0 - lg);
     let w = pose.work;
     let working = w != Work::None;
     let still = (1.0 - pose.amp * 4.0).clamp(0.0, 1.0) * if working { 0.0 } else { 1.0 };
@@ -175,7 +184,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let (crouch, lean) = if working { (act.crouch + 0.03 * hit, act.lean + stoop * 0.12) } else { (0.0, (pose.amp - 1.0).max(0.0) * 0.3 + stoop * 0.22) };
     // sitting at the fire: the hips drop and the back rounds a little
     let (crouch, lean) = if pose.sit && !working { (0.36, lean + 0.14) } else { (crouch, lean) };
-    let twist = act.twist;
+    // the early walk rolls the shoulders against the hips
+    let roll = if working { 0.0 } else { 0.12 * stoop * pose.phase.sin() * pose.amp.min(1.0) };
+    let twist = act.twist + roll;
     // on steep ground: climbing bends forward and grabs ahead, going down leans back and skids with arms out
     let moving = (pose.amp * 3.0).min(1.0) * if working { 0.0 } else { 1.0 };
     let ss = |a: f32, b: f32, v: f32| ((v - a) / (b - a)).clamp(0.0, 1.0);
@@ -198,6 +209,11 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         let f = [fx * tc * fwd, -ts * fwd * body_k, fz * tc * fwd];
         ellipsoid(out, c, [[rx * side * build, 0.0, rz * side * build], u, f], col, nu, 5);
     };
+    // the same with three rings: for flat trinkets, where five would be wasted
+    let part3 = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, col: [f32; 3], nu: usize| {
+        let (f, u) = ([fx * fwd, 0.0, fz * fwd], [0.0, up * body_k, 0.0]);
+        ellipsoid(out, c, [[rx * side * build, 0.0, rz * side * build], u, f], col, nu, 3);
+    };
     // the upper body, turned by `twist` over the hips
     let (ts_, tc_) = (pose.heading + twist).sin_cos();
     let (ufx, ufz, urx, urz) = (ts_, tc_, tc_, -ts_);
@@ -208,7 +224,13 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         let f = [ufx * tc * fwd, -ts * fwd * body_k, ufz * tc * fwd];
         ellipsoid(out, c, [[urx * side * build, 0.0, urz * side * build], u, f], col, nu, 5);
     };
-    let y = |h: f32| h + bob - crouch;
+    let upart3 = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, tilt: f32, col: [f32; 3], nu: usize| {
+        let (ts, tc) = tilt.sin_cos();
+        let u = [ufx * ts * up, tc * up * body_k, ufz * ts * up];
+        let f = [ufx * tc * fwd, -ts * fwd * body_k, ufz * tc * fwd];
+        ellipsoid(out, c, [[urx * side * build, 0.0, urz * side * build], u, f], col, nu, 3);
+    };
+    let y = |h: f32| (if h < 0.9 { h * lg } else { h - drop }) + bob - crouch;
     // bending forward turns the whole upper body over the hips, so the spine keeps its length; `lean` is how far
     // ahead the chest goes
     let bend = lean.atan2(0.4).clamp(-0.6, 1.2);
@@ -227,7 +249,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     for side in [-1.0f32, 1.0] {
         let ph = -side;
         // the foot's swing is the stride, fading in from a standstill; planted feet keep pace with the ground
-        let off = pose.phase.sin() * pose.stride * pose.amp.min(1.0) * (1.0 - 0.85 * slide) * ph;
+        let off = pose.phase.sin() * pose.stride * (0.84 + 0.16 * (1.0 - stoop)) * pose.amp.min(1.0) * (1.0 - 0.85 * slide) * ph;
         let lift = ((pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI }).cos()).max(0.0) * pose.amp * 0.14 * (1.0 + 1.4 * climb) * (1.0 - slide);
         let planted = if working { 0.1 * ph } else { 0.0 } + slide * 0.16 * ph;
         let hip = at(0.0, y(0.88), side * 0.1);
@@ -259,12 +281,12 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                 lift
             };
             let ankle = at(off + planted, lift + 0.09, side * 0.11);
-            let bend = 0.07 + 0.18 * (crouch / 0.36) + lift * 0.9;
-            let knee = at((off + planted) * 0.5 + bend, 0.47 + lift * 0.5 - crouch * 0.35, side * 0.11);
+            let bend = 0.07 + 0.18 * (crouch / 0.36) + lift * 0.9 + 0.05 * stoop;
+            let knee = at((off + planted) * 0.5 + bend, 0.47 * lg + lift * 0.5 - crouch * 0.35, side * 0.11);
             (ankle, knee, at(off + planted + 0.06, lift + 0.045, side * 0.11))
         };
         let trousers = apron;
-        limb(out, hip, knee, 0.09, 0.07, if trousers { denim } else if ape { fur } else { skin_dk }, 6);
+        limb(out, hip, knee, 0.09, 0.07, if trousers { denim } else { furc(skin_dk) }, 6);
         limb(out, knee, ankle, 0.07, 0.05, if boots { hide } else if trousers { denim } else { skin_dk }, 6);
         part(out, foot, 0.06, 0.045, 0.11, 0.0, if boots { hide_dk } else { skin_dk }, 6);
         if boots && !lod {
@@ -275,13 +297,14 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
 
     // torso: hips, a waist and a chest wider than it is deep, rounded shoulders
-    let torso_col = if ape { fur } else { skin };
-    part(out, pelvis, 0.17 * hip_k, 0.12, 0.12, 0.0, if ape { fur } else { skin_dk }, 8);
+    let torso_col = furc(skin);
+    part(out, pelvis, 0.17 * hip_k, 0.12, 0.12, 0.0, furc(skin_dk), 8);
     limb(out, pelvis, chest, 0.15, 0.17, torso_col, 8);
     upart(out, chest, 0.22 * sh_k, 0.17, 0.14, tilt, torso_col, 9);
-    if ape {
-        // shaggy shoulders and back
-        sphere(out, ub(-0.06, 1.4, 0.0), [0.2, 0.12, 0.2], fur, 8, 4, 0.18, id as u32);
+    // shaggy shoulders and back, thinning with the fur
+    let shaggy = (ev.fur - 0.08) / 0.92;
+    if shaggy > 0.03 {
+        sphere(out, ub(-0.06, 1.4, 0.0), [0.2 * shaggy, 0.12 * shaggy, 0.2 * shaggy], fur, 8, 4, 0.18, id as u32);
     }
     // a loincloth until the tribe learns to make clothes; then a fibre skirt and a band across the chest
     if tunic {
@@ -299,12 +322,28 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     } else {
         limb(out, at(0.0, y(0.92), 0.0), at(0.03, y(0.66), 0.0), 0.165, 0.14, hide, 7);
     }
-    if pose.stage >= 2 {
-        // a belt with a pouch on the hip for what the hands do not hold
-        let belt_r = if tunic || apron || plate { 0.2 } else { 0.175 };
+    if ev.belt > 0.03 {
+        // a belt with a pouch on the hip for what the hands do not hold; it grows out of the hips
+        let k = ev.belt;
+        let belt_r = (if tunic || apron || plate { 0.2 } else { 0.175 }) * (0.64 + 0.36 * k);
         limb(out, at(0.0, y(0.97), 0.0), at(0.0, y(0.91), 0.0), belt_r * hip_k.max(1.0), belt_r * hip_k.max(1.0), hide_dk, 9);
         if !lod {
-            part(out, at(-0.02, y(0.86), 0.19), 0.05, 0.065, 0.06, 0.0, hide, 6);
+            part(out, at(-0.02, y(0.86), 0.19 * (0.6 + 0.4 * k)), 0.05 * k, 0.065 * k, 0.06 * k, 0.0, hide, 6);
+        }
+    }
+    if ev.tools > 0.03 && !lod {
+        // a small hammer hung at the other hip
+        let k = ev.tools;
+        let top = at(-0.04, y(0.95), -0.21 * hip_k);
+        let bot = at(-0.06, y(0.95 - 0.3 * k), -0.23 * hip_k);
+        limb(out, top, bot, 0.018 * k, 0.016 * k, wood, 5);
+        part3(out, bot, 0.05 * k, 0.034 * k, 0.034 * k, steel_dk, 5);
+    }
+    // ochre stripes across a bare chest
+    if ev.ochre > 0.03 && !lod && !(tunic || plate || cloak || apron || wrap) {
+        let k = ev.ochre;
+        for (h, w) in [(1.37, 0.12), (1.29, 0.145)] {
+            upart3(out, ub(0.137, h, 0.0), w * k, 0.014, 0.012, tilt, [0.72, 0.3, 0.14], 6);
         }
     }
     if apron {
@@ -333,6 +372,23 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         limb(out, ub(-0.1, 1.42, 0.0), at(-0.16, y(0.7) + crouch * 0.4, 0.0), 0.21, 0.27, cl_dk, 8);
         sphere(out, ub(-0.02, 1.46, 0.0), [0.17, 0.05, 0.16], cl_fluff, 8, 4, 0.12, 2);
     }
+    // a gatherer's woven sack on the hip, hung from a strap across the chest
+    let clothed = tunic || plate || cloak || apron || wrap;
+    let skin_out = if clothed { 0.045 } else { 0.0 };
+    if ev.sack > 0.03 {
+        let k = ev.sack;
+        let (a, m, b) = (ub(0.06 + skin_out, 1.45, 0.14), ub(0.165 + skin_out, 1.27, 0.0), ub(0.1 + skin_out, 1.1, -0.15));
+        limb(out, a, m, 0.022 * k, 0.022 * k, [0.74, 0.62, 0.36], 5);
+        limb(out, m, b, 0.022 * k, 0.022 * k, [0.74, 0.62, 0.36], 5);
+        sphere(out, ub(-0.12, 1.12, -0.21), [0.12 * k, 0.15 * k, 0.1 * k], [0.64, 0.52, 0.3], 6, 3, 0.2, id as u32 + 3);
+    }
+    // a sash of dyed cloth the other way across the chest
+    if ev.sash > 0.03 {
+        let k = ev.sash;
+        let (a, m, b) = (ub(0.06 + skin_out, 1.46, -0.15), ub(0.17 + skin_out, 1.26, 0.0), ub(0.11 + skin_out, 1.06, 0.15));
+        limb(out, a, m, 0.036 * k, 0.036 * k, dye, 6);
+        limb(out, m, b, 0.036 * k, 0.036 * k, dye, 6);
+    }
 
     // head: turns to look around while standing idle
     let look = ((pose.t * 0.45 + id as f32 * 1.3).sin() * 1.6).clamp(-1.0, 1.0) * 0.55 * still;
@@ -343,66 +399,131 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     let hpart = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, col: [f32; 3]| {
         ellipsoid(out, c, [[hrx * side, 0.0, hrz * side], [0.0, up * body_k, 0.0], [hfx * fwd, 0.0, hfz * fwd]], col, 8, 5);
     };
+    // the same with three rings: for what sits on the head thinly (brows, paint, brims)
+    let hflat = |out: &mut Mesh, c: [f32; 3], side: f32, up: f32, fwd: f32, col: [f32; 3]| {
+        ellipsoid(out, c, [[hrx * side, 0.0, hrz * side], [0.0, up * body_k, 0.0], [hfx * fwd, 0.0, hfz * fwd]], col, 8, 3);
+    };
     limb(out, chest, neck, 0.075, 0.065, skin, 6);
-    hpart(out, head, 0.135, 0.15, 0.14, skin);
-    // jaw and chin, ears
-    hpart(out, hd(0.04 + 0.04 * stoop, -0.08, 0.0), 0.095, 0.06, 0.09 + 0.03 * stoop, skin);
+    // a larger skull and a higher brow as the stages go on
+    hpart(out, head, 0.135, 0.145 + 0.012 * (1.0 - ev.brow), 0.14, skin);
+    // jaw and chin, ears; the jaw and muzzle jut forward in the early stages
+    hpart(out, hd(0.04 + 0.04 * ev.muzzle, -0.08, 0.0), 0.095, 0.06, 0.09 + 0.03 * ev.muzzle, skin);
+    if ev.muzzle > 0.05 {
+        // the muzzle itself: a lighter, pinker bulge under the nose
+        let m = ev.muzzle;
+        hflat(out, hd(0.1 + 0.025 * m, -0.07, 0.0), 0.07 * m, 0.045 * m, 0.06 * m, mixc(skin, [0.86, 0.6, 0.5], 0.3));
+    }
     for side in [-1.0f32, 1.0] {
         if !lod {
-            hpart(out, hd(-0.01, 0.0, side * 0.135), 0.022, 0.04, 0.03, skin_dk);
+            hpart(out, hd(-0.01, 0.0, side * 0.135), 0.022 + 0.012 * ev.muzzle, 0.04 + 0.012 * ev.muzzle, 0.03, skin_dk);
         }
     }
-    if stoop > 0.35 {
-        // an early skull: a heavy brow ridge
-        hpart(out, hd(0.1, 0.055, 0.0), 0.13, 0.035, 0.05, skin_dk);
+    if ev.brow > 0.04 {
+        // a heavy brow ridge over the eyes, lower and thicker the nearer the ape
+        let b = ev.brow;
+        hflat(out, hd(0.1, 0.05 + 0.005 * b, 0.0), 0.13, 0.015 + 0.02 * b, 0.02 + 0.03 * b, skin_dk);
     }
     // eyes, brows and a nose; at 27 texels to the metre a face is a few texels, so the eyes sit in a dark band
     // (brows dark, a touch of shadow beside the nose) and the mouth is a single line
     for side in [-1.0f32, 1.0] {
-        sphere(out, hd(0.127, 0.012, side * 0.052), [0.024, 0.02, 0.02], [0.05, 0.04, 0.04], 4, 3, 0.0, 1);
-        if stoop <= 0.35 {
-            hpart(out, hd(0.12, 0.052, side * 0.052), 0.034, 0.014, 0.02, brow);
-        } else {
+        sphere(out, hd(0.127, 0.012, side * (0.052 - 0.008 * ev.brow)), [0.024, 0.02, 0.02], [0.05, 0.04, 0.04], 4, 3, 0.0, 1);
+        // brows are hair at the last stage and a shadowed ridge at the first
+        hflat(out, hd(0.12, 0.052 - 0.01 * ev.brow, side * 0.052), 0.034, 0.014 + 0.008 * ev.brow, 0.02, mixc(brow, skin_dk, ev.brow));
+        if ev.brow > 0.1 {
             // under the heavy ridge the eyes are deep in shadow
-            hpart(out, hd(0.118, 0.026, side * 0.052), 0.036, 0.022, 0.02, skin_dk);
+            hflat(out, hd(0.118, 0.026, side * 0.052), 0.036, 0.022 * ev.brow, 0.02, skin_dk);
         }
     }
     let nose_dk = [skin[0] * 0.8, skin[1] * 0.68, skin[2] * 0.62];
-    hpart(out, hd(0.15, -0.025, 0.0), 0.026, 0.035, 0.03, [skin[0] * 0.95, skin[1] * 0.84, skin[2] * 0.78]);
+    hpart(out, hd(0.15 - 0.012 * ev.muzzle, -0.025, 0.0), 0.026 + 0.012 * ev.muzzle, 0.035 - 0.005 * ev.muzzle, 0.03, [skin[0] * 0.95, skin[1] * 0.84, skin[2] * 0.78]);
     if !lod {
         hpart(out, hd(0.14, -0.06, 0.0), 0.03, 0.01, 0.026, nose_dk);
-        hpart(out, hd(0.122, -0.088, 0.0), 0.034, 0.007, 0.016, [skin[0] * 0.6, skin[1] * 0.4, skin[2] * 0.38]);
-    }
-    // hair: one of six cuts per person (the ape is always shaggy), and a beard on some
-    let style = if ape { 3 } else { lk.style };
-    let crop = if style == 5 { 0.94 } else { 1.0 };
-    hpart(out, hd(-0.02, 0.055, 0.0), 0.148 * crop, 0.12 * crop, 0.15 * crop, hair);
-    if style != 5 {
-        hpart(out, hd(0.075, 0.1, 0.0), 0.12, 0.045, 0.07, hair);
-    }
-    match style {
-        // a braid over one shoulder, tied off with a bit of hide
-        4 => {
-            let side = lk.braid_side;
-            let top = hd(-0.07, -0.02, side * 0.09);
-            let end = [neck[0] + urx * side * 0.17 - ufx * 0.08, neck[1] - 0.3 * body_k, neck[2] + urz * side * 0.17 - ufz * 0.08];
-            limb(out, top, end, 0.045, 0.028, hair, 6);
-            if !lod {
-                sphere(out, end, [0.03; 3], hide, 5, 3, 0.0, 1);
+        hpart(out, hd(0.122, -0.088, 0.0), 0.034 + 0.01 * ev.muzzle, 0.007, 0.016, [skin[0] * 0.6, skin[1] * 0.4, skin[2] * 0.38]);
+        if ev.ochre > 0.03 && !helm {
+            // war paint: a stripe over each cheek
+            for side in [-1.0f32, 1.0] {
+                hflat(out, hd(0.115, -0.015, side * 0.078), 0.03 * ev.ochre, 0.006, 0.022, [0.72, 0.3, 0.14]);
             }
         }
-        5 => {}
-        // long hair down the back
-        1 => limb(out, hd(-0.08, 0.02, 0.0), [neck[0] - fx * 0.14, neck[1] - 0.16 * body_k, neck[2] - fz * 0.14], 0.12, 0.08, hair, 7),
-        // a knot on top
-        2 => sphere(out, hd(-0.07, 0.17, 0.0), [0.065, 0.06, 0.065], hair, 6, 4, 0.0, 3),
-        // shaggy all round
-        3 => sphere(out, hd(-0.04, 0.03, 0.0), [0.17, 0.14, 0.17], hair, 8, 5, 0.22, id as u32),
-        // short, with a tuft down the neck
-        _ => hpart(out, hd(-0.1, -0.05, 0.0), 0.09, 0.09, 0.06, hair),
+        if ev.tooth > 0.03 {
+            // a necklace of teeth round the base of the neck (two strands of beads meeting in a longer tooth)
+            let k = ev.tooth;
+            let bead = |a: f32| ub(0.03 + 0.1 * a.cos() + skin_out, 1.46 - 0.045 * a.cos(), 0.115 * a.sin());
+            let (l, r, mid) = (bead(-1.25), bead(1.25), bead(0.0));
+            limb(out, l, mid, 0.017 * k, 0.017 * k, [0.93, 0.9, 0.8], 4);
+            limb(out, mid, r, 0.017 * k, 0.017 * k, [0.93, 0.9, 0.8], 4);
+            limb(out, ub(0.13 + skin_out, 1.41, 0.0), ub(0.14 + skin_out, 1.41 - 0.07 * k, 0.0), 0.02 * k, 0.006 * k, [0.93, 0.9, 0.8], 4);
+        }
+        if ev.amulet > 0.03 {
+            // a gold disc on a cord
+            let k = ev.amulet;
+            upart3(out, ub(0.17 + skin_out, 1.35, 0.0), 0.04 * k, 0.045 * k, 0.012 * k, tilt, [0.92, 0.74, 0.28], 6);
+        }
     }
-    if !ape && lk.beard {
-        hpart(out, hd(0.09, -0.1, 0.0), 0.1, 0.07, 0.07, hair);
+    // hair: the person's own cut grows in as the shaggy mane thins away (the first stage is always shaggy), and a
+    // beard on some
+    let style = lk.style;
+    let shag = if style == 3 { 1.0 } else { ev.shag };
+    let cut = 1.0 - ev.shag;
+    let crop = if style == 5 { 0.94 + 0.06 * ev.shag } else { 1.0 };
+    // the hairline comes down over a low brow
+    let low = 0.035 * ev.brow;
+    hpart(out, hd(-0.02, 0.055 - low * 0.5, 0.0), 0.148 * crop, 0.12 * crop, 0.15 * crop, hair);
+    let fringe = if style != 5 { 1.0 } else { ev.shag };
+    if fringe > 0.03 {
+        hpart(out, hd(0.075, 0.1 - low, 0.0), 0.12 * fringe, 0.045 * fringe, 0.07 * fringe, hair);
+    }
+    if shag > 0.03 {
+        // shaggy all round
+        sphere(out, hd(-0.04, 0.03, 0.0), [0.17 * shag, 0.14 * shag, 0.17 * shag], hair, 8, 5, 0.22, id as u32);
+    }
+    if cut > 0.03 {
+        match style {
+            // a braid over one shoulder, tied off with a bit of hide
+            4 => {
+                let side = lk.braid_side;
+                let top = hd(-0.07, -0.02, side * 0.09);
+                let full = [neck[0] + urx * side * 0.17 - ufx * 0.08, neck[1] - 0.3 * body_k, neck[2] + urz * side * 0.17 - ufz * 0.08];
+                let end = mixc(top, full, cut);
+                limb(out, top, end, 0.045, 0.028, hair, 6);
+                if !lod {
+                    sphere(out, end, [0.03 * cut; 3], hide, 5, 3, 0.0, 1);
+                }
+            }
+            5 => {}
+            // long hair down the back
+            1 => {
+                let top = hd(-0.08, 0.02, 0.0);
+                let full = [neck[0] - fx * 0.14, neck[1] - 0.16 * body_k, neck[2] - fz * 0.14];
+                limb(out, top, mixc(top, full, cut), 0.12, 0.08, hair, 7)
+            }
+            // a knot on top
+            2 => sphere(out, hd(-0.07, 0.17, 0.0), [0.065 * cut, 0.06 * cut, 0.065 * cut], hair, 6, 4, 0.0, 3),
+            3 => {}
+            // short, with a tuft down the neck
+            _ => hpart(out, hd(-0.1, -0.05, 0.0), 0.09 * cut, 0.09 * cut, 0.06 * cut, hair),
+        }
+    }
+    // beards: some men grow one from the early stages, every sage wears a long one
+    let beard = if lk.beard { ev.beard_grow.max(ev.beard_all) } else { ev.beard_all };
+    if beard > 0.05 {
+        hflat(out, hd(0.09, -0.1, 0.0), 0.1 * beard, 0.07 * beard, 0.07 * beard, hair);
+        if ev.beard_all > 0.05 {
+            let k = ev.beard_all;
+            let top = hd(0.07, -0.14, 0.0);
+            let full = ub(0.1, 1.28, 0.0);
+            limb(out, top, mixc(top, full, k), 0.075, 0.03, hair, 6);
+        }
+    }
+    if ev.hat > 0.03 && !helm && !hood {
+        // a straw hat with a dyed band, its brim spreading as it comes on
+        let k = ev.hat;
+        let straw = [0.86, 0.74, 0.42];
+        hflat(out, hd(0.0, 0.1 + 0.025 * k, 0.0), 0.09 + 0.15 * k, 0.012, 0.09 + 0.15 * k, straw);
+        hflat(out, hd(-0.01, 0.1, 0.0), 0.14 * k, 0.08 * k, 0.14 * k, straw);
+        if !lod {
+            hflat(out, hd(-0.01, 0.12, 0.0), 0.146 * k, 0.014 * k, 0.146 * k, dye);
+        }
     }
     if hood {
         // a linen hood: over the crown and ears, a cowl at the neck and a soft point behind
@@ -424,12 +545,12 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     }
 
     // arms: shoulder, elbow, hand; an ape's hang lower
-    let reach = 0.12 * stoop;
+    let reach = 0.12 * ev.arm;
     let arm = |out: &mut Mesh, side: f32, hand: [f32; 3]| {
         let sh = ub(0.0, 1.42, side * 0.235 * sh_k);
         let mid = [(sh[0] + hand[0]) * 0.5, (sh[1] + hand[1]) * 0.5, (sh[2] + hand[2]) * 0.5];
         let elbow = [mid[0] + urx * side * 0.07 - ufx * 0.03, mid[1] - 0.06, mid[2] + urz * side * 0.07 - ufz * 0.03];
-        let upper = if cloak { cl } else if tunic { dye } else if apron { linen } else if ape { fur } else { skin };
+        let upper = if cloak { cl } else if tunic { dye } else if apron { linen } else { furc(skin) };
         if plate {
             sphere(out, sh, [0.098, 0.07, 0.098], bronze, 6, 4, 0.0, 1);
         } else {
@@ -437,14 +558,19 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
         }
         limb(out, sh, elbow, 0.065, 0.052, upper, 6);
         limb(out, elbow, hand, 0.052, 0.042, skin, 6);
+        if ev.tools > 0.03 && !lod {
+            // a leather cuff on the wrist, wider as the smith's trade comes on
+            let c0 = [elbow[0] + (hand[0] - elbow[0]) * 0.55, elbow[1] + (hand[1] - elbow[1]) * 0.55, elbow[2] + (hand[2] - elbow[2]) * 0.55];
+            let c1 = [elbow[0] + (hand[0] - elbow[0]) * 0.92, elbow[1] + (hand[1] - elbow[1]) * 0.92, elbow[2] + (hand[2] - elbow[2]) * 0.92];
+            limb(out, c0, c1, 0.04 + 0.02 * ev.tools, 0.036 + 0.02 * ev.tools, hide_dk, 6);
+        }
         sphere(out, hand, [0.055; 3], skin, 6, 4, 0.0, 1);
     };
-    let wood = [0.46, 0.32, 0.18];
     match w {
         Work::None => {
             for side in [-1.0f32, 1.0] {
-                let off = swing * side * 0.3;
-                let walk = at(off + lean * 0.6, 0.86 + bob + 0.05 * pose.amp - reach, side * 0.28);
+                let off = swing * side * (0.3 + 0.1 * stoop);
+                let walk = at(off + lean * 0.6, 0.86 + bob + 0.05 * pose.amp - reach - drop, side * 0.28);
                 // climbing: hands reach up the slope in turn; sliding: arms out for balance
                 let grab = (pose.phase + if side > 0.0 { 0.0 } else { std::f32::consts::PI }).sin();
                 let up = at(0.42 + 0.12 * grab, 1.0 + 0.22 * grab - crouch, side * 0.22);

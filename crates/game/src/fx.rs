@@ -11,6 +11,8 @@ const SPLASH: f32 = 3.4;
 const ENTER: f32 = 3.8;
 /// The camera's swoop down into the world.
 const SWOOP: f32 = 2.6;
+/// How long the card for a new body stage stays.
+const EVOLVE: f32 = 4.0;
 
 #[derive(Default)]
 pub struct Fx {
@@ -18,6 +20,8 @@ pub struct Fx {
     enter: Option<f32>,
     title: String,
     subtitle: String,
+    /// A new named body stage was just reached: seconds since, and its name.
+    evolve: Option<(f32, String)>,
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -40,7 +44,18 @@ impl Fx {
         self.subtitle = crate::hud::era_name(w).to_string();
     }
 
+    /// The tribe has grown into a new named stage of the body: a small card slides in and fades out.
+    pub fn evolved(&mut self, name: &str) {
+        self.evolve = Some((0.0, name.to_string()));
+    }
+
     pub fn update(&mut self, dt: f32) {
+        if let Some((t, _)) = self.evolve.as_mut() {
+            *t += dt;
+            if *t >= EVOLVE {
+                self.evolve = None;
+            }
+        }
         if let Some(t) = self.splash.as_mut() {
             *t += dt;
             if *t >= SPLASH {
@@ -86,6 +101,9 @@ impl Fx {
         }
         if let Some(t) = self.enter {
             enter(ctx, t, &self.title, &self.subtitle);
+        }
+        if let Some((t, name)) = self.evolve.as_ref() {
+            evolve(ctx, *t, name);
         }
     }
 }
@@ -184,5 +202,30 @@ fn enter(ctx: &egui::Context, t: f32, title: &str, subtitle: &str) {
         let w = 260.0 * ((t - 1.0) / 0.5).clamp(0.0, 1.0);
         p.rect_filled(Rect::from_min_size(pos2((c.x - w / 2.0).round(), y + 30.0), vec2(w.round(), 4.0)), 0.0, Color32::from_rgba_unmultiplied(214, 110, 40, a(1.0)));
         p.text(pos2(c.x, y + 56.0), Align2::CENTER_CENTER, subtitle, FontId::proportional(22.0), Color32::from_rgba_unmultiplied(236, 226, 206, a(1.0)));
+    }
+}
+
+/// The card for a new stage of the body: "Evrildin" over the name, rising a little as it fades in and out, with
+/// a few golden sparks drifting up from it.
+fn evolve(ctx: &egui::Context, t: f32, name: &str) {
+    let p = layer(ctx, "fx_evolve");
+    let r = ctx.content_rect();
+    let fade = (t / 0.5).clamp(0.0, 1.0) * (1.0 - ((t - (EVOLVE - 1.0)) / 1.0).clamp(0.0, 1.0));
+    if fade <= 0.0 {
+        return;
+    }
+    let a = |v: f32| (v * fade * 255.0) as u8;
+    let c = pos2(r.center().x, r.top() + r.height() * 0.2 - 10.0 * ease_out(t / 0.6));
+    p.rect_filled(Rect::from_center_size(c, vec2(300.0, 62.0)), 0.0, Color32::from_rgba_unmultiplied(10, 6, 4, a(0.55)));
+    p.rect_filled(Rect::from_center_size(pos2(c.x, c.y + 31.0), vec2(300.0 * ease_out(t / 0.8), 3.0)), 0.0, Color32::from_rgba_unmultiplied(214, 110, 40, a(1.0)));
+    p.text(pos2(c.x, c.y - 14.0), Align2::CENTER_CENTER, "Evrildin", FontId::proportional(16.0), Color32::from_rgba_unmultiplied(236, 226, 206, a(1.0)));
+    p.text(pos2(c.x + 2.0, c.y + 12.0), Align2::CENTER_CENTER, name, FontId::proportional(28.0), Color32::from_rgba_unmultiplied(40, 20, 8, a(1.0)));
+    p.text(pos2(c.x, c.y + 10.0), Align2::CENTER_CENTER, name, FontId::proportional(28.0), Color32::from_rgba_unmultiplied(246, 206, 112, a(1.0)));
+    for k in 0..14u32 {
+        let h = k.wrapping_mul(2_654_435_761);
+        let x = c.x - 140.0 + (h & 1023) as f32 / 1023.0 * 280.0;
+        let rise = ((t * (24.0 + (h >> 10 & 15) as f32) + (h >> 16 & 63) as f32) % 70.0).max(0.0);
+        let glow = 0.4 + 0.6 * ((t * 6.0 + k as f32).sin() * 0.5 + 0.5);
+        p.rect_filled(Rect::from_min_size(pos2(x.round(), (c.y + 28.0 - rise).round()), vec2(3.0, 3.0)), 0.0, Color32::from_rgba_unmultiplied(255, 200, 80, a(0.8 * glow * (1.0 - rise / 70.0))));
     }
 }

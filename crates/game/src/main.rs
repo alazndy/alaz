@@ -476,7 +476,8 @@ fn demo_setup(w: &mut World) -> Selection {
         w.forget_everything();
     }
     // Dev aids for looking at the character: ALAZ_DEMO_STAGE=0..5 sets the perception stage (and so the body, the
-    // interface theme and the font); ALAZ_DEMO_OUTFIT=<mask> puts clothes in the player's hands: 1 fibre wrap, 2 cloak,
+    // interface theme and the font); ALAZ_DEMO_EVO=0..9 (fractional) draws the body and portrait at that stage
+    // coordinate whatever the stage is; ALAZ_DEMO_OUTFIT=<mask> puts clothes in the player's hands: 1 fibre wrap, 2 cloak,
     // 4 boots, 8 tunic, 16 hood, 32 bronze plate, 64 steel helm, 128 apron, 256 felt cloak, 512 leather armour
     // (ALAZ_DEMO_DRESSED is mask 7).
     if let Some(st) = std::env::var("ALAZ_DEMO_STAGE").ok().and_then(|v| v.parse::<usize>().ok()) {
@@ -627,8 +628,15 @@ struct App {
     /// Which ground states have been explained once (bit per `alaz_sim::Surface`).
     surf_hinted: u8,
     last_strike: Option<(bool, f32)>,
-    /// The evolution stage last seen, to announce the next one.
+    /// The evolution stage (0..=9) last seen, to announce the next one.
     last_stage: u8,
+    /// The perception (permille) the people are drawn at: it glides toward the world's over a few seconds, so a
+    /// sudden gain in understanding changes the body gradually (None until the first frame of a world).
+    evo_view: Option<f32>,
+    /// The stage coordinate drawn this frame (`alaz_render::Evo`), for the bodies and the portrait.
+    evo_pos: f32,
+    /// Dev aid: `ALAZ_DEMO_EVO=0..9` draws everyone at this stage coordinate, whatever the world says.
+    evo_force: Option<f32>,
     knap: hud::KnapState,
     story: story::Story,
     /// The title screen and the way into a world.
@@ -749,6 +757,9 @@ impl App {
             surf_hinted: 0,
             last_strike: None,
             last_stage: 255,
+            evo_view: None,
+            evo_pos: 9.0,
+            evo_force: std::env::var("ALAZ_DEMO_EVO").ok().and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 9.0)),
             knap: hud::KnapState::default(),
             story: story::Story::default(),
             fx: fx::Fx::default(),
@@ -779,6 +790,10 @@ impl App {
             net,
             me,
         };
+        // dev aid: ALAZ_DEMO_EVO_CARD=<stage 0..9> shows the card for reaching that stage at the start
+        if let Some(i) = std::env::var("ALAZ_DEMO_EVO_CARD").ok().and_then(|v| v.parse::<usize>().ok()) {
+            app.fx.evolved(hud::EVO_NAMES[i.min(hud::EVO_NAMES.len() - 1)]);
+        }
         if let Some(z) = std::env::var("ALAZ_DEMO_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()) {
             app.cam.zoom = z;
         }
@@ -894,6 +909,7 @@ impl App {
         self.prev_hp = None;
         self.hurt_flash = 0.0;
         self.last_stage = 255;
+        self.evo_view = None;
         self.last_strike = None;
         self.knap = hud::KnapState::default();
         self.zoom_before = None;
@@ -1295,11 +1311,26 @@ impl App {
 
         let sim_ms = sim_t0.elapsed().as_secs_f32() * 1000.0;
         // hints: sim events and need warnings
-        let stage = self.world.perception_level().min(5);
+        let pm = self.world.perception_permille();
+        let stage = alaz_render::evo_stage(pm) as u8;
         if self.last_stage != 255 && stage > self.last_stage {
-            self.say(format!("Evrildin: {}. {}", hud::STAGES[stage as usize], hud::stage_gift(stage)));
+            // a new named stage: say what changed, and when it is also a step in what the hands can do, that too
+            let mut line = format!("Evrildin: {}. {}", hud::EVO_NAMES[stage as usize], hud::evo_look(stage));
+            if alaz_sim::PERCEPTION_STEPS.contains(&alaz_render::EVO_STARTS[stage as usize]) {
+                line += &format!(" {}", hud::stage_gift(self.world.perception_level()));
+            }
+            self.say(line);
+            self.fx.evolved(hud::EVO_NAMES[stage as usize]);
         }
         self.last_stage = stage;
+        // the body follows the understanding with a lag of a few seconds
+        let goal = pm as f32;
+        let view = self.evo_view.map_or(goal, |v| glide_evo(v, goal, dt));
+        self.evo_view = Some(view);
+        self.evo_pos = self.evo_force.unwrap_or_else(|| alaz_render::evo_pos(view));
+        if let Some(g) = self.gfx.as_mut() {
+            g.renderer.evo = Some(self.evo_pos);
+        }
         let events = self.world.take_events();
         let me = self.me;
         if (!self.no_save || std::env::var_os("ALAZ_PLAYLOG").is_some()) && matches!(self.net, Net::Solo) {
@@ -1545,6 +1576,7 @@ impl App {
             anchor: world_ref_anchor,
             grip: self.binds.held(&self.keys, keys::Action::Grip),
             time_scale: self.time_scale,
+            evo: self.evo_pos,
         };
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
@@ -2329,4 +2361,54 @@ fn main() {
     let el = EventLoop::new().expect("event loop");
     el.set_control_flow(ControlFlow::Poll);
     el.run_app(&mut App::new(parse_args())).expect("run");
+}
+
+/// How long the drawn body takes to cover most of the way (seconds, as an exponential time constant): 90% in about
+/// four seconds and 99% in about eight, so a sudden gain in understanding changes the body over a few seconds.
+const EVO_TAU: f32 = 1.8;
+
+/// One frame of the body's glide toward the perception it has reached (both in permille): an exponential approach,
+/// the same whatever the frame rate, that lands on the goal once it is within half a permille.
+fn glide_evo(view: f32, goal: f32, dt: f32) -> f32 {
+    let n = view + (goal - view) * (1.0 - (-dt.max(0.0) / EVO_TAU).exp());
+    if (goal - n).abs() < 0.4 {
+        goal
+    } else {
+        n
+    }
+}
+
+#[cfg(test)]
+mod glide_tests {
+    use super::*;
+
+    fn run(from: f32, to: f32, secs: f32, fps: f32) -> f32 {
+        let mut v = from;
+        for _ in 0..(secs * fps) as usize {
+            v = glide_evo(v, to, 1.0 / fps);
+        }
+        v
+    }
+
+    #[test]
+    fn body_catches_up_in_seconds() {
+        // 0 to a gameplay step 860: nine tenths of the way in 4.5 s, all but done in 9 s, never past the goal
+        assert!(run(0.0, 860.0, 4.5, 60.0) > 0.9 * 860.0);
+        assert!(run(0.0, 860.0, 9.0, 60.0) > 0.99 * 860.0);
+        assert!(run(0.0, 860.0, 1.0, 60.0) < 0.5 * 860.0, "not instant");
+        assert_eq!(run(0.0, 860.0, 30.0, 60.0), 860.0);
+        // the other way round too, and a long frame (a hitch) does not overshoot
+        assert!(run(860.0, 100.0, 9.0, 60.0) < 100.0 + 0.01 * 760.0);
+        assert!(glide_evo(0.0, 500.0, 5.0) <= 500.0);
+        // the frame rate does not matter
+        let (a, b) = (run(0.0, 640.0, 3.0, 144.0), run(0.0, 640.0, 3.0, 30.0));
+        assert!((a - b).abs() < 2.0, "{a} vs {b}");
+        // each frame moves a little: no jump on the way
+        let mut v = 0.0;
+        for _ in 0..600 {
+            let n = glide_evo(v, 860.0, 1.0 / 60.0);
+            assert!(n - v < 8.0 && n >= v);
+            v = n;
+        }
+    }
 }

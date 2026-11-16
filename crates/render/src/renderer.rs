@@ -227,6 +227,13 @@ pub struct Renderer {
     /// How far the game is between the last simulated tick and the next (0..1), when the caller knows it
     /// exactly; otherwise it is guessed from the time between ticks.
     pub sim_alpha: Option<f32>,
+    /// The stage coordinate (0..=9, see `Evo`) the people are drawn at, when the caller smooths it over time;
+    /// otherwise it follows the world's perception directly.
+    pub evo: Option<f32>,
+    /// Dev aid, `ALAZ_DEMO_LINEUP=<outfit mask>[,lod|walk|sit]`: a row of the ten stages of the body in front of the
+    /// player, all the same person (`ALAZ_DEMO_LINEUP_ID`, 12 by default), to compare them side by side.
+    pub(crate) lineup: Option<(u16, String)>,
+    pub(crate) lineup_id: u32,
     /// The sun direction the shadows are cast along: it follows the sun in small steps, not every frame, so
     /// shadow edges hold still instead of shimmering as the sun moves.
     pub(crate) shadow_dir: [f32; 3],
@@ -519,6 +526,12 @@ impl Renderer {
             anim: HashMap::new(),
             wild_anim: HashMap::new(),
             sim_alpha: None,
+            evo: None,
+            lineup_id: std::env::var("ALAZ_DEMO_LINEUP_ID").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
+            lineup: std::env::var("ALAZ_DEMO_LINEUP").ok().map(|v| {
+                let (m, mode) = v.split_once(',').unwrap_or((v.as_str(), ""));
+                (m.trim().parse::<u16>().unwrap_or(0), mode.trim().to_string())
+            }),
             shadow_dir: [0.0, 1.0, 0.0],
             cloud_off: [0.0, 0.0],
             prof,

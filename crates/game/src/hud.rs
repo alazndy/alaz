@@ -55,6 +55,8 @@ pub struct UiCtx<'a> {
     pub grip: bool,
     /// Sandbox: sim ticks per tick of real time.
     pub time_scale: u32,
+    /// The stage coordinate the player's body and portrait are drawn at (0..=9, see `alaz_render::Evo`).
+    pub evo: f32,
 }
 
 /// What the HUD asks the game loop to do this frame.
@@ -854,11 +856,28 @@ pub fn discovery_name(d: Discovery) -> &'static str {
     }
 }
 
-/// The age the tribe lives in, from what it has achieved.
-/// The body the tribe has grown into, from the first ape to the sage.
-pub const STAGES: [&str; 6] = ["Maymun", "Alet yapan", "Ateşçi", "Avcı", "Usta", "Bilge"];
+/// The body the tribe has grown into, from the first ape to the sage: ten named stages that blend into each other
+/// (see `alaz_render::Evo`). The five steps in what the hands can do (`stage_gift`) start at the 3rd, 5th, 7th, 9th
+/// and 10th of them.
+pub const EVO_NAMES: [&str; 10] = ["Maymun", "Dik yürüyen", "Alet yapan", "Ateşçi", "Toplayıcı", "Avcı", "Çiftçi", "Zanaatkâr", "Usta", "Bilge"];
 
-/// What each step changes about the body, in plain words.
+/// What a named stage looks like, in plain words (what is new since the one before).
+pub fn evo_look(stage: u8) -> &'static str {
+    match stage {
+        0 => "Kamburun çıkık, her yanın kürk, kolların yere sarkıyor.",
+        1 => "Sırtın dikleşiyor, kürkün seyreliyor, yürüyüşün toparlanıyor.",
+        2 => "Elin alet tutuyor: belinde bir kemer ve torba var.",
+        3 => "Ateşin boyası yüzünde ve göğsünde, duruşun daha dik.",
+        4 => "Sırtında örme bir toplama torbası, kürkün iyice azaldı.",
+        5 => "Boynunda diş kolye, yüzün inceldi, alnın yükseldi.",
+        6 => "Başında hasır şapka, saçın düzgün, kürkün kalmadı sayılır.",
+        7 => "Bileklerinde deri sargı, belinde çekiç.",
+        8 => "Boyalı bir kuşak, dimdik bir duruş, sakalın düzgün.",
+        _ => "Saçın ve uzun sakalın ağardı, boynunda altın bir tılsım var.",
+    }
+}
+
+/// What each step in what the hands can do changes, in plain words (a step of `World::perception_level`).
 pub fn stage_gift(stage: u8) -> &'static str {
     match stage {
         0 => "Kamburun çıkık, elin sakar. İşler biraz yavaş, el işinde hedef dar.",
@@ -921,7 +940,7 @@ fn draw_status(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_c
             let daytime = (360..1200).contains(&m);
             // the player's portrait, dressed as they are, beside the day and what the tribe has mastered
             ui.horizontal(|ui| {
-            crate::portrait::portrait(ui, &th, level, me.id.0, alaz_render::outfit_bits(&me.inventory)).on_hover_text("Sen");
+            crate::portrait::portrait(ui, &th, level, ui_ctx.evo, me.id.0, alaz_render::outfit_bits(&me.inventory)).on_hover_text("Sen");
             ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 let (rows, col) = match sky {
@@ -962,13 +981,14 @@ fn draw_status(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_c
             });
             });
             ui.add_space(3.0);
-            let stage = level.min(5);
+            let stage = alaz_render::evo_stage(w.perception_permille());
+            let tip = format!("Evrim {}/{}: {}\n{}\nElin: {}", stage + 1, EVO_NAMES.len(), EVO_NAMES[stage], evo_look(stage as u8), stage_gift(level.min(5)));
             ui.horizontal(|ui| {
                 pp::chip(ui, &th, era_name(w), Color32::from_rgb(78, 60, 22), Color32::from_rgb(248, 218, 120));
-                pp::pips(ui, &th, stage as usize + 1, 6, Color32::from_rgb(160, 214, 130)).on_hover_text(format!("Evrim: {} — {}", STAGES[stage as usize], stage_gift(stage)));
+                pp::pips(ui, &th, stage + 1, EVO_NAMES.len(), Color32::from_rgb(160, 214, 130)).on_hover_text(tip.clone());
             });
             pp::bar(ui, &th, pp::EYE, crate::lang::perception_word(level), w.perception_permille() as f32 / 1000.0, Color32::from_rgb(110, 146, 214), 250.0, false)
-                .on_hover_text(format!("Evrim: {}", STAGES[stage as usize]));
+                .on_hover_text(tip);
         });
     });
 }
@@ -3445,6 +3465,7 @@ mod ui_tests {
             anchor: Some([0.0, 0.0]),
             grip: true,
             time_scale: 1,
+            evo: 9.0,
         };
         draw(ctx, &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
     }
@@ -3790,7 +3811,7 @@ mod ui_tests {
                     move |ui, s| {
                         let ui_ctx = UiCtx {
                             hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1,
+                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0,
                         };
                         draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                     },
@@ -3820,7 +3841,7 @@ mod ui_tests {
                 move |ui, s| {
                     let ui_ctx = UiCtx {
                         hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1,
+                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0,
                     };
                     draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                 },
@@ -3852,7 +3873,7 @@ mod ui_tests {
                     let ui_ctx_anchor: [f32; 2] = anchor;
                     let ui_ctx = UiCtx {
                         hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1,
+                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0,
                     };
                     draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                 },
@@ -4019,5 +4040,28 @@ pub fn compass(ctx: &egui::Context, yaw_deg: f32, pitch_deg: f32, sun: [f32; 3],
         let at = to(sun[0] / hl, sun[2] / hl, rad);
         let col = if day { Color32::from_rgb(255, 204, 72) } else { Color32::from_rgb(190, 200, 230) };
         p.circle(at, 5.5, col, Stroke::new(1.0, Color32::from_black_alpha(160)));
+    }
+}
+
+#[cfg(test)]
+mod evo_tests {
+    use super::*;
+
+    /// The names, looks and starts of the ten stages line up, and every step in what the hands can do begins at a stage.
+    #[test]
+    fn stages_line_up_with_gameplay_steps() {
+        assert_eq!(EVO_NAMES.len(), alaz_render::EVO_STAGES);
+        for i in 0..EVO_NAMES.len() {
+            assert!(!evo_look(i as u8).is_empty());
+        }
+        for step in &alaz_sim::PERCEPTION_STEPS[1..] {
+            assert!(alaz_render::EVO_STARTS.contains(step), "step {step} starts no stage");
+        }
+        // a stage never spans two gameplay steps, so what a stage's look says about the hands holds all through it
+        let step = |pm: u32| alaz_sim::PERCEPTION_STEPS.iter().rposition(|&t| pm >= t).unwrap_or(0);
+        for pm in 0..=1000u32 {
+            let start = alaz_render::EVO_STARTS[alaz_render::evo_stage(pm)];
+            assert_eq!(step(pm), step(start), "pm {pm}");
+        }
     }
 }

@@ -55,14 +55,14 @@ mod vertex_census {
     #[ignore]
     fn human_verts() {
         for outfit in [0u16, 0xFFFF] {
-            let row: Vec<usize> = (0..6u8)
+            let row: Vec<usize> = (0..10u8)
                 .map(|stage| {
                     let mut o = Mesh::new();
-                    push_human(&mut o, 5.0, 9.0, Pose { outfit, stage, id: 5, ..Pose::idle(1.0) });
+                    push_human(&mut o, 5.0, 9.0, Pose { outfit, evo: stage as f32, id: 5, ..Pose::idle(1.0) });
                     o.len()
                 })
                 .collect();
-            println!("outfit {outfit:#06x}: verts by stage 0..5 = {row:?}");
+            println!("outfit {outfit:#06x}: verts by stage 0..9 = {row:?}");
         }
     }
 }
@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, stage: (i % 6) as u8, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -465,44 +465,44 @@ mod mesh_hashes {
         ("campfire 0", 0xb81451d68c550836),
         ("campfire 0.4", 0xb3ff0ed12254b8e3),
         ("campfire 1", 0x39408f657b7c3591),
-        ("human 0", 0x9f0da828f23a75bb),
+        ("human 0", 0x1cac49b4cef69ad6),
         ("chips 0", 0xf1ee7d13c71175fd),
-        ("human 1", 0x4d48ff74498f1241),
+        ("human 1", 0x8106b41d797eba07),
         ("chips 1", 0x4f90e872f7b9bb49),
-        ("human 2", 0x29ae213011efe60a),
+        ("human 2", 0x9383d9f22762936a),
         ("chips 2", 0x29212fa195674fb1),
-        ("human 3", 0x4266f20c7f88d95e),
+        ("human 3", 0x0f46b9012f15e965),
         ("chips 3", 0x24a4650a3d23774d),
-        ("human 4", 0x4150a4be237df237),
+        ("human 4", 0x446ef08e8e6afa2a),
         ("chips 4", 0x80890b727ab91b75),
-        ("human 5", 0x84ce8b23e2f5e7c8),
+        ("human 5", 0x90a898b7e2fbb5cc),
         ("chips 5", 0xb0b82e4a8b2b2ce5),
-        ("human 6", 0xd4158308e81e71d7),
+        ("human 6", 0xc0f077d08abd914b),
         ("chips 6", 0x208689db08b27ee5),
-        ("human 7", 0x928bc1dadb31de62),
+        ("human 7", 0x1c20abc6c3e5c4d2),
         ("chips 7", 0xb01cc00bdd0007b1),
-        ("human 8", 0x92c03354729c93c8),
+        ("human 8", 0x104ecfcd998a7eff),
         ("chips 8", 0x8f35433f8bfe4225),
-        ("human 9", 0x65028d0de85cb032),
+        ("human 9", 0xd7ddfca0c792ce5e),
         ("chips 9", 0xa0d90ffb37f89491),
-        ("human 10", 0x1d8cbc4fb93f73fd),
+        ("human 10", 0x41f9a8bb4b0cbd68),
         ("chips 10", 0x74cdbe2ae6a4fb15),
-        ("human 11", 0xd2853a9bbdd7e7c5),
+        ("human 11", 0xc94c78b50abc2100),
         ("chips 11", 0x5d40cb8c63cb9efd),
-        ("human 12", 0xaec8bee166ccf015),
+        ("human 12", 0xce1c816a7c5d16db),
         ("chips 12", 0x3d32ec87c4f000e1),
-        ("human 13", 0xf8cd7d8c070c72dd),
+        ("human 13", 0xd9a0e41c2bbfdef7),
         ("chips 13", 0xdfec6e628fa8f5b1),
-        ("human 14", 0x452d387fe0cbe79b),
+        ("human 14", 0x770efb070dfeff59),
         ("chips 14", 0xcbe30d69dd14f68d),
-        ("human 15", 0x3c0057ede6fd7902),
+        ("human 15", 0x254e290883728785),
         ("chips 15", 0x1b7bb2ed30491225),
-        ("human 16", 0x49a6ac832115e125),
+        ("human 16", 0x632e1bfa6a03bfac),
         ("chips 16", 0xdf641d4e5def6905),
-        ("human 17", 0xbc1f514790fee85d),
+        ("human 17", 0xd6077034f1557dd3),
         ("chips 17", 0xd12ff22a885b3e59),
-        ("creature Human false", 0x01f6d4aad6f3f5c5),
-        ("creature Human true", 0x862f187b81be2fcb),
+        ("creature Human false", 0xe4ae29a67b879816),
+        ("creature Human true", 0xb7750ac2d6d8cc6a),
         ("creature Dog false", 0xd3c2f146f8aef670),
         ("creature Dog true", 0x34d8fa9a933d6547),
         ("creature Ox false", 0xac48a2d1111b2a34),
@@ -559,7 +559,7 @@ mod mesh_hashes {
                         for i in 0..n {
                             let f = (i + r) as f32;
                             let walking = i % 3 != 0;
-                            let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if walking { 1.0 } else { 0.0 }, outfit, stage: 4, id: i * 5 + 1, lod, ..Pose::idle(3.0) };
+                            let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if walking { 1.0 } else { 0.0 }, outfit, evo: 8.0, id: i * 5 + 1, lod, ..Pose::idle(3.0) };
                             push_creature(&mut o, AgentKind::Human, 5.0 + i as f32, 9.0, false, pose);
                         }
                         verts = std::hint::black_box(o.len());
@@ -575,7 +575,7 @@ mod mesh_hashes {
         (0..n)
             .map(|i| {
                 let f = i as f32;
-                let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if i % 3 != 0 { 1.0 } else { 0.0 }, outfit, stage: 4, id: i * 5 + 1, lod, hurt: if i % 7 == 0 { 0.6 } else { 0.0 }, ..Pose::idle(3.0) };
+                let pose = Pose { heading: f * 0.7, phase: f * 1.3, amp: if i % 3 != 0 { 1.0 } else { 0.0 }, outfit, evo: 8.0, id: i * 5 + 1, lod, hurt: if i % 7 == 0 { 0.6 } else { 0.0 }, ..Pose::idle(3.0) };
                 BodyJob {
                     kind: AgentKind::Human,
                     x: 5.0 + f,
@@ -646,6 +646,110 @@ mod mesh_hashes {
                 let (v2, t2) = time(&|| build_bodies(&jobs, &art, [0.0; 3]).0.len());
                 println!("outfit {outfit:#06x} N={n:3}: serial {v1} verts {t1:.3} ms | parallel {v2} verts {t2:.3} ms | x{:.2}", t2 / t1);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod evolution {
+    use super::*;
+
+    /// A standing or walking person at a stage coordinate, built in the full or the simple build.
+    fn person(evo: f32, outfit: u16, id: u32, walking: bool, lod: bool) -> Mesh {
+        let mut o = Mesh::new();
+        let pose = Pose { evo, outfit, id, heading: 0.4, phase: 1.1, amp: if walking { 1.0 } else { 0.0 }, lod, ..Pose::idle(2.0) };
+        push_human(&mut o, 5.0, 9.0, pose);
+        o
+    }
+
+    /// Where a mesh is and what colour it is, in four numbers: box corners, centroid and mean colour.
+    fn summary(m: &Mesh) -> ([f32; 3], [f32; 3], [f32; 3], [f32; 3]) {
+        let (mut lo, mut hi, mut c, mut col) = ([f32::MAX; 3], [f32::MIN; 3], [0.0f32; 3], [0.0f32; 3]);
+        for v in m.iter() {
+            for i in 0..3 {
+                lo[i] = lo[i].min(v.pos[i]);
+                hi[i] = hi[i].max(v.pos[i]);
+                c[i] += v.pos[i];
+                col[i] += v.color[i];
+            }
+        }
+        let n = m.len().max(1) as f32;
+        (lo, hi, c.map(|v| v / n), col.map(|v| v / n))
+    }
+
+    /// Between two stage coordinates a hundredth apart the body hardly moves: the box, centroid and colour stay
+    /// within a hair of each other (a few centimetres: a wide limb's ring of corners turns in steps as its axis
+    /// swings), over the whole run from ape to sage. (A trinket joins the mesh while it is
+    /// still inside the body or a few millimetres across, so it can only nudge the mean colour a little.)
+    #[test]
+    fn evolution_is_continuous() {
+        for (outfit, id, walking, lod) in [(0u16, 12u32, false, false), (0, 5, true, false), (0x3FF, 12, false, false), (7, 8, true, true), (28, 1, false, false), (0, 10, false, true)] {
+            let mut last = summary(&person(0.0, outfit, id, walking, lod));
+            let mut last_len = person(0.0, outfit, id, walking, lod).len();
+            let mut worst = 0.0f32;
+            let mut at = 0.0f32;
+            let mut v = 0.0f32;
+            while v < 9.0 {
+                v = (v + 0.01).min(9.0);
+                let m = person(v, outfit, id, walking, lod);
+                let s = summary(&m);
+                for i in 0..3 {
+                    let step = (s.0[i] - last.0[i]).abs().max((s.1[i] - last.1[i]).abs());
+                    if step > worst {
+                        worst = step;
+                        at = v;
+                    }
+                    assert!((s.0[i] - last.0[i]).abs() < 0.05 && (s.1[i] - last.1[i]).abs() < 0.05, "box jumps at {v} (outfit {outfit:#x} id {id})");
+                    // (the simple build has a fifth of the vertices, so a trinket weighs more in its centroid)
+                    assert!(lod || (s.2[i] - last.2[i]).abs() < 0.03, "centroid jumps at {v} (outfit {outfit:#x} id {id}): {:?} -> {:?}", last.2, s.2);
+                    assert!((s.3[i] - last.3[i]).abs() < if lod { 0.04 } else { 0.02 }, "colour jumps at {v} (outfit {outfit:#x} id {id}): {:?} -> {:?} ({} -> {} vertices)", last.3, s.3, last_len, m.len());
+                }
+                last = s;
+                last_len = m.len();
+            }
+            println!("outfit {outfit:#x} id {id} walking {walking} lod {lod}: largest box step {worst:.4} m per 0.01 stage (at {at:.2})");
+        }
+    }
+
+    /// Every named stage has a body of its own (each differs from the next by a clear amount), the ape stands
+    /// shorter and more bent than the sage, and the sage is taller than any earlier stage.
+    #[test]
+    fn stages_read_apart() {
+        let mut heights = Vec::new();
+        for i in 0..EVO_STAGES {
+            let a = person(i as f32, 0, 12, false, false);
+            if i + 1 < EVO_STAGES {
+                let b = person(i as f32 + 1.0, 0, 12, false, false);
+                let differing = a.iter().zip(b.iter()).filter(|(p, q)| p.pos != q.pos || p.color != q.color).count() + a.len().abs_diff(b.len());
+                assert!(differing > a.len() / 5, "stage {i} and {} look alike ({differing} of {} vertices differ)", i + 1, a.len());
+            }
+            heights.push(summary(&a).1[1]);
+        }
+        assert!(heights[9] > heights[0] + 0.2, "{heights:?}");
+        assert!(heights.windows(2).all(|w| w[1] >= w[0] - 0.02), "{heights:?}");
+    }
+
+    /// A far (simple build) person reflects the stage as the full one does: the same height and bend.
+    #[test]
+    fn lod_follows_the_stage() {
+        for v in [0.0, 2.5, 5.0, 9.0] {
+            let (a, b) = (summary(&person(v, 0, 12, false, false)), summary(&person(v, 0, 12, false, true)));
+            assert!((a.1[1] - b.1[1]).abs() < 0.08, "height at {v}: {} vs {}", a.1[1], b.1[1]);
+        }
+        assert!(summary(&person(0.0, 0, 12, false, true)).1[1] < summary(&person(9.0, 0, 12, false, true)).1[1] - 0.2);
+    }
+
+    /// Sitting at the fire works at every stage: the hips are down and nothing is left standing above the head.
+    #[test]
+    fn sitting_at_every_stage() {
+        for i in 0..=18 {
+            let v = i as f32 * 0.5;
+            let mut o = Mesh::new();
+            push_human(&mut o, 5.0, 9.0, Pose { evo: v, id: 12, sit: true, ..Pose::idle(2.0) });
+            let mut st = Mesh::new();
+            push_human(&mut st, 5.0, 9.0, Pose { evo: v, id: 12, ..Pose::idle(2.0) });
+            assert!(summary(&o).1[1] < summary(&st).1[1] - 0.1, "sitting at {v}");
+            assert!(o.iter().all(|p| p.pos.iter().all(|c| c.is_finite())));
         }
     }
 }
