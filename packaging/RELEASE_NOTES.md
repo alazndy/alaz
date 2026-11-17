@@ -29,6 +29,16 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
+## 0.4.0'da yeni
+
+**Gezilebilir mağaralar:** Mağaralar artık bir panel değil, içine girip yürüdüğün yerler. Elinde meşaleyle ağza yürü (ya da sağ tıkla): her mağara dünyanın tohumundan üretilen dört katlı bir yeraltı; odalar, dolambaçlı tüneller, katlar arası merdivenler.
+- WASD ve tıkla-yürü mağarada da çalışır; duvarlardan geçilmez.
+- Duvara sağ tıkla kaz (kazma gerekir); derine indikçe başka cevherler.
+- Işık yalnız meşaleden gelir, duvarlar onu keser. Meşale bitince karanlık: yavaşça el yordamıyla yürürsün, bir ok çıkışı gösterir.
+- Derinde ve kazarken tavan çökebilir; düşen taşları kazıp temizlersin. En dip kat su basmıştır, 15 m içindeki bir pompa onu kurutur.
+- Sağ üstte kat, meşale süresi, çıkış oku ve gezdiğin yerlerin haritası.
+- Eski kayıtlar açılır; mağaradayken kaydedilmiş bir oyunda mağara ağzının yanında başlarsın.
+
 ## 0.3.2'de yeni
 
 **Karakter evrimi:** Maymun'dan Bilge'ye 10 aşama (Maymun, Dik yürüyen, Alet yapan, Ateşçi, Toplayıcı, Avcı, Çiftçi, Zanaatkâr, Usta, Bilge). Duruş, kürk, yüz, boy ve yürüyüş algıyla birlikte azar azar değişiyor; kemer, boya, torba, kolye, hasır şapka, kuşak ve ak sakal gibi ayrıntılar sırayla beliriyor. Yeni bir aşamaya geçince görünüş birkaç saniyede kayarak değişir ve bir kart çıkar. Portre de aynı evrimi gösterir.

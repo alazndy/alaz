@@ -44,7 +44,7 @@ Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen 
   - otomasyon: taşıyıcı bantlar, rotalı otomatlar
 - **Canlı dünya:**
   - evcilleştirilebilen köpek, öküz ve at; kurtlar; avlanma
-  - mağaralar, gizli maden yatakları ve arama kazması
+  - içinde yürünen 4 katlı mağaralar (meşale ışığı, kazma, çökme, su baskını), gizli maden yatakları ve arama kazması
 - **Su:** Rüzgârla şekillenen Gerstner dalgaları, akan nehirler, yüzme ve boğulma, suda yüzüp akıntıyla giden eşyalar.
 - **Fizik:** Devrilen ağaçlar, yuvarlanan kayalar, düşme hasarı, zıplama.
 - **Ortak rüzgâr:** Yön ve güç tek kaynaktan gelir. Otlar, yapraklar, dalgalar, bulutlar, duman ve yağmur hep aynı rüzgârla hareket eder.
