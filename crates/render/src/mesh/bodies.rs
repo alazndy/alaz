@@ -163,6 +163,10 @@ pub(crate) fn work_cycle(world: &World, a: &alaz_sim::world::Agent, work: Work, 
             let need = alaz_sim::world::split_need(&a.inventory, world.perception_level()) as f32;
             ((progress as f32 + alpha) / need).min(1.0) + IMPACT
         }
+        (Work::Mine, Task::Dig { progress, .. }) => {
+            let swing = alaz_sim::world::ROCK_SWING_TICKS as f32;
+            (progress as f32 + alpha) / swing * 3.0 + IMPACT
+        }
         (Work::Pick, Task::Pick { progress, .. }) => ((progress as f32 + alpha) / alaz_sim::world::PICK_TICKS as f32).min(1.0) + IMPACT - 0.5,
         (Work::Throw, Task::Hunt { progress, .. }) => IMPACT * ((progress as f32 + alpha) / alaz_sim::world::HUNT_THROW_TICKS as f32).min(1.0),
         (Work::Hammer, Task::Craft { step, done, hits, .. }) => {
@@ -399,6 +403,14 @@ pub(crate) fn work_of(world: &World, a: &alaz_sim::world::Agent) -> (Work, Tool,
     let m = |x: i64, y: i64| (x as f32 / 1000.0, y as f32 / 1000.0);
     let me = m(a.x, a.y);
     let near = |p: (f32, f32), r: f32| (p.0 - me.0).powi(2) + (p.1 - me.1).powi(2) <= r * r;
+    // underground: a swing at the rock face, with the pick if there is one
+    if let Some(c) = a.cave {
+        let at = m(c.x, c.y);
+        return match a.task {
+            Task::Dig { tx, ty, .. } => (Work::Mine, if has(I::IronPickaxe) || has(I::BronzePickaxe) { Tool::MetalPick } else { Tool::StoneAxe }, (tx as f32 + 0.5, ty as f32 + 0.5)),
+            _ => (Work::None, Tool::Hand, at),
+        };
+    }
     match a.task {
         Task::Gather { node, .. } => {
             let Some(n) = world.nodes.get(node.0 as usize) else { return (Work::None, Tool::Hand, me) };

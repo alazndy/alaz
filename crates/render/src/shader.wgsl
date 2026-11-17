@@ -876,6 +876,49 @@ struct BakeOut {
 }
 
 // ---- models and decals --------------------------------------------------------------------------------------------
+// Underground the rock is lit by the player's torch alone. `hmap`'s green channel marks the tiles of solid rock (the cave
+// writes it there in place of the climate), so the light is stopped by walls: a short march from the torch to the point.
+fn cave_open(src: vec3<f32>, dst: vec3<f32>) -> f32 {
+    for (var i = 1; i < 14; i = i + 1) {
+        let q = mix(src, dst, f32(i) / 14.0);
+        if (q.y < 2.2) {
+            let t = clamp(vec2<i32>(floor(q.xz)), vec2<i32>(0), vec2<i32>(255));
+            if (textureLoad(hmap, t, 0).g > 0.5) { return 0.0; }
+        }
+    }
+    return 1.0;
+}
+
+fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let k = clamp(globals.cam_r.w - 1.0, 0.0, 1.0);
+    let torch = globals.peek.xyz + vec3<f32>(0.0, 0.55, 0.0);
+    let reach = 12.0 * k;
+    var light = vec3<f32>(0.06, 0.07, 0.10);
+    if (reach > 0.5) {
+        let d = torch - v.world;
+        let dist = length(d);
+        if (dist < reach) {
+            let dir = d / max(dist, 0.001);
+            let vis = cave_open(torch, v.world + dir * 0.2);
+            let att = pow(1.0 - dist / reach, 1.25);
+            let ndl = max(dot(n, dir), 0.0) * 0.75 + 0.25;
+            let flick = 0.90 + 0.06 * sin(globals.env.x * 13.0) + 0.04 * sin(globals.env.x * 29.0 + 1.3);
+            // (the tops of the rock are far above the torch: dim, a dark mass against the lit floor)
+            let top = select(1.0, 0.35, v.world.y > 1.5 && n.y > 0.8);
+            light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * 2.2 * vis * top;
+        }
+    }
+    var lit: vec3<f32>;
+    if (v.glow < 0.5) {
+        lit = col * quantize(light, 0.07);
+    } else {
+        lit = col * (0.5 + 0.6 * v.glow);
+    }
+    let p = globals.light.w;
+    let lum = dot(lit, vec3<f32>(0.30, 0.59, 0.11));
+    return pow(max(mix(vec3<f32>(lum), lit, 0.28 + 0.72 * p), vec3<f32>(0.0)), vec3<f32>(2.2));
+}
+
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
     if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && (v.glow < 0.5 || v.glow > 1.5) && v.p3.y > 1.15 && leaf_gap(v.p3)) { discard; }
     // a crown standing between the eye and the player opens up around them: leaves near the player on screen, and
@@ -895,6 +938,20 @@ struct BakeOut {
             let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
             let dither = (bayer[c.y * 4u + c.x] + 0.5) / 16.0;
             if (dither < 0.85 * k) { discard; }
+        }
+    }
+    let cave_on = globals.cam_r.w > 0.5;
+    // underground: rock between the eye and the player opens up around them, so they are never lost behind a wall
+    if (cave_on && v.kind == 4.0 && v.uv.x > 1.5 && globals.peek.w > 0.5) {
+        let d = v.world - globals.peek.xyz;
+        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
+        let ahead = dot(d, to_eye);
+        let r = length(vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz) * 0.8));
+        if (ahead > 0.4 && r < 2.8) {
+            let k = 1.0 - smoothstep(1.3, 2.8, r);
+            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
+            let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+            if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.9 * k) { discard; }
         }
     }
     // the bright rim around whatever the pointer is on: one flat colour, no light, no haze
@@ -928,6 +985,9 @@ struct BakeOut {
         if (v.glow < 0.5) {
             col = col * (1.0 - 0.16 * globals.env.z) + vec3<f32>(0.04, 0.05, 0.06) * globals.env.z * smoothstep(0.6, 0.9, nm.y);
         }
+    }
+    if (cave_on) {
+        return vec4<f32>(cave_shade(v, col, n), alpha);
     }
     // light: sky, sun (held back by shadows and clouds) and fires; things that glow light themselves
     var lit: vec3<f32>;

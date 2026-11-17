@@ -4,6 +4,7 @@
 pub mod agents;
 pub mod buildings;
 pub mod camp;
+pub mod caves;
 pub mod debug;
 pub mod journal;
 pub mod command;
@@ -25,6 +26,7 @@ mod tests;
 mod surface_tests;
 
 pub use agents::{AgentKind, RouteStep};
+pub use caves::{Cave, CaveSelf};
 pub use buildings::{Building, BuildingKind, Job};
 pub use command::{AgentId, Command, CommandKind, NodeId, RecipeId};
 pub use map::{climate, elevation_mm, ItemKind, Map, NodeKind, Terrain};

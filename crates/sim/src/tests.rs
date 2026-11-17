@@ -2465,75 +2465,415 @@ fn caves_exist_on_the_heights() {
     }
 }
 
-#[test]
-fn a_cave_gives_stone_and_ore() {
-    let mut w = World::new(3);
+/// A world with one person standing in front of the first cave mouth, a pick and some torches in the pack.
+fn at_a_cave(seed: u64) -> (World, AgentId, NodeId) {
+    let mut w = World::new(seed);
     let id = w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
     let (ni, n) = w.nodes.iter().enumerate().find(|(_, n)| n.kind == NodeKind::CaveMouth).map(|(i, n)| (i, n.clone())).expect("a cave");
     let a = w.agents.iter_mut().find(|a| a.id == id).unwrap();
     a.x = n.tx as i64 * 1000 + 500;
     a.y = n.ty as i64 * 1000 + 1500;
-    w.step(&[cmd(id, CommandKind::Gather { node: NodeId(ni as u32) })]);
-    for _ in 0..4000 {
-        w.step(&[]);
-    }
-    let inv = &w.agents.iter().find(|a| a.id == id).unwrap().inventory;
-    assert!(inv.get(ItemKind::Stone) > 0, "stone");
-    assert!(inv.get(ItemKind::IronOre) + inv.get(ItemKind::CopperOre) + inv.get(ItemKind::TinOre) > 0, "ore");
+    (w, id, NodeId(ni as u32))
+}
+
+fn me(w: &World, id: AgentId) -> &crate::world::Agent {
+    w.agents.iter().find(|a| a.id == id).unwrap()
+}
+
+/// Put an underground walker on a tile of its level.
+fn place_in_cave(w: &mut World, id: AgentId, level: u8, tile: (i32, i32)) {
+    let a = w.agents.iter_mut().find(|a| a.id == id).unwrap();
+    let c = a.cave.as_mut().expect("in a cave");
+    c.level = level;
+    c.x = tile.0 as i64 * 1000 + 500;
+    c.y = tile.1 as i64 * 1000 + 500;
+    c.cool = 0;
+    c.leaving = false;
+    a.path.clear();
+    a.path_goal = (-1, -1);
+    a.task = crate::world::Task::Idle;
 }
 
 #[test]
-fn cave_expedition_needs_light_costs_it_and_pays_in_ore() {
-    use crate::world::{Reject, Task, CAVE_TORCH_TICKS};
-    let mut w = World::new(3);
-    let id = w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
-    let (ni, n) = w.nodes.iter().enumerate().find(|(_, n)| n.kind == NodeKind::CaveMouth).map(|(i, n)| (i, n.clone())).expect("a cave");
-    let node = NodeId(ni as u32);
-    let put = |w: &mut World| {
-        let a = w.agents.iter_mut().find(|a| a.id == id).unwrap();
-        a.x = n.tx as i64 * 1000 + 500;
-        a.y = n.ty as i64 * 1000 + 1500;
-    };
-    put(&mut w);
+fn a_cave_needs_light_and_is_walked_into() {
+    use crate::world::{Reject, CAVE_TORCH_TICKS};
+    let (mut w, id, node) = at_a_cave(3);
     // no torch, no way in
     w.step(&[cmd(id, CommandKind::EnterCave { node })]);
     assert!(w.events.iter().any(|e| matches!(e, crate::Event::Rejected(_, Reject::NoLight))));
-    assert!(!matches!(w.agents.iter().find(|a| a.id == id).unwrap().task, Task::Cave { .. }));
-    give(&mut w, ItemKind::Torch, 1);
-    w.agents.iter_mut().find(|a| a.id == id).unwrap().inventory.counts[ItemKind::CopperPickaxe as usize] = 1; // mining wants a pick, the second chamber copper
+    assert!(me(&w, id).cave.is_none());
+    // a lamp with no oil is no light either; with oil it burns twice as long and is kept
+    give(&mut w, ItemKind::OilLamp, 1);
     w.step(&[cmd(id, CommandKind::EnterCave { node })]);
-    let task = w.agents.iter().find(|a| a.id == id).unwrap().task;
-    assert!(matches!(task, Task::Cave { depth: 0, .. }));
-    assert_eq!(w.agents.iter().find(|a| a.id == id).unwrap().inventory.get(ItemKind::Torch), 0, "the torch is used up");
-    // mine, go deeper, mine again
-    let mut stone0 = 0;
-    for step in 0..3 {
-        let kind = if step == 1 { CommandKind::CaveDeeper } else { CommandKind::CaveMine };
-        w.step(&[cmd(id, kind)]);
+    assert!(me(&w, id).cave.is_none());
+    w.agents[0].inventory.counts[ItemKind::PlantOil as usize] = 2;
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    let c = me(&w, id).cave.expect("inside");
+    assert!(c.light > CAVE_TORCH_TICKS * 2 - 5, "{}", c.light);
+    assert_eq!((me(&w, id).inventory.get(ItemKind::PlantOil), me(&w, id).inventory.get(ItemKind::OilLamp)), (1, 1));
+    assert_eq!(c.level, 1);
+    // a torch is used up
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 2);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    assert_eq!(me(&w, id).inventory.get(ItemKind::Torch), 1, "the torch is used up");
+    assert!(me(&w, id).cave.is_some());
+}
+
+#[test]
+fn a_mouth_far_off_is_walked_up_to_first() {
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    let (mx, my) = w.nodes[node.0 as usize].center_mm();
+    w.agents[0].x = mx;
+    w.agents[0].y = my + 9_000;
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    assert!(me(&w, id).cave.is_none() && me(&w, id).task != crate::world::Task::Idle, "on the way");
+    for _ in 0..1_200 {
+        w.step(&[]);
+        if me(&w, id).cave.is_some() {
+            break;
+        }
+    }
+    assert!(me(&w, id).cave.is_some(), "walked in");
+}
+
+#[test]
+fn walls_stop_a_walker_underground_and_the_exit_leads_out() {
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    // push a long way in every direction: the body never ends up in the rock (walking over the exit takes you out:
+    // then in again)
+    let mut moved = 0;
+    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1)] {
+        for _ in 0..600 {
+            let Some(c) = me(&w, id).cave else {
+                give(&mut w, ItemKind::Torch, 1);
+                w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+                continue;
+            };
+            w.step(&[cmd(id, CommandKind::Walk { x: c.x + dx * 60_000, y: c.y + dy * 60_000 })]);
+            if let Some(c2) = me(&w, id).cave {
+                let lv = w.caves[&c2.node].level(c2.level).unwrap();
+                assert!(!lv.blocked(c2.x, c2.y), "in the rock at {:?}", (c2.x, c2.y));
+                moved += ((c2.x - c.x).abs() + (c2.y - c.y).abs() > 0) as i32;
+            }
+        }
+    }
+    assert!(moved > 200, "it did walk: {moved}");
+    give(&mut w, ItemKind::Torch, 1);
+    if me(&w, id).cave.is_none() {
+        w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    }
+    let surface = (me(&w, id).x, me(&w, id).y);
+    // the surface position is untouched while underground
+    assert_eq!((me(&w, id).x, me(&w, id).y), surface);
+    // walk to the exit and out
+    w.step(&[cmd(id, CommandKind::CaveLeave)]);
+    for _ in 0..3_000 {
+        w.step(&[]);
+        if me(&w, id).cave.is_none() {
+            break;
+        }
+    }
+    assert!(me(&w, id).cave.is_none(), "back on the surface");
+    assert!(w.take_events().iter().any(|e| matches!(e, crate::Event::CaveLeft { .. })));
+    let (mx, my) = w.nodes[node.0 as usize].center_mm();
+    assert!(crate::world::dist2(me(&w, id).x, me(&w, id).y, mx, my) < 3_000 * 3_000);
+}
+
+#[test]
+fn a_click_walk_goes_round_the_walls_to_the_stair() {
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    let (sx, sy) = w.cave_down_spot(id).expect("a stair down");
+    w.step(&[cmd(id, CommandKind::MoveTo { x: sx, y: sy })]);
+    for _ in 0..2_400 {
+        let c = me(&w, id).cave.unwrap();
+        if c.level > 1 || (c.x - sx).abs() + (c.y - sy).abs() < 200 {
+            break;
+        }
+        w.step(&[]);
+    }
+    // down the stair wants a copper pick: turned back, not through
+    let c = me(&w, id).cave.unwrap();
+    assert_eq!(c.level, 1, "a stone-age walker cannot go down");
+    assert!(w.events.iter().any(|e| matches!(e, crate::Event::Rejected(_, crate::world::Reject::NeedsTool { tier: 1, .. }))), "{:?}", w.events);
+}
+
+#[test]
+fn digging_a_cave_wall_gives_stone_and_ore_by_depth() {
+    use crate::caves::{ore_item, CAVE_H, CAVE_W};
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    // no pick, no digging (a bare hand only clears rubble)
+    let (tx, ty) = w.cave_dig_target(id).expect("a wall to dig");
+    w.step(&[cmd(id, CommandKind::CaveDig { tx, ty })]);
+    for _ in 0..600 {
+        w.step(&[]);
+    }
+    assert!(w.events.iter().any(|e| matches!(e, crate::Event::Rejected(_, crate::world::Reject::NeedsTool { .. }))));
+    assert_eq!(me(&w, id).inventory.get(ItemKind::Stone), 0);
+    // with a stone hammer: the nearest vein on the first level is iron
+    give(&mut w, ItemKind::Torch, 1);
+    w.agents[0].inventory.counts[ItemKind::Hammer as usize] = 1;
+    let (tx, ty) = w.cave_dig_target(id).unwrap();
+    let (code, swings) = w.caves[&node.0].level(1).unwrap().ore_at(tx, ty).expect("the nearest target is a vein");
+    assert_eq!(ore_item(code), Some(ItemKind::IronOre), "iron on the first level");
+    w.step(&[cmd(id, CommandKind::CaveDig { tx, ty })]);
+    // (a fall of rock may interrupt a swing: keep at it)
+    let mut tries = 0;
+    while w.caves[&node.0].level(1).unwrap().ore_at(tx, ty).is_some() && tries < 40 {
+        if me(&w, id).task == crate::world::Task::Idle {
+            w.agents[0].health = crate::world::MAX_STAT;
+            w.step(&[cmd(id, CommandKind::CaveDig { tx, ty })]);
+        }
         for _ in 0..200 {
             w.step(&[]);
         }
-        if step == 0 {
-            stone0 = w.agents.iter().find(|a| a.id == id).unwrap().inventory.get(ItemKind::Stone);
+        tries += 1;
+    }
+    let inv = &me(&w, id).inventory;
+    assert!(inv.get(ItemKind::IronOre) >= 1 && inv.get(ItemKind::IronOre) as u8 <= swings, "ore {} of {swings}", inv.get(ItemKind::IronOre));
+    assert!(inv.get(ItemKind::Stone) >= 1, "stone comes with it");
+    // the vein is spent, the wall is open ground now
+    let lv = w.caves[&node.0].level(1).unwrap();
+    assert_eq!(lv.cell(tx, ty), crate::caves::Cell::Floor);
+    // deeper levels: the mix follows the old chambers' table
+    let cave = &w.caves[&node.0];
+    for (level, allowed) in [(1u8, &[1u8][..]), (2, &[1, 2][..]), (3, &[1, 2, 3, 4][..]), (4, &[1, 2, 3, 4][..])] {
+        let lv = cave.level(level).unwrap();
+        let mut kinds = std::collections::BTreeSet::new();
+        for y in 0..CAVE_H {
+            for x in 0..CAVE_W {
+                if let Some((code, _)) = lv.ore_at(x, y) {
+                    assert!(allowed.contains(&code), "level {level} holds ore {code}");
+                    kinds.insert(code);
+                }
+            }
         }
+        assert!(!kinds.is_empty(), "level {level} has ore");
     }
-    let a = w.agents.iter().find(|a| a.id == id).unwrap();
-    match a.task {
-        Task::Cave { depth, .. } => assert_eq!(depth, 1),
-        other => panic!("{other:?}"),
-    }
-    assert!(stone0 >= 2 || a.health < crate::world::MAX_STAT, "a swing pays stone or costs blood");
-    // let the torch burn out: the miner is thrown back out, hurt
-    for _ in 0..CAVE_TORCH_TICKS {
+    assert!(cave.level(4).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_TIN) || cave.level(3).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_TIN) || cave.level(4).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_COAL), "the deep levels hold tin or coal");
+}
+
+#[test]
+fn the_ceiling_comes_down_deeper_down_and_rubble_clears_by_hand() {
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
+    // work a bare wall on level 1 and on level 3, many times over; falls come more often below
+    let falls = |w: &mut World, level: u8| {
+        let mut n = 0;
+        for round in 0..60 {
+            let c = w.agents[0].cave.unwrap();
+            let lv = w.caves[&node.0].level(level).unwrap();
+            // a fresh open spot and the wall beside it
+            let (fx, fy) = lv.entry;
+            place_in_cave(w, id, level, lv.landing((fx, fy)));
+            w.agents[0].health = crate::world::MAX_STAT;
+            w.agents[0].broken = 0;
+            w.agents[0].injury = 0;
+            w.agents[0].inventory.counts[ItemKind::Stone as usize] = 0;
+            w.agents[0].cave.as_mut().unwrap().light = 30_000;
+            w.agents[0].cave.as_mut().unwrap().node = c.node;
+            // an exposed bare wall tile near the entry
+            let lv = w.caves[&node.0].level(level).unwrap();
+            let target = (1..crate::caves::CAVE_H - 1)
+                .flat_map(|y| (1..crate::caves::CAVE_W - 1).map(move |x| (x, y)))
+                .filter(|&(x, y)| lv.diggable(x, y) && lv.ore_at(x, y).is_none() && lv.cell(x, y) == crate::caves::Cell::Rock && [(1, 0), (0, 1), (-1, 0), (0, -1)].iter().any(|&(dx, dy)| lv.cell(x + dx, y + dy) == crate::caves::Cell::Floor))
+                .min_by_key(|&(x, y)| ((x - fx).pow(2) + (y - fy).pow(2), x, y))
+                .unwrap();
+            let _ = round;
+            w.step(&[cmd(id, CommandKind::CaveDig { tx: target.0, ty: target.1 })]);
+            let before = w.take_events().len();
+            let _ = before;
+            for _ in 0..400 {
+                w.step(&[]);
+                if w.agents[0].task == crate::world::Task::Idle {
+                    break;
+                }
+            }
+            if w.take_events().iter().any(|e| matches!(e, crate::Event::CaveRockfall(_))) {
+                n += 1;
+            }
+            // (the wall is left standing after a fall, and opens after a clean swing: put it back for the next round)
+            let (tx, ty) = target;
+            if w.caves.get_mut(&node.0).unwrap().level(level).unwrap().cell(tx, ty) != crate::caves::Cell::Rock {
+                w.caves.get_mut(&node.0).unwrap().set_tile(level, tx, ty, crate::caves::Cell::Rock, 0);
+            }
+        }
+        n
+    };
+    let shallow = falls(&mut w, 1);
+    let deep = falls(&mut w, 3);
+    assert!(deep > shallow, "falls: {shallow} on level 1, {deep} on level 3");
+    assert!(shallow >= 1, "even the first level can drop stones");
+    // rubble left by a fall is cleared by hand
+    let cave = w.caves.get_mut(&node.0).unwrap();
+    let lv = cave.level(1).unwrap();
+    let (ex, ey) = lv.entry;
+    let spot = (ex, ey - 3);
+    let spot = if lv.cell(spot.0, spot.1) == crate::caves::Cell::Floor { spot } else { lv.landing((ex, ey)) };
+    cave.set_tile(1, spot.0, spot.1, crate::caves::Cell::Rubble, 0);
+    w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 0;
+    let lv = w.caves[&node.0].level(1).unwrap();
+    let near = lv.landing((ex, ey));
+    // stand beside the rubble
+    let stand = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|&(dx, dy)| (spot.0 + dx, spot.1 + dy)).find(|&(x, y)| lv.cell(x, y) == crate::caves::Cell::Floor).unwrap_or(near);
+    place_in_cave(&mut w, id, 1, stand);
+    w.agents[0].health = crate::world::MAX_STAT;
+    w.step(&[cmd(id, CommandKind::CaveDig { tx: spot.0, ty: spot.1 })]);
+    for _ in 0..400 {
         w.step(&[]);
     }
-    let a = w.agents.iter().find(|a| a.id == id).unwrap();
-    assert!(!matches!(a.task, Task::Cave { .. }), "back outside when the light dies");
+    assert_eq!(w.caves[&node.0].level(1).unwrap().cell(spot.0, spot.1), crate::caves::Cell::Floor, "cleared with bare hands");
+}
+
+#[test]
+fn the_light_burns_down_then_the_dark_and_a_way_out() {
+    use crate::world::CAVE_TORCH_TICKS;
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 2);
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    // the first torch burns down and the second is lit from the pack
+    for _ in 0..CAVE_TORCH_TICKS + 5 {
+        w.step(&[]);
+    }
+    let c = me(&w, id).cave.unwrap();
+    assert!(c.light > 0 && c.light < CAVE_TORCH_TICKS, "the next torch is lit: {}", c.light);
+    assert_eq!(me(&w, id).inventory.get(ItemKind::Torch), 0);
+    // and that one burns out: the dark. The walker is not stuck: the way out is shown, and walked, slowly
+    for _ in 0..CAVE_TORCH_TICKS + 5 {
+        w.step(&[]);
+    }
+    let c = me(&w, id).cave.unwrap();
+    assert_eq!(c.light, 0);
+    assert!(c.dark > 0);
+    let (dir, steps) = w.cave_way_out(id).expect("a way out is known");
+    assert!(steps > 0 && (dir.0 != 0 || dir.1 != 0));
+    // far from the exit, in the dark
+    let lv = w.caves[&node.0].level(1).unwrap();
+    let far = w.cave_down_spot(id).unwrap();
+    let _ = lv;
+    w.agents[0].cave.as_mut().unwrap().x = far.0;
+    w.agents[0].cave.as_mut().unwrap().y = far.1;
+    w.agents[0].health = crate::world::MAX_STAT;
+    w.step(&[cmd(id, CommandKind::CaveLeave)]);
+    for _ in 0..6_000 {
+        w.step(&[]);
+        if me(&w, id).cave.is_none() {
+            break;
+        }
+    }
+    assert!(me(&w, id).cave.is_none(), "found the way out in the dark");
+    assert!(me(&w, id).health > 0);
+}
+
+#[test]
+fn caves_are_deterministic_and_survive_a_save() {
+    let run = || {
+        let (mut w, id, node) = at_a_cave(3);
+        give(&mut w, ItemKind::Torch, 2);
+        w.agents[0].inventory.counts[ItemKind::Hammer as usize] = 1;
+        w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+        let (tx, ty) = w.cave_dig_target(id).unwrap();
+        w.step(&[cmd(id, CommandKind::CaveDig { tx, ty })]);
+        for _ in 0..1_500 {
+            w.step(&[]);
+        }
+        (w, id, node)
+    };
+    let (a, id, node) = run();
+    let (b, _, _) = run();
+    assert_eq!(a.hash(), b.hash(), "the same on every run");
+    assert!(!a.caves[&node.0].changed.is_empty(), "something was dug or dropped");
+    // save, load, go on: identical
+    let mut c = World::from_bytes(&a.to_bytes()).expect("load");
+    assert_eq!(c.hash(), a.hash());
+    assert_eq!(me(&c, id).cave, me(&a, id).cave);
+    assert_eq!(c.caves[&node.0].changed, a.caves[&node.0].changed);
+    let mut a = a;
+    for _ in 0..600 {
+        a.step(&[]);
+        c.step(&[]);
+    }
+    assert_eq!(a.hash(), c.hash());
+}
+
+#[test]
+fn the_flooded_level_opens_with_a_pump_and_a_wet_sump_is_swum() {
+    use crate::caves::Cell;
+    let (mut w, id, node) = at_a_cave(3);
+    give(&mut w, ItemKind::Torch, 1);
+    w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
+    w.step(&[cmd(id, CommandKind::EnterCave { node })]);
+    // level 3 with its sump under water
+    let spot = { let l = &w.caves[&node.0].levels[2]; l.landing(l.entry) };
+    place_in_cave(&mut w, id, 3, spot);
+    w.agents[0].cave.as_mut().unwrap().light = 60_000;
+    w.step(&[]);
+    let lv = w.caves[&node.0].level(3).unwrap();
+    let (dx, dy) = lv.down.unwrap();
+    assert!(lv.sump.iter().all(|&i| lv.cells[i as usize] == Cell::Deep), "the sump is under water");
+    assert!(w.caves[&node.0].wet);
+    // swimming tires: standing in deep water drains the breath
+    let d = lv.sump[0] as i32;
+    place_in_cave(&mut w, id, 3, (d % 64, d / 64));
+    w.agents[0].cave.as_mut().unwrap().light = 60_000;
+    let before = w.agents[0].stamina;
+    for _ in 0..30 {
+        w.step(&[]);
+    }
+    assert!(w.agents[0].stamina < before, "swimming costs breath: {} -> {}", before, w.agents[0].stamina);
+    // the stair down: refused while flooded
+    let spot = w.caves[&node.0].level(3).unwrap().landing((dx, dy));
+    place_in_cave(&mut w, id, 3, spot);
+    w.agents[0].cave.as_mut().unwrap().light = 60_000;
+    w.agents[0].stamina = crate::world::MAX_STAT;
+    w.take_events();
+    w.step(&[cmd(id, CommandKind::MoveTo { x: dx as i64 * 1000 + 500, y: dy as i64 * 1000 + 500 })]);
+    for _ in 0..200 {
+        w.step(&[]);
+    }
+    assert!(w.take_events().iter().any(|e| matches!(e, crate::Event::Rejected(_, crate::world::Reject::Flooded))));
+    assert_eq!(me(&w, id).cave.unwrap().level, 3);
+    assert!(!w.milestone_done(Milestone::DrainMine));
+    // a pump driven by power beside the mouth dries the sump and opens the stair
+    let (mx, my) = w.nodes[node.0 as usize].center_mm();
+    w.buildings.push(Building::new(BuildingKind::Pump, mx + 3_000, my + 3_000));
+    w.buildings.push(Building::new(BuildingKind::SteamPump, mx + 5_000, my + 3_000));
+    let e2 = push_building(&mut w, BuildingKind::SteamEngine, mx + 8_000, my + 3_000) as usize;
+    w.buildings[e2].job = Some(crate::buildings::Job { recipe: recipe("raise_steam").0, remaining: 3600 });
+    w.buildings[e2].temp = 300;
+    for _ in 0..40 {
+        w.step(&[]);
+    }
+    assert!(w.pumped(node.0), "a pump works");
+    assert!(!w.caves[&node.0].wet, "the sump is dry");
+    let lv = w.caves[&node.0].level(3).unwrap();
+    assert!(lv.sump.iter().all(|&i| lv.cells[i as usize] == Cell::Floor));
+    let spot = lv.landing((dx, dy));
+    place_in_cave(&mut w, id, 3, spot);
+    w.agents[0].cave.as_mut().unwrap().light = 60_000;
+    w.step(&[cmd(id, CommandKind::MoveTo { x: dx as i64 * 1000 + 500, y: dy as i64 * 1000 + 500 })]);
+    for _ in 0..300 {
+        w.step(&[]);
+        if me(&w, id).cave.unwrap().level == 4 {
+            break;
+        }
+    }
+    assert_eq!(me(&w, id).cave.unwrap().level, 4, "down into the drained level");
+    assert!(w.milestone_done(Milestone::DrainMine), "{:?}", w.take_events());
 }
 
 #[test]
 fn a_broken_leg_slows_walking_and_a_splint_speeds_the_cure() {
-    use crate::world::{BREAK_TICKS, Task};
+    use crate::world::BREAK_TICKS;
     let dist = |broken: bool| {
         let mut w = World::new(3);
         let id = w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
@@ -2548,7 +2888,7 @@ fn a_broken_leg_slows_walking_and_a_splint_speeds_the_cure() {
             w.step(&[]);
         }
         let a = w.agents.iter().find(|a| a.id == id).unwrap();
-        assert!(!matches!(a.task, Task::Cave { .. }));
+        assert!(a.cave.is_none());
         (a.x - x0).abs() + (a.y - y0).abs()
     };
     let (well, hurt) = (dist(false), dist(true));
@@ -4038,21 +4378,35 @@ fn the_steam_age() {
     assert!(w.buildings[engine].steaming(), "boiling: {} °C", w.buildings[engine].temp);
     assert!(w.buildings[mill].job.is_none(), "the mill ran on steam");
     assert!(w.milestone_done(Milestone::SteamPower));
-    // the flooded chamber: refused without a pump, open with a steam-driven one
+    // the flooded level: refused without a pump, open with a steam-driven one
     let (ni, n) = w.nodes.iter().enumerate().find(|(_, n)| n.kind == NodeKind::CaveMouth).map(|(i, n)| (i, n.clone())).expect("a cave");
     let (mx, my) = n.center_mm();
     w.agents[0].x = mx;
     w.agents[0].y = my + 1_500;
     give(&mut w, ItemKind::IronPickaxe, 1);
-    w.agents[0].task = Task::Cave { node: NodeId(ni as u32), depth: 2, light: 50_000, act: 0, work: 0 };
-    w.step(&[cmd(a, CommandKind::CaveDeeper)]);
+    give(&mut w, ItemKind::Torch, 1);
+    w.step(&[cmd(a, CommandKind::EnterCave { node: NodeId(ni as u32) })]);
+    assert!(w.agents[0].cave.is_some());
+    let go_down = |w: &mut World| {
+        let node = w.agents[0].cave.unwrap().node;
+        let lv = w.caves[&node].level(3).unwrap();
+        let d = lv.down.unwrap();
+        let (x, y) = lv.landing(d);
+        let c = w.agents[0].cave.as_mut().unwrap();
+        (c.level, c.x, c.y, c.cool, c.light) = (3, x as i64 * 1000 + 500, y as i64 * 1000 + 500, 0, 60_000);
+        w.agents[0].task = Task::Move { x: d.0 as i64 * 1000 + 500, y: d.1 as i64 * 1000 + 500 };
+        w.agents[0].path.clear();
+        for _ in 0..120 {
+            w.step(&[]);
+        }
+    };
+    go_down(&mut w);
     assert!(w.take_events().iter().any(|e| matches!(e, Event::Rejected(_, Reject::Flooded))));
     push_building(&mut w, BuildingKind::Pump, mx + 3_000, my + 3_000);
     let e2 = push_building(&mut w, BuildingKind::SteamEngine, mx + 6_000, my + 3_000) as usize;
     w.buildings[e2].job = Some(crate::buildings::Job { recipe: recipe("raise_steam").0, remaining: 3600 });
     w.buildings[e2].temp = 300;
-    w.agents[0].task = Task::Cave { node: NodeId(ni as u32), depth: 2, light: 50_000, act: 0, work: 0 };
-    w.step(&[cmd(a, CommandKind::CaveDeeper)]);
+    go_down(&mut w);
     assert!(w.milestone_done(Milestone::DrainMine), "{:?}", w.take_events());
     // glass
     w.produced[ItemKind::Glass as usize] = 1;
@@ -4849,7 +5203,7 @@ fn every_command_has_a_working_gate() {
     assert_eq!(w.agents[0].wear_of(ItemKind::StoneAxe), 0, "repair");
     run(&mut w, "give prospector_pick 1\nprospect");
     // caves
-    let sc = run(&mut w, "tp cave\ngive torch 2\ncave enter\ncave mine\ncave leave");
+    let sc = run(&mut w, "tp cave\ngive torch 2\ngive hammer 1\ncave enter\ncave mine\ncave leave");
     assert!(sc.failures.is_empty(), "cave {:?}", sc.failures);
     // the design table answers (it wants a running computer: refused here, which shows the gate reaches it)
     let sc = run(&mut w, "design stone 1 wood 2");
@@ -5870,14 +6224,8 @@ fn books_and_lenses_steady_the_hand_and_the_tribe_learns_faster() {
 
 #[test]
 fn an_oil_lamp_lights_a_cave_twice_as_long_and_oil_saves_tools() {
-    use crate::world::{Reject, Task, CAVE_TORCH_TICKS};
-    let mut w = World::new(3);
-    let id = w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
-    let (ni, n) = w.nodes.iter().enumerate().find(|(_, n)| n.kind == NodeKind::CaveMouth).map(|(i, n)| (i, n.clone())).expect("a cave");
-    let node = NodeId(ni as u32);
-    let a = w.agents.iter_mut().find(|a| a.id == id).unwrap();
-    a.x = n.tx as i64 * 1000 + 500;
-    a.y = n.ty as i64 * 1000 + 1500;
+    use crate::world::{Reject, CAVE_TORCH_TICKS};
+    let (mut w, id, node) = at_a_cave(3);
     // a lamp with no oil is no light
     give(&mut w, ItemKind::OilLamp, 1);
     w.step(&[cmd(id, CommandKind::EnterCave { node })]);
@@ -5886,10 +6234,7 @@ fn an_oil_lamp_lights_a_cave_twice_as_long_and_oil_saves_tools() {
     w.agents[0].inventory.counts[ItemKind::PlantOil as usize] = 2;
     w.step(&[cmd(id, CommandKind::EnterCave { node })]);
     let a = &w.agents[0];
-    match a.task {
-        Task::Cave { light, .. } => assert!(light > CAVE_TORCH_TICKS * 2 - 5, "{light}"),
-        other => panic!("{other:?}"),
-    }
+    assert!(a.cave.expect("inside").light > CAVE_TORCH_TICKS * 2 - 5);
     assert_eq!((a.inventory.get(ItemKind::PlantOil), a.inventory.get(ItemKind::OilLamp)), (1, 1));
     // oil on the handles: tools wear less (a flask is carried, not used up)
     let wear1 = |flask: bool, skew: u64| {
@@ -7054,7 +7399,7 @@ fn the_journal_survives_a_save_and_an_older_save_loads_without_one() {
     c.step(&[]);
     assert!(c.journal.started, "the journal takes its bearings from the loaded world");
     assert!(c.journal.find(Discovery::SharpStone).is_some_and(|f| f.day == crate::journal::UNKNOWN_DAY), "what was known before is marked as such");
-    assert_eq!(crate::save::FORMAT_VERSION, 29);
+    assert_eq!(crate::save::FORMAT_VERSION, 30);
 }
 
 #[test]

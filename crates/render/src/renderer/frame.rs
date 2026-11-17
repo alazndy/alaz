@@ -100,27 +100,62 @@ impl Renderer {
         let scale = cam.scale();
         let (sw, sh) = cam.tex_dims();
 
+        // underground: the surface is not drawn, the cave is, lit by the torch alone
+        let cave: Option<alaz_sim::CaveSelf> = world.agents.iter().find(|a| a.id == me).and_then(|a| a.cave);
+        let cave_key = cave.map(|c| (c.node, c.level));
+        if cave_key != self.cave_was {
+            self.cave_was = cave_key;
+            self.anim.clear();
+        }
+        let gh = |x: f32, z: f32| if cave.is_some() { 0.0 } else { ground_height(world.seed, x, z) };
         // --- globals: view-projection from the texel-snapped camera + time-of-day light tint
         let l = daylight_permille(world.tick) as f32 / 1000.0;
-        let t = ((1.0 - l) / 0.7).clamp(0.0, 1.0);
+        let t = if cave.is_some() { 0.0 } else { ((1.0 - l) / 0.7).clamp(0.0, 1.0) };
         // the season colours the whole picture a little: fresh spring, warm summer, rusty autumn, cold winter
         let season_tint: [f32; 3] = [[1.0, 1.03, 1.0], [1.06, 1.02, 0.95], [1.10, 0.97, 0.84], [0.94, 1.0, 1.10]][world.season() as usize];
-        let tint: [f32; 3] = std::array::from_fn(|i| (1.0 + (NIGHT_TINT[i] - 1.0) * t) * season_tint[i]);
+        let tint: [f32; 3] = if cave.is_some() { [1.0; 3] } else { std::array::from_fn(|i| (1.0 + (NIGHT_TINT[i] - 1.0) * t) * season_tint[i]) };
         let (snap_cam, off) = cam.snapped();
-        let sky = match world.weather() {
+        let sky = if cave.is_some() { 0.0 } else { match world.weather() {
             alaz_sim::time::Weather::Clear => 0.0,
             alaz_sim::time::Weather::Rain => 1.0,
             alaz_sim::time::Weather::Snow => 2.0,
-        };
+        } };
         // the weather fades in and out instead of switching
         let wtarget = if sky > 0.0 { 1.0 } else { 0.0 };
-        self.weather_amount += (wtarget - self.weather_amount) * 0.01;
+        self.weather_amount += (wtarget - self.weather_amount) * if cave.is_some() { 1.0 } else { 0.01 };
         if sky > 0.0 {
             self.weather_kind = sky;
         }
         // the ground-height window follows the camera in jumps of 64 tiles
-        let (hx, hy) = (((cam.target.x as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64, ((cam.target.z as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64);
-        if self.height_at != Some((world.seed, hx, hy)) {
+        let (hx, hy) = if cave.is_some() { (0, 0) } else { (((cam.target.x as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64, ((cam.target.z as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64) };
+        let height_key = match cave {
+            Some(c) => (u64::MAX - c.node as u64, c.level as i32, world.caves.get(&c.node).map_or(0, |k| k.version) as i32),
+            None => (world.seed, hx, hy),
+        };
+        if cave.is_some() && self.height_at != Some(height_key) {
+            // the ground is flat down here: a window of zeros, so everything stands at height 0
+            let mut zeros = vec![0f32; (HWIN * HWIN * 4) as usize];
+            // (and the green channel marks the solid rock, which the torch's light cannot pass)
+            if let Some(lv) = cave.and_then(|c| world.caves.get(&c.node).and_then(|k| k.level(c.level))) {
+                for ty in 0..alaz_sim::caves::CAVE_H {
+                    for tx in 0..alaz_sim::caves::CAVE_W {
+                        if lv.cell(tx, ty) == alaz_sim::caves::Cell::Rock {
+                            zeros[((ty as u32 * HWIN + tx as u32) * 4 + 1) as usize] = 1.0;
+                        }
+                    }
+                }
+            }
+            self.queue.write_texture(
+                self.height_tex.as_image_copy(),
+                bytemuck::cast_slice(&zeros),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
+                wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
+            );
+            self.height_at = Some(height_key);
+            self.surf_wkey = None;
+            self.surf_key = None;
+            self.surf_on = false;
+        } else if cave.is_none() && self.height_at != Some(height_key) {
             let shore = shore_field(world, hx, hy);
             let data: Vec<f32> = (0..HWIN as i32 * HWIN as i32)
                 .flat_map(|i| {
@@ -159,7 +194,9 @@ impl Renderer {
             self.surf_key = None;
             self.surf_on = false;
         }
-        self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
+        if cave.is_none() {
+            self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
+        }
         let mut g = [0f32; 164];
         g[..16].copy_from_slice(&snap_cam.view_proj(1.0).to_cols_array());
         // the sun crosses the sky from morning (east, +x) to evening (west); at night a weak moon casts from above
@@ -171,7 +208,7 @@ impl Renderer {
             let (cx, cz) = ((vm.0 + vm.2) * 0.5, (vm.1 + vm.3) * 0.5);
             // the box grows and shrinks in 8 m steps: a size changing every frame changes the shadow texel size
             let r = ((0.5 * ((vm.2 - vm.0).powi(2) + (vm.3 - vm.1).powi(2)).sqrt() / 8.0).ceil() * 8.0).clamp(16.0, 128.0);
-            let center = glam::Vec3::new(cx, ground_height(world.seed, cx, cz), cz);
+            let center = glam::Vec3::new(cx, gh(cx, cz), cz);
             let now_dir = glam::Vec3::from(sun_dir);
             if glam::Vec3::from(self.shadow_dir).dot(now_dir) < 0.99995 {
                 self.shadow_dir = sun_dir;
@@ -184,10 +221,10 @@ impl Renderer {
             (view, r, view.transform_point3(center))
         };
         g[48..51].copy_from_slice(&sun_dir);
-        g[51] = sun_strength;
+        g[51] = if cave.is_some() { 0.0 } else { sun_strength };
         // clouds: more of them in bad weather; they drift with the wind
         let clock = world.tick as f32 / 60.0;
-        g[52] = 0.35 + 0.55 * self.weather_amount;
+        g[52] = if cave.is_some() { 0.0 } else { 0.35 + 0.55 * self.weather_amount };
         // the one wind of the world: everything that moves in the air or on the water goes its way
         let (heading, strength) = alaz_sim::time::wind(world.seed, world.tick, world.settings.season_days as u64);
         let (wa, ws) = (heading as f32 / 1000.0, strength as f32 / 1000.0);
@@ -216,8 +253,21 @@ impl Renderer {
         let _ = clock;
         // the player's own body, so whatever stands between it and the camera can open up around it
         if let Some(a) = world.agents.iter().find(|a| a.id == me) {
-            let (px, pz) = (a.x as f32 / 1000.0, a.y as f32 / 1000.0);
-            g[56..60].copy_from_slice(&[px, ground_height(world.seed, px, pz) + 0.9, pz, 1.0]);
+            let (px, pz) = match a.cave {
+                Some(c) => (c.x as f32 / 1000.0, c.y as f32 / 1000.0),
+                None => (a.x as f32 / 1000.0, a.y as f32 / 1000.0),
+            };
+            g[56..60].copy_from_slice(&[px, gh(px, pz) + 0.9, pz, 1.0]);
+        }
+        // underground: g[63] is 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
+        if let Some(c) = cave {
+            let left = c.light as f32 / (c.full.max(1) as f32);
+            let strength = if c.light == 0 { 0.0 } else { 0.4 + 0.6 * (left / 0.2).min(1.0) };
+            let cur = self.cave_light;
+            self.cave_light += (strength - cur) * (1.0 - (-6.0 * self.last_frame.elapsed().as_secs_f32().min(0.1)).exp());
+            g[63] = 1.0 + self.cave_light;
+        } else {
+            self.cave_light = 1.0;
         }
         {
             let (p, y) = (cam.pitch_deg.to_radians(), cam.yaw_deg.to_radians());
@@ -228,7 +278,7 @@ impl Renderer {
             g[64..67].copy_from_slice(&u.to_array());
         }
         // fires light their surroundings: the eight burning ones nearest the camera (xyz, w = reach in metres)
-        {
+        if cave.is_none() {
             let mut fires: Vec<(f32, [f32; 4])> = world
                 .buildings
                 .iter()
@@ -277,9 +327,9 @@ impl Renderer {
         g[21] = cam.target.z;
         g[24] = hx as f32;
         g[25] = hy as f32;
-        let storm = if self.weather_kind < 1.5 { self.weather_amount } else { 0.0 };
-        let snowing = if self.weather_kind > 1.5 { self.weather_amount } else { 0.0 };
-        let winter = (world.season() == 3) as u8 as f32 * 0.22;
+        let storm = if cave.is_some() { 0.0 } else if self.weather_kind < 1.5 { self.weather_amount } else { 0.0 };
+        let snowing = if cave.is_some() { 0.0 } else if self.weather_kind > 1.5 { self.weather_amount } else { 0.0 };
+        let winter = (world.season() == 3 && cave.is_none()) as u8 as f32 * 0.22;
         g[28] = world.tick as f32 / 60.0;
         g[29] = 0.1 + 1.8 * alaz_sim::time::wind(world.seed, world.tick, world.settings.season_days as u64).1 as f32 / 1000.0;
         self.wind = g[29];
@@ -303,7 +353,9 @@ impl Renderer {
         // worker threads beside the rest of the frame (the old mesh keeps showing meanwhile); the chunks one ring
         // beyond the picture are built ahead, so ground arrives before it is seen.
         self.frame_no += 1;
-        let (cx0, cy0, cx1, cy1, view_m) = visible_chunks(&cam, self.aspect(), world);
+        let (cx0, cy0, cx1, cy1, view_cave) = visible_chunks(&cam, self.aspect(), world);
+        // underground no chunk of the surface is wanted, and nothing of the surface is inside the picture
+        let (cx0, cy0, cx1, cy1, view_m) = if cave.is_some() { (0, 0, -1, -1, (1e9, 1e9, 1e9, 1e9)) } else { (cx0, cy0, cx1, cy1, view_cave) };
         let mut visible: Vec<(i32, i32)> = Vec::new();
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
@@ -319,6 +371,9 @@ impl Renderer {
             let mut ring = Vec::new();
             for cy in (cy0 - 1).max(0)..=(cy1 + 1).min(max(world.map.h)) {
                 for cx in (cx0 - 1).max(0)..=(cx1 + 1).min(max(world.map.w)) {
+                    if cave.is_some() {
+                        continue;
+                    }
                     if cx < cx0 || cx > cx1 || cy < cy0 || cy > cy1 {
                         ring.push((cx, cy));
                     }
@@ -388,7 +443,7 @@ impl Renderer {
             // the same texel size; it is redrawn only when the sun stepped, the box size changed, the camera nears the edge
             // of its margin, or a chunk's models changed. Each frame the window of it that the picture needs is copied
             // into the dynamic map (same texels, same depth range), and what moves is drawn over that.
-            let shadows_on = self.quality.shadows != crate::ShadowQuality::Off;
+            let shadows_on = self.quality.shadows != crate::ShadowQuality::Off && cave.is_none();
             let redraw_static = {
                 let st = &mut self.shadow_static;
                 // (a size one step larger than wanted is kept: the box does not flicker between two sizes)
@@ -439,6 +494,9 @@ impl Renderer {
                 let mut near = Vec::new();
                 for cy in (cy0 - 1).max(0)..=(cy1 + 1).min(max(world.map.h)) {
                     for cx in (cx0 - 1).max(0)..=(cx1 + 1).min(max(world.map.w)) {
+                        if cave.is_some() {
+                            continue;
+                        }
                         near.push((cx, cy));
                     }
                 }
@@ -563,8 +621,43 @@ impl Renderer {
             // how evolved the people look: the caller's smoothed value, or the world's perception as it stands
             let evo = self.evo.unwrap_or_else(|| crate::evo_pos(world.perception_permille() as f32));
             let mut body_jobs: Vec<BodyJob> = Vec::with_capacity(world.agents.len());
+            // the cave's blocks in view, then the torches
+            if let Some(c) = cave {
+                let want = (c.node, c.level, world.caves.get(&c.node).map_or(0, |k| k.version), world.caves.get(&c.node).is_some_and(|k| k.wet));
+                if self.cave_blocks.as_ref().is_none_or(|(k, _)| *k != want) {
+                    if let Some(lv) = world.caves.get(&c.node).and_then(|k| k.level(c.level)) {
+                        let nb = (alaz_sim::caves::CAVE_W / BLOCK) as usize;
+                        let blocks = (0..nb * nb).map(|i| build_cave_block(lv, world.seed, c.node, c.depth(), (i % nb) as i32, (i / nb) as i32)).collect();
+                        self.cave_blocks = Some((want, blocks));
+                    }
+                }
+                if let Some((_, blocks)) = &self.cave_blocks {
+                    let nb = (alaz_sim::caves::CAVE_W / BLOCK) as usize;
+                    let (vx0, vz0, vx1, vz1) = (view_cave.0 + 6.0, view_cave.1 + 6.0, view_cave.2 - 6.0, view_cave.3 - 6.0);
+                    for (i, b) in blocks.iter().enumerate() {
+                        let (bx, bz) = ((i % nb) as f32 * BLOCK as f32, (i / nb) as f32 * BLOCK as f32);
+                        // (a margin for the walls' height; the view's own margin is large)
+                        if bx + BLOCK as f32 + 3.0 >= vx0 && bx - 3.0 <= vx1 && bz + BLOCK as f32 + 3.0 >= vz0 && bz - 3.0 <= vz1 {
+                            dynamic.extend_from_slice(b);
+                        }
+                    }
+                }
+            } else {
+                self.cave_blocks = None;
+            }
             for a in &world.agents {
-                let (x, z) = (a.x as f32 / 1000.0, a.y as f32 / 1000.0);
+                let here = match (&cave, &a.cave) {
+                    (None, None) => true,
+                    (Some(m), Some(c)) => c.node == m.node && c.level == m.level,
+                    _ => false,
+                };
+                if !here {
+                    continue;
+                }
+                let (x, z) = match a.cave {
+                    Some(c) => (c.x as f32 / 1000.0, c.y as f32 / 1000.0),
+                    None => (a.x as f32 / 1000.0, a.y as f32 / 1000.0),
+                };
                 let w = self.anim.entry(a.id.0).or_insert(Walk::at(x, z, 0.0, a.health));
                 let (x, z) = w.smooth(x, z, world.tick, alpha);
                 // a blow makes the body flinch and flash
@@ -591,20 +684,32 @@ impl Renderer {
                             let outfit = outfit_bits(&a.inventory);
                 let slope = {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
-                    (ground_height(world.seed, x + sx, z + sz) - ground_height(world.seed, x - sx, z - sz)) / 1.2
+                    (gh(x + sx, z + sz) - gh(x - sx, z - sz)) / 1.2
                 };
                 let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated() };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;
                     let z_m = (f.z as f32 + f.vz as f32 * alpha) / q / 1000.0;
-                    (z_m - ground_height(world.seed, x, z), (f.vz as f32 / q / 60.0).clamp(-1.0, 1.0))
+                    (z_m - gh(x, z), (f.vz as f32 / q / 60.0).clamp(-1.0, 1.0))
                 });
                 let pose = match flight {
                     Some((_, v)) => Pose { air: if v.abs() < 0.05 { 0.05 } else { v }, amp: 0.0, work: Work::None, ..pose },
                     None => pose,
                 };
-                let depth = alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
+                let depth = match (a.cave, &cave) {
+                    (Some(c), _) => world.caves.get(&c.node).and_then(|k| k.level(c.level)).map_or(0, |lv| match lv.cell(c.x.div_euclid(1000) as i32, c.y.div_euclid(1000) as i32) {
+                        alaz_sim::caves::Cell::Shallow => 1,
+                        alaz_sim::caves::Cell::Deep => 2,
+                        _ => 0,
+                    }),
+                    _ => alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32),
+                };
+                // a torch in the hand of everyone underground: the light itself is the player's alone
+                if let Some(c) = a.cave {
+                    let (h, ts) = (w.heading, secs);
+                    push_torch(&mut dynamic, x + h.cos() * 0.3 + h.sin() * 0.12, z - h.sin() * 0.3 + h.cos() * 0.12, ts, c.light as f32 / c.full.max(1) as f32);
+                }
                 // the body leans into a turn and a little forward when it hurries (not when swimming or in the air)
                 let lean = if a.kind == AgentKind::Human && flight.is_none() && depth == 0 {
                     Some(((-w.spin * w.speed * 0.07).clamp(-0.22, 0.22), (w.speed * 0.035).clamp(0.0, 0.11)))
@@ -657,7 +762,7 @@ impl Renderer {
                 let live: std::collections::HashSet<u32> = world.agents.iter().map(|a| a.id.0).collect();
                 self.anim.retain(|k, _| live.contains(k));
             }
-            for &i in routes {
+            for &i in routes.iter().filter(|_| cave.is_none()) {
                 if let Some(a) = world.agents.get(i) {
                     push_route(&mut dynamic, world, a, tick);
                     // a resource being gone for glows itself, as under the pointer, instead of carrying a flag

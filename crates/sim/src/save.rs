@@ -10,7 +10,9 @@ use crate::world::{Agent, World, WorldSettings};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 4] = b"ALAZ";
-pub const FORMAT_VERSION: u32 = 29;
+pub const FORMAT_VERSION: u32 = 30;
+/// The format before caves could be walked in: the extension block without them. Still read (a miner inside a chamber is put back outside).
+const PRE_CAVE_VERSION: u32 = 29;
 /// The format before the journal: the extension block without it. Still read (formats 27 and 28 share it).
 const PRE_JOURNAL_VERSION: u32 = 28;
 /// The format before the late-age machines: the same layout, but no accumulator charge in `fuel` and no wave-3 buildings. Still read.
@@ -43,6 +45,8 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
     crate::items_serde::LEGACY.with(|l| l.set(legacy));
     let r = if version == FORMAT_VERSION {
         postcard::from_bytes(payload)
+    } else if version == PRE_CAVE_VERSION {
+        postcard::from_bytes::<SaveDataV29>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_JOURNAL_VERSION || version == PRE_GRID_VERSION {
         postcard::from_bytes::<SaveDataV28>(payload).map(|d| SaveData { core: d.core, air: d.air, bodies: d.bodies, ext: d.ext.upgrade() })
     } else if version == PRE_INDUSTRY_VERSION {
@@ -74,7 +78,7 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
 }
 
 fn readable(version: u32) -> bool {
-    matches!(version, FORMAT_VERSION | PRE_JOURNAL_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
+    matches!(version, FORMAT_VERSION | PRE_CAVE_VERSION | PRE_JOURNAL_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
 }
 const HEADER_LEN: usize = 4 + 4 + 8;
 
@@ -173,6 +177,41 @@ struct SaveExt {
     seen_hi: u128,
     /// The tribe's journal and the goal for the next day.
     journal: crate::journal::Journal,
+    /// Caves that have been changed: the mouth's node index, and the changed tiles (level, x, y, cell, ore swings left).
+    caves: Vec<(u32, Vec<(u8, u16, u16, u8, u8)>)>,
+    /// Per agent, in order: where it is underground, if it is.
+    cave_agents: Vec<Option<crate::caves::CaveSelf>>,
+}
+
+/// The extension block as format 29 wrote it (no caves to walk in).
+#[derive(Deserialize)]
+struct SaveExtV29 {
+    settings: WorldSettings,
+    recipe_ids: Vec<String>,
+    custom_rules: Option<String>,
+    buildings: Vec<(i16, u16)>,
+    generations: Vec<u8>,
+    wear: Vec<Vec<(ItemKind, u16)>>,
+    nutrition: Vec<[u16; 3]>,
+    chunks: Vec<(i32, i32)>,
+    facing: Vec<u8>,
+    burn: Vec<(i32, i32, bool, u64, u64)>,
+    seen_hi: u128,
+    journal: crate::journal::Journal,
+}
+
+impl SaveExtV29 {
+    fn upgrade(self) -> SaveExt {
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: self.seen_hi, journal: self.journal, caves: Vec::new(), cave_agents: Vec::new() }
+    }
+}
+
+#[derive(Deserialize)]
+struct SaveDataV29 {
+    core: SaveCore,
+    air: Vec<crate::physics::Air>,
+    bodies: Vec<crate::physics::Body>,
+    ext: SaveExtV29,
 }
 
 /// The extension block as formats 27 and 28 wrote it (no journal).
@@ -193,7 +232,7 @@ struct SaveExtV28 {
 
 impl SaveExtV28 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: self.seen_hi, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: self.seen_hi, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -222,7 +261,7 @@ struct SaveExtV26 {
 
 impl SaveExtV26 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: self.burn, seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -250,7 +289,7 @@ struct SaveExtV25 {
 
 impl SaveExtV25 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: Vec::new(), seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: self.facing, burn: Vec::new(), seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -277,7 +316,7 @@ struct SaveExtV24 {
 
 impl SaveExtV24 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: self.chunks, facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -303,7 +342,7 @@ struct SaveExtV23 {
 
 impl SaveExtV23 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: self.nutrition, chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -328,7 +367,7 @@ struct SaveExtV22 {
 
 impl SaveExtV22 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: self.wear, nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -352,7 +391,7 @@ struct SaveExtV21 {
 
 impl SaveExtV21 {
     fn upgrade(self) -> SaveExt {
-        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default() }
+        SaveExt { settings: self.settings, recipe_ids: self.recipe_ids, custom_rules: self.custom_rules, buildings: self.buildings, generations: self.generations, wear: Vec::new(), nutrition: Vec::new(), chunks: Vec::new(), facing: Vec::new(), burn: Vec::new(), seen_hi: 0, journal: Default::default(), caves: Vec::new(), cave_agents: Vec::new() }
     }
 }
 
@@ -380,6 +419,8 @@ impl SaveExt {
             burn: Vec::new(),
             seen_hi: 0,
             journal: Default::default(),
+            caves: Vec::new(),
+            cave_agents: Vec::new(),
         }
     }
 }
@@ -484,6 +525,8 @@ impl World {
             burn: self.burn.iter().map(|(&(tx, ty), b)| (tx, ty, b.fire, b.born, b.until)).collect(),
             seen_hi: self.seen_hi,
             journal: self.journal.clone(),
+            caves: self.caves.iter().filter(|(_, c)| !c.changed.is_empty()).map(|(&node, c)| (node, c.changed.iter().map(|(&(lv, x, y), &(cell, left))| (lv, x, y, cell, left)).collect())).collect(),
+            cave_agents: self.agents.iter().map(|a| a.cave).collect(),
         };
         let data = SaveData { core, air: self.air.clone(), bodies: self.bodies.clone(), ext };
         let payload = postcard::to_allocvec(&data).expect("serialize save");
@@ -596,6 +639,32 @@ impl World {
             }
             for (a, &g) in w.agents.iter_mut().zip(&ext.generations) {
                 a.generation = g;
+            }
+        }
+        // a miner saved inside a chamber before caves could be walked in is back outside, beside the mouth
+        for a in w.agents.iter_mut() {
+            if matches!(a.task, crate::world::Task::Cave { .. }) {
+                a.task = crate::world::Task::Idle;
+            }
+        }
+        // caves: cut again from the seed, with the changes people made put back
+        for (node, changes) in &ext.caves {
+            match w.cave_for(*node) {
+                Some(cave) => cave.apply_changes(changes),
+                None => return Err(SaveError::WorldMismatch),
+            }
+        }
+        if !ext.cave_agents.is_empty() {
+            if ext.cave_agents.len() != w.agents.len() {
+                return Err(SaveError::WorldMismatch);
+            }
+            for (i, c) in ext.cave_agents.iter().enumerate() {
+                if let Some(c) = c {
+                    if w.cave_for(c.node).is_none() {
+                        return Err(SaveError::WorldMismatch);
+                    }
+                    w.agents[i].cave = Some(*c);
+                }
             }
         }
         // the hash covers every item slot and every falling thing, so an upgraded save cannot match the one it was
@@ -819,6 +888,41 @@ mod tests {
         let old = postcard::to_allocvec(&(&d.core, &d.air, &d.bodies, (&e.settings, &e.recipe_ids, &e.custom_rules, &e.buildings, &e.generations, &e.wear))).unwrap();
         let b = World::from_bytes(&framed(PRE_NUTRITION_VERSION, &old)).expect("format 22 loads");
         assert!(b.agents.iter().all(|a| a.nutrition == [600; 3]));
+    }
+
+    /// A format-29 save (no walkable caves) loads; a miner saved inside a chamber is put back outside, free to go on.
+    #[test]
+    fn a_format_29_save_is_upgraded_and_a_miner_inside_comes_out() {
+        let mut w = played_world();
+        let node = NodeId(w.nodes.iter().position(|n| n.kind == NodeKind::CaveMouth).unwrap() as u32);
+        w.agents[0].task = crate::world::Task::Cave { node, depth: 1, light: 900, act: 1, work: 5 };
+        let d = payload_of(&w.to_bytes());
+        let e = &d.ext;
+        let old = postcard::to_allocvec(&(&d.core, &d.air, &d.bodies, (&e.settings, &e.recipe_ids, &e.custom_rules, &e.buildings, &e.generations, &e.wear, &e.nutrition, &e.chunks, &e.facing, &e.burn, &e.seen_hi, &e.journal))).unwrap();
+        let b = World::from_bytes(&framed(PRE_CAVE_VERSION, &old)).expect("format 29 loads");
+        assert_eq!(b.agents[0].task, crate::world::Task::Idle);
+        assert!(b.agents[0].cave.is_none() && b.caves.is_empty());
+        assert_eq!(b.agents.len(), w.agents.len());
+    }
+
+    /// Someone underground, and a wall they dug, survive a save: the cave is cut again from the seed.
+    #[test]
+    fn a_walker_underground_and_a_dug_wall_survive_a_save() {
+        let mut w = played_world();
+        let ni = w.nodes.iter().position(|n| n.kind == NodeKind::CaveMouth).unwrap();
+        let (mx, my) = w.nodes[ni].center_mm();
+        w.agents[0].x = mx;
+        w.agents[0].y = my + 1_500;
+        w.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
+        w.step(&[Command { agent: w.agents[0].id, kind: CommandKind::EnterCave { node: NodeId(ni as u32) } }]);
+        assert!(w.agents[0].cave.is_some());
+        let lv = w.caves[&(ni as u32)].level(1).unwrap();
+        let wall = (1..crate::caves::CAVE_H - 1).flat_map(|y| (1..crate::caves::CAVE_W - 1).map(move |x| (x, y))).find(|&(x, y)| lv.diggable(x, y)).unwrap();
+        w.caves.get_mut(&(ni as u32)).unwrap().set_tile(1, wall.0, wall.1, crate::caves::Cell::Floor, 0);
+        let b = World::from_bytes(&w.to_bytes()).expect("load");
+        assert_eq!(b.agents[0].cave, w.agents[0].cave);
+        assert_eq!(b.caves[&(ni as u32)].level(1).unwrap().cell(wall.0, wall.1), crate::caves::Cell::Floor);
+        assert_eq!(b.hash(), w.hash());
     }
 
     /// Rules may grow at the end: a save that knew fewer recipes loads; one whose recipes are not a prefix of the

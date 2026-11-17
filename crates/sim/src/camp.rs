@@ -29,7 +29,7 @@ impl World {
     /// Sit down at the fire: rest, warmth and a little mending, once an evening; the camp is written down.
     pub(crate) fn do_camp(&mut self, idx: usize) {
         let id = self.agents[idx].id;
-        if matches!(self.agents[idx].task, Task::Craft { .. } | Task::Cave { .. }) {
+        if self.agents[idx].cave.is_some() || matches!(self.agents[idx].task, Task::Craft { .. }) {
             return;
         }
         if let Err(why) = self.can_camp(id) {

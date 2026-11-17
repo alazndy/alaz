@@ -208,7 +208,7 @@ impl World {
     /// Spring up. Moving people take their speed with them; the breath runs short if they keep at it.
     pub(crate) fn jump(&mut self, idx: usize) {
         let a = &self.agents[idx];
-        if a.kind != AgentKind::Human || a.broken > 0 || a.stamina < JUMP_STAMINA || matches!(a.task, Task::Cave { .. } | Task::Craft { .. }) || self.airborne(a.id).is_some() {
+        if a.kind != AgentKind::Human || a.broken > 0 || a.stamina < JUMP_STAMINA || a.cave.is_some() || matches!(a.task, Task::Craft { .. }) || self.airborne(a.id).is_some() {
             return;
         }
         let mut speed = a.kind.speed_mm();
@@ -376,7 +376,7 @@ impl World {
                             let (len, dx, dy) = (b.size as i64, b.dx as i64, b.dy as i64);
                             let mut struck = false;
                             for (ai, a) in self.agents.iter().enumerate() {
-                                if matches!(a.task, Task::Cave { .. }) || a.id == b.by {
+                                if a.cave.is_some() || a.id == b.by {
                                     continue;
                                 }
                                 // along the trunk and how far to its side
@@ -483,7 +483,7 @@ impl World {
                         let (rx, ry, rz) = b.pos_mm();
                         let reach = b.size as i64 + 330;
                         for (ai, a) in self.agents.iter().enumerate() {
-                            if matches!(a.task, Task::Cave { .. }) || hits.iter().any(|h| h.0 == ai) || b.spin == ai as i64 + 1 {
+                            if a.cave.is_some() || hits.iter().any(|h| h.0 == ai) || b.spin == ai as i64 + 1 {
                                 continue;
                             }
                             let feet = elevation_at_mm(seed, a.x, a.y) as i64;
@@ -524,7 +524,7 @@ impl World {
         if self.tick % ROCKFALL_EVERY != ROCKFALL_EVERY - 1 {
             return;
         }
-        let people: Vec<(AgentId, i64, i64)> = self.agents.iter().filter(|a| a.kind == AgentKind::Human && !matches!(a.task, Task::Cave { .. })).map(|a| (a.id, a.x, a.y)).collect();
+        let people: Vec<(AgentId, i64, i64)> = self.agents.iter().filter(|a| a.kind == AgentKind::Human && a.cave.is_none()).map(|a| (a.id, a.x, a.y)).collect();
         for (id, x, y) in people {
             let h = hash2(self.seed ^ 0x40CF, id.0 as i32, (self.tick / ROCKFALL_EVERY) as i32);
             if h % 100 >= ROCKFALL_PERCENT {

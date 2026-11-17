@@ -239,6 +239,12 @@ pub struct Renderer {
     pub(crate) shadow_dir: [f32; 3],
     /// Where the cloud field has drifted to (it moves with the wind, so it is summed frame by frame).
     pub(crate) cloud_off: [f32; 2],
+    /// The mesh of the cave the player is in, cut in blocks: (node, level, cave version, wet) it was built for.
+    pub(crate) cave_blocks: Option<((u32, u8, u64, bool), Vec<Vec<Vertex>>)>,
+    /// Where the player was last frame underground (node, level): a change drops the walking animations.
+    pub(crate) cave_was: Option<(u32, u8)>,
+    /// The torch's strength as drawn (it eases toward the sim's value, so a dying torch dims instead of jumping).
+    pub(crate) cave_light: f32,
     pub(crate) prof: Option<GpuProf>,
     /// `ALAZ_SHOT`: where to write the picture, and how many frames to wait first
     pub(crate) shot: Option<(String, u32)>,
@@ -534,6 +540,9 @@ impl Renderer {
             }),
             shadow_dir: [0.0, 1.0, 0.0],
             cloud_off: [0.0, 0.0],
+            cave_blocks: None,
+            cave_was: None,
+            cave_light: 1.0,
             prof,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,

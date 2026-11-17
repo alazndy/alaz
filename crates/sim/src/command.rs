@@ -69,13 +69,12 @@ pub enum CommandKind {
     Feed { target: crate::command::AgentId },
     /// Replace a worker's standing route (empty = stop).
     SetRoute { worker: crate::command::AgentId, route: Vec<RouteStep> },
-    /// Step into a cave mouth with a torch (one is used up). Needs to be standing next to it.
+    /// Go into a cave mouth with a torch or a lamp (a torch is used up), walking up to it first if need be.
     EnterCave { node: NodeId },
-    /// In a cave: work the seam in this chamber.
-    CaveMine,
-    /// In a cave: go one chamber deeper, where the seams are richer and the ceiling worse.
-    CaveDeeper,
-    /// In a cave: walk back out to the light.
+    /// In a cave: dig the wall on this tile (walk up to it, then swing the pick). Rock and veins want a pick; fallen
+    /// rubble can be cleared by hand.
+    CaveDig { tx: i32, ty: i32 },
+    /// In a cave: make your own way out to the surface, by the stairs and the exit.
     CaveLeave,
     /// Start or stop running. Running is faster, costs breath and thirst, and only works with breath left.
     SetSprint { on: bool },

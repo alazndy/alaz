@@ -72,6 +72,7 @@ impl DetMath for f64 {
 
 mod bodies;
 mod buildings;
+mod caves;
 mod common;
 mod creatures;
 mod decor;
@@ -88,6 +89,7 @@ pub use evo::{evo_pos, evo_stage, smooth, Evo, EVO_STAGES, EVO_STARTS};
 pub use nodes::node_bounds;
 pub(crate) use bodies::*;
 pub(crate) use buildings::*;
+pub(crate) use caves::*;
 pub(crate) use common::*;
 pub(crate) use creatures::*;
 pub(crate) use decor::*;

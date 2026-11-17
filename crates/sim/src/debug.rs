@@ -427,8 +427,10 @@ impl Script {
             },
             "cave" => {
                 let k = match arg(1) {
-                    "mine" => Some(CommandKind::CaveMine),
-                    "deeper" => Some(CommandKind::CaveDeeper),
+                    // dig the nearest ore vein (or, with none about, the nearest bare wall)
+                    "mine" | "dig" => w.cave_dig_target(me).map(|(tx, ty)| CommandKind::CaveDig { tx, ty }),
+                    // walk to the stair down
+                    "down" => w.cave_down_spot(me).map(|(x, y)| CommandKind::MoveTo { x, y }),
                     "leave" => Some(CommandKind::CaveLeave),
                     _ => nearest(w, &a, NodeKind::CaveMouth).map(|node| CommandKind::EnterCave { node }),
                 };
@@ -437,7 +439,7 @@ impl Script {
                         self.wait = Wait::Until(w.tick + 120);
                         return vec![cmd(k)];
                     }
-                    None => self.fail(w, "cave: no cave mouth within reach"),
+                    None => self.fail(w, "cave: nothing to do (no mouth within reach, or no wall to dig)"),
                 }
             }
             "repair" => match item_named(arg(1)) {
