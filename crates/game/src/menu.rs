@@ -5,9 +5,30 @@ use crate::ui_art::{self, Glyph};
 use alaz_render::egui::{self, epaint::Mesh, pos2, vec2, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use winit::keyboard::KeyCode;
 
+/// Everything needed to create a world, as picked on the menu.
+pub struct NewWorld {
+    pub slot: u8,
+    pub seed: Option<u64>,
+    pub size: i32,
+    pub hardcore: bool,
+    pub settings: alaz_sim::world::WorldSettings,
+}
+
+// placeholder until alaz_net::discovery::Found lands
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    pub addr: std::net::SocketAddr,
+    pub players: u32,
+    pub label: String,
+}
+
 pub enum MenuAction {
     Continue(u8),
     New { slot: u8, seed: Option<u64>, size: i32, hardcore: bool, settings: alaz_sim::world::WorldSettings },
+    /// `new` is None when the slot already holds a save to load.
+    Host { slot: u8, port: u16, new: Option<NewWorld> },
+    /// Raw text: "192.168.1.5" or "192.168.1.5:7777".
+    Join(String),
     Delete(u8),
     Resume,
     SaveQuit,
@@ -34,6 +55,16 @@ pub struct Menu {
     /// Waiting for a key press to bind to (action, slot).
     capturing: Option<(Action, usize)>,
     pub error: Option<String>,
+    /// A join attempt is running in the background.
+    pub connecting: bool,
+    pub mp_error: Option<String>,
+    /// Shown in the pause card while hosting.
+    pub net_line: Option<String>,
+    pub found: Vec<Found>,
+    /// The multiplayer screen is open; the app runs LAN discovery only while it is.
+    pub mp_screen: bool,
+    port_text: String,
+    addr_text: String,
     /// When the screen first drew, for the intro animation.
     born: Option<f64>,
 }
@@ -88,6 +119,13 @@ impl Menu {
             gfx_screen: std::env::var_os("ALAZ_DEMO_GFXSCREEN").is_some(),
             capturing: None,
             error: None,
+            connecting: false,
+            mp_error: None,
+            net_line: None,
+            found: Vec::new(),
+            mp_screen: std::env::var_os("ALAZ_DEMO_MPSCREEN").is_some(),
+            port_text: "7777".to_string(),
+            addr_text: String::new(),
             born: None,
         };
         m.refresh();
@@ -119,6 +157,21 @@ impl Menu {
 
     pub fn capturing(&self) -> bool {
         self.capturing.is_some()
+    }
+
+    fn new_world(&self) -> NewWorld {
+        let difficulty = match self.difficulty_idx {
+            0 => alaz_sim::world::Difficulty::Forgiving,
+            1 => alaz_sim::world::Difficulty::Realistic,
+            _ => alaz_sim::world::Difficulty::Creative,
+        };
+        NewWorld {
+            slot: self.slot,
+            seed: self.seed_text.trim().parse::<u64>().ok(),
+            size: SIZES[self.size_idx].1,
+            hardcore: self.hardcore,
+            settings: alaz_sim::world::WorldSettings { difficulty, season_days: SEASONS[self.season_idx].1 },
+        }
     }
 
 }
@@ -470,6 +523,18 @@ fn card(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
     }
 }
 
+/// A painted text field with a small caption on the left, like the seed field.
+fn painted_field(ui: &mut Ui, caption: &str, hint: &str, text: &mut String) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(110));
+    ui.painter().rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), LINE), StrokeKind::Inside);
+    ui.painter().text(pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, caption, FontId::proportional(11.0), Color32::from_rgb(160, 140, 104));
+    let er = Rect::from_min_max(pos2(rect.left() + 64.0, rect.top() + 4.0), pos2(rect.right() - 8.0, rect.bottom() - 4.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(er), |ui| {
+        ui.add_sized(er.size(), egui::TextEdit::singleline(text).frame(egui::Frame::NONE).hint_text(hint).align(egui::Align2::LEFT_CENTER));
+    });
+}
+
 impl Menu {
     fn intro(&mut self, ctx: &egui::Context) -> f32 {
         let now = ctx.input(|i| i.time);
@@ -530,6 +595,71 @@ impl Menu {
         });
     }
 
+    fn draw_multiplayer(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
+        let t = self.intro(ctx);
+        let screen = ctx.content_rect();
+        let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
+        bg.rect_filled(screen, 0.0, Color32::from_black_alpha(205));
+        let e = ease(t / 0.35);
+        let note = Color32::from_rgb(190, 176, 150);
+        let mut act = None;
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
+            ui.set_opacity(e);
+            card(ui, 470.0, |ui| {
+                ui.label(egui::RichText::new("Çok oyunculu").size(33.0).strong().color(GOLD));
+                ui.add_space(6.0);
+                section(ui, "Sunucu kur");
+                let full = self.slots[self.slot as usize - 1].is_some();
+                let what = if full { "kayıtlı dünya açılır" } else { "yeni dünya kurulur (menüdeki ayarlarla)" };
+                ui.label(egui::RichText::new(format!("Yuva {}: {what}", self.slot)).color(note));
+                ui.add_space(4.0);
+                painted_field(ui, "PORT", "7777", &mut self.port_text);
+                self.port_text.retain(|c| c.is_ascii_digit());
+                self.port_text.truncate(5);
+                ui.add_space(4.0);
+                if button(ui, "Sunucu kur", vec2(ui.available_width(), 42.0), Look::Primary).clicked() {
+                    let port = self.port_text.parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(7777);
+                    let new = if full { None } else { Some(self.new_world()) };
+                    act = Some(MenuAction::Host { slot: self.slot, port, new });
+                }
+                ui.add_space(8.0);
+                section(ui, "Ağdaki oyunlar");
+                if self.found.is_empty() {
+                    ui.label(egui::RichText::new("Aranıyor… Aynı ağda sunucu yoksa adresi elle yaz.").color(note));
+                }
+                for f in &self.found {
+                    ui.horizontal(|ui| {
+                        let bw = 90.0;
+                        let text = format!("{} · {} oyuncu · {}", f.label, f.players, f.addr.ip());
+                        ui.add_sized(vec2((ui.available_width() - bw - 8.0).max(60.0), 28.0), egui::Label::new(egui::RichText::new(text).color(INK)).truncate());
+                        if button(ui, "Katıl", vec2(bw, 28.0), Look::Plain).clicked() && !self.connecting {
+                            act = Some(MenuAction::Join(f.addr.to_string()));
+                        }
+                    });
+                }
+                ui.add_space(8.0);
+                section(ui, "Adresle katıl");
+                painted_field(ui, "ADRES", "192.168.1.5", &mut self.addr_text);
+                ui.add_space(4.0);
+                if button(ui, "Katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.addr_text.trim().is_empty() {
+                    act = Some(MenuAction::Join(self.addr_text.trim().to_string()));
+                }
+                if self.connecting {
+                    ui.label(egui::RichText::new("Bağlanıyor…").color(GOLD));
+                }
+                if let Some(err) = &self.mp_error {
+                    ui.colored_label(Color32::from_rgb(240, 110, 110), err);
+                }
+                ui.add_space(10.0);
+                if button(ui, "Geri", vec2(110.0, 34.0), Look::Plain).clicked() {
+                    self.mp_screen = false;
+                    self.mp_error = None;
+                }
+            });
+        });
+        act
+    }
+
     /// Pixel size, shadows and far decor, applied while the menu is up (the world behind is not drawn at the start screen,
     /// but the pause menu shows the change at once).
     fn draw_graphics(&mut self, ctx: &egui::Context) {
@@ -582,6 +712,9 @@ impl Menu {
             self.draw_graphics(ctx);
             return None;
         }
+        if self.mp_screen {
+            return self.draw_multiplayer(ctx);
+        }
         let t = self.intro(ctx);
         let screen = ctx.content_rect();
         let wide = screen.width() >= 1000.0;
@@ -606,6 +739,9 @@ impl Menu {
                     if self.paused {
                         ui.label(egui::RichText::new("A.L.A.Z").size(33.0).strong().color(GOLD));
                         ui.label(egui::RichText::new("Duraklatıldı").color(Color32::from_rgb(190, 176, 150)));
+                        if let Some(line) = &self.net_line {
+                            ui.label(egui::RichText::new(line).color(GOLD));
+                        }
                         ui.add_space(8.0);
                     }
                     if let Some(e) = &self.error {
@@ -729,18 +865,16 @@ impl Menu {
                     let occupied = self.slots[self.slot as usize - 1].is_some();
                     let label = if occupied { "Yeni dünya başlat (yuvanın üstüne yazar)" } else { "Yeni dünya başlat" };
                     if button(ui, label, vec2(ui.available_width(), 48.0), Look::Primary).clicked() {
-                        let seed = self.seed_text.trim().parse::<u64>().ok();
-                        let difficulty = match self.difficulty_idx {
-                            0 => alaz_sim::world::Difficulty::Forgiving,
-                            1 => alaz_sim::world::Difficulty::Realistic,
-                            _ => alaz_sim::world::Difficulty::Creative,
-                        };
-                        let settings = alaz_sim::world::WorldSettings { difficulty, season_days: SEASONS[self.season_idx].1 };
-                        act = Some(MenuAction::New { slot: self.slot, seed, size: SIZES[self.size_idx].1, hardcore: self.hardcore, settings });
+                        let NewWorld { slot, seed, size, hardcore, settings } = self.new_world();
+                        act = Some(MenuAction::New { slot, seed, size, hardcore, settings });
                     }
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        let w = (ui.available_width() - 12.0) / 2.0;
+                        let parts = if self.paused { 2.0 } else { 3.0 };
+                        let w = (ui.available_width() - 12.0 * (parts - 1.0)) / parts;
+                        if !self.paused && button(ui, "Çok oyunculu", vec2(w, 34.0), Look::Plain).clicked() {
+                            self.mp_screen = true;
+                        }
                         if button(ui, "Tuşlar", vec2(w, 34.0), Look::Plain).clicked() {
                             self.keys_screen = true;
                         }
@@ -797,5 +931,52 @@ mod tests {
         h.get_by_label_contains("Yeni dünya başlat").click();
         h.run();
         assert!(matches!(h.state().got, Some(MenuAction::New { .. })), "clicking starts a new world");
+    }
+
+    fn harness(menu: Menu) -> egui_kittest::Harness<'static, S> {
+        let state = S { menu, binds: Keybinds::default(), got: None };
+        egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 900.0)).build_ui_state(
+            |ui, s: &mut S| {
+                if let Some(a) = s.menu.draw(ui.ctx(), &mut s.binds) {
+                    s.got = Some(a);
+                }
+            },
+            state,
+        )
+    }
+
+    #[test]
+    fn multiplayer_screen_hosts_the_selected_slot() {
+        let mut h = harness(Menu::new(false));
+        h.run();
+        h.get_by_label_contains("Çok oyunculu").click();
+        h.run();
+        h.get_by_label("Sunucu kur").click();
+        h.run();
+        assert!(matches!(h.state().got, Some(MenuAction::Host { port: 7777, .. })), "hosting uses the default port");
+    }
+
+    #[test]
+    fn multiplayer_screen_joins_a_typed_address() {
+        let mut h = harness(Menu::new(false));
+        h.run();
+        h.get_by_label_contains("Çok oyunculu").click();
+        h.run();
+        let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+        fields[fields.len() - 1].click();
+        h.run();
+        let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+        fields[fields.len() - 1].type_text("10.0.0.7");
+        h.run();
+        h.get_by_label("Katıl").click();
+        h.run();
+        assert!(matches!(&h.state().got, Some(MenuAction::Join(a)) if a == "10.0.0.7"));
+    }
+
+    #[test]
+    fn paused_menu_has_no_multiplayer_button() {
+        let mut h = harness(Menu::new(true));
+        h.run();
+        assert!(h.query_by_label_contains("Çok oyunculu").is_none());
     }
 }

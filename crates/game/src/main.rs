@@ -1068,6 +1068,7 @@ impl App {
         use menu::MenuAction as M;
         match a {
             M::Resume => self.menu = None,
+            M::Host { .. } | M::Join(_) => {} // wired in Task 3
             M::Quit => {
                 self.quit = true;
             }
