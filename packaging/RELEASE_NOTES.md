@@ -29,6 +29,21 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
+## 0.4.1'de yeni
+
+**Menüden çok oyunculu (aynı ağ):** Ana menüde yeni **Çok oyunculu** ekranı.
+- **Sunucu kur:** Seçili yuvadaki dünyayı sunucu olarak açar. Yuva boşsa menüdeki ayarlarla yeni dünya kurar.
+- **Ağdaki oyunlar:** Aynı ağdaki sunucular kendiliğinden listelenir. **Katıl** ile bağlan.
+- **Adresle katıl:** Liste boş kalırsa sunucunun IP adresini yaz (ör. `192.168.1.5`). Sunucunun adresi, onun duraklatma menüsünde yazar.
+- Bağlanırken oyun donmaz; hata olursa menüde görünür.
+- **Portlar:** Oyun TCP 7777, ağda bulma UDP 7778.
+- **Windows:** İlk sunucu kurulumunda güvenlik duvarı izin sorar. **Özel ağlar** için izin ver; yoksa arkadaşın bağlanamaz.
+- Herkes aynı sürümü kullanmalı (0.4.1).
+
+**Yazı tipi:** Arayüz yazıları artık tek bir serif yüz kullanıyor (Liberation Serif, Times New Roman ölçülerinde).
+
+**Düzeltme:** Mağara bayrağı bir dalga değeriyle çakışıyordu; yüzeyde gölgelendirme bozuluyordu.
+
 ## 0.4.0'da yeni
 
 **Gezilebilir mağaralar:** Mağaralar artık bir panel değil, içine girip yürüdüğün yerler. Elinde meşaleyle ağza yürü (ya da sağ tıkla): her mağara dünyanın tohumundan üretilen dört katlı bir yeraltı; odalar, dolambaçlı tüneller, katlar arası merdivenler.
