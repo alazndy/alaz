@@ -12,6 +12,7 @@ mod audio;
 mod export;
 mod hud;
 mod icons;
+mod inv;
 mod journal_ui;
 mod keys;
 mod lang;
@@ -1903,6 +1904,10 @@ impl App {
                     }
                 }
                 UiAction::Deselect => self.selected = None,
+                UiAction::CloseWindow => {
+                    self.tab = None;
+                    self.selected = None;
+                }
                 UiAction::ToggleRecording => {
                     if !self.recording {
                         self.recorded.clear();
