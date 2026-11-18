@@ -580,12 +580,12 @@ pub fn nearest_water(w: &World, x_mm: i64, y_mm: i64) -> Option<(i32, i32)> {
 
 /// Each ingredient as its icon with "have/need", green when the bag has enough and red when it does not.
 /// Whether everything that must be carried (and is not used up) is in the pack.
-fn has_needs(needs: &[ItemKind], inv: &alaz_sim::world::Inventory) -> bool {
+pub(crate) fn has_needs(needs: &[ItemKind], inv: &alaz_sim::world::Inventory) -> bool {
     needs.iter().all(|&k| inv.get(k) > 0)
 }
 
 /// Things that must be carried but are kept, after the materials: an icon each, marked "elde" (in hand).
-fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::world::Inventory) {
+pub(crate) fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::world::Inventory) {
     if needs.is_empty() {
         return;
     }
@@ -663,7 +663,7 @@ pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
 }
 
 /// What a machine needs around it, in a few words (the build list).
-fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
+pub(crate) fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç ister (su çarkı, yel değirmeni, buhar, motor ya da manej).",
@@ -686,7 +686,7 @@ fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
     }
 }
 
-fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
+pub(crate) fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
     ui.horizontal_wrapped(|ui| {
         for it in items {
             let have = inv.get(it.item);
@@ -1575,10 +1575,10 @@ pub(crate) fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agen
 }
 
 /// The groups of the build list, in the order they are shown.
-const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
+pub(crate) const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
 
 /// Which group of the build list a building stands in.
-fn build_group(kind: BuildingKind) -> usize {
+pub(crate) fn build_group(kind: BuildingKind) -> usize {
     use BuildingKind as B;
     match kind {
         B::Campfire | B::CharcoalKiln | B::Furnace | B::PitKiln | B::Bloomery | B::BlastFurnace | B::CokeOven | B::LimeKiln | B::CementKiln | B::BrickKiln | B::PuddlingFurnace | B::Bessemer | B::Cupola | B::GlassFurnace | B::Smokehouse | B::ArcFurnace | B::CrystalPuller | B::Still => 0,
@@ -1588,76 +1588,6 @@ fn build_group(kind: BuildingKind) -> usize {
         B::TripHammer | B::Lathe | B::DrillMill | B::Press | B::Sawmill | B::PowerLoom | B::SteamHammer | B::RollingLine | B::RollingMill | B::ForgeHammer | B::CottonGin | B::SpinningJenny | B::Conveyor | B::Crane | B::Railway | B::Refinery | B::Electrolysis | B::Welder | B::Reactor | B::Compressor | B::CncMachine | B::AssemblyRobot => 4,
         B::Dynamo | B::Pole | B::ElectricMotor | B::ElectricLamp | B::Computer | B::Transformer | B::Accumulator | B::Telegraph | B::Radio | B::VacuumPump | B::Photolith => 5,
         B::Shelter | B::Depot | B::Cellar | B::MineShaft | B::Pump | B::Ruin => 6,
-    }
-}
-
-pub(crate) fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, acts: &mut Vec<UiAction>) {
-    let defs = rules();
-    let known: Vec<_> = defs.buildings.iter().filter(|b| w.knows(b.discovery)).collect();
-    if known.is_empty() {
-        ui.label("Henüz bir şey inşa etmeyi bilmiyorsun.");
-    }
-    let card = |ui: &mut egui::Ui, b: &alaz_sim::rules::BuildingDef, acts: &mut Vec<UiAction>| {
-        egui::Frame::new().fill(Color32::from_black_alpha(90)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(b.name.as_str()).strong());
-                    need_row(ui, w, &b.cost, &me.inventory);
-                    if !b.alt_cost.is_empty() {
-                        ui.label(RichText::new("ya da").small().weak());
-                        need_row(ui, w, &b.alt_cost, &me.inventory);
-                    }
-                    if !b.alt_cost2.is_empty() {
-                        ui.label(RichText::new("ya da").small().weak());
-                        need_row(ui, w, &b.alt_cost2, &me.inventory);
-                    }
-                    needs_row(ui, w, &b.needs, &me.inventory);
-                    if let Some(note) = machine_note(b.kind) {
-                        ui.label(RichText::new(note).small().weak());
-                    }
-                    if b.heavy() && w.knows(Discovery::Hoisting) {
-                        ui.label(RichText::new("Büyük yapı: vinç yakınında dörtte bir ucuz.").small().weak());
-                    }
-                    if let Some(req) = b.kind.requirement() {
-                        if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
-                            ui.label(RichText::new(requirement_note(req)).small().color(Color32::from_rgb(220, 180, 110)));
-                        }
-                    }
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let on = ui_ctx.build_mode == Some(b.kind);
-                    if ui.add_enabled(b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory), egui::Button::new("Yerleştir").selected(on).min_size(egui::vec2(80.0, 28.0))).clicked() {
-                        acts.push(UiAction::BeginBuild(b.kind));
-                    }
-                });
-            });
-        });
-    };
-    // grouped by what the building is for; a group opens by itself while there is something in it to build now
-    for (gi, name) in BUILD_GROUPS.iter().enumerate() {
-        let group: Vec<_> = known.iter().copied().filter(|b| build_group(b.kind) == gi).collect();
-        if group.is_empty() {
-            continue;
-        }
-        let ready = group.iter().filter(|b| b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory)).count();
-        let title = if ready > 0 { format!("{name} ({} / {} hazır)", ready, group.len()) } else { format!("{name} ({})", group.len()) };
-        // early on, with a handful of buildings known, everything is open; later the groups fold up to a line each
-        // (ALAZ_DEMO_GROUP=<n> keeps group n open for screenshots)
-        let open = known.len() <= 8 || std::env::var("ALAZ_DEMO_GROUP").ok().and_then(|v| v.parse::<usize>().ok()) == Some(gi);
-        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("build_group", gi)).default_open(open).show(ui, |ui| {
-            for b in group {
-                card(ui, b, acts);
-            }
-        });
-    }
-    ui.add_space(4.0);
-    let snap = if ui_ctx.grid_snap { "açık" } else { "kapalı" };
-    if ui.small_button(format!("Izgaraya oturt: {snap} [{}]", ui_ctx.binds.short(Action::Grid))).clicked() {
-        acts.push(UiAction::ToggleGrid);
-    }
-    if let Some(kind) = ui_ctx.build_mode {
-        ui.colored_label(Color32::from_rgb(140, 220, 140), format!("{}: sol tık yerleştirir, {} döndürür, sağ tık iptal eder", defs.building(kind).name, ui_ctx.binds.short(Action::Routes)));
     }
 }
 
