@@ -282,6 +282,7 @@ shot NAME / state
 | `ALAZ_DEMO_HOUR`, `ALAZ_DEMO_WEATHER` | Saati ve havayı seçer |
 | `ALAZ_DEMO_EVO=0..9` | Beden ve portreyi bu evrim koordinatında çizer (kesirli olabilir: 4.5 iki aşamanın arası); `ALAZ_DEMO_EVO_CARD=<aşama>` yeni aşama kartını gösterir |
 | `ALAZ_DEMO_LINEUP=<kıyafet maskesi>[,lod\|walk\|sit]` | Oyuncunun önüne on evrim aşamasını yan yana dizer (aynı kişi: `ALAZ_DEMO_LINEUP_ID`, varsayılan 12) |
+| `ALAZ_DEMO_FALL=deer\|wolf\|ox\|horse\|dog` | Kameranın önünde bu türden bir hayvan tekrar tekrar ölüp devrilir (ölüm animasyonu) |
 | `ALAZ_DEMO_SURFACE=mud\|puddle\|ice\|fire\|ash` | Zemin durumlarını gösterir: yağmur sonrası çamur, birikinti, buz (`ALAZ_DEMO_HOUR=9` ve `ALAZ_DEMO_WEATHER=snow` ile), yanan çimen, kül |
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |

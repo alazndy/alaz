@@ -583,6 +583,10 @@ impl Renderer {
             }
             // killed animals fall over where they stood, lie a while and sink away
             self.falls.retain(|f| (now - f.at).as_secs_f32() < DEATH_SECS);
+            if let Some(s) = self.demo_fall.filter(|_| self.falls.is_empty()) {
+                let (x, z) = (cam.target.x + 1.5, cam.target.z + 1.5);
+                self.falls.push(Fall { id: 7, species: s, x, z, heading: 0.9, stride: quad_stride(wild_leg(s)), side: 1.0, at: now });
+            }
             for f in &self.falls {
                 if f.x < view_m.0 || f.x > view_m.2 || f.z < view_m.1 || f.z > view_m.3 {
                     continue;

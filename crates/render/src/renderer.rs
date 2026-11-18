@@ -248,6 +248,8 @@ pub struct Renderer {
     /// player, all the same person (`ALAZ_DEMO_LINEUP_ID`, 12 by default), to compare them side by side.
     pub(crate) lineup: Option<(u16, String)>,
     pub(crate) lineup_id: u32,
+    /// `ALAZ_DEMO_FALL=<species>`: an animal of that kind falls over again and again in front of the camera.
+    pub(crate) demo_fall: Option<alaz_sim::WildSpecies>,
     /// The sun direction the shadows are cast along: it follows the sun in small steps, not every frame, so
     /// shadow edges hold still instead of shimmering as the sun moves.
     pub(crate) shadow_dir: [f32; 3],
@@ -549,6 +551,17 @@ impl Renderer {
             sim_alpha: None,
             evo: None,
             lineup_id: std::env::var("ALAZ_DEMO_LINEUP_ID").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
+            demo_fall: std::env::var("ALAZ_DEMO_FALL").ok().and_then(|v| {
+                use alaz_sim::WildSpecies as S;
+                Some(match v.as_str() {
+                    "dog" => S::Dog,
+                    "ox" => S::Ox,
+                    "horse" => S::Horse,
+                    "wolf" => S::Wolf,
+                    "deer" => S::Deer,
+                    _ => return None,
+                })
+            }),
             lineup: std::env::var("ALAZ_DEMO_LINEUP").ok().map(|v| {
                 let (m, mode) = v.split_once(',').unwrap_or((v.as_str(), ""));
                 (m.trim().parse::<u16>().unwrap_or(0), mode.trim().to_string())
