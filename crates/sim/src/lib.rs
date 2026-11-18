@@ -36,4 +36,4 @@ pub use surface::{Burn, Ground, Surface};
 pub use wildlife::{Wild, WildSpecies};
 pub use rules::MinigameKind;
 pub use journal::{Goal, Journal};
-pub use world::{PERCEPTION_STEPS, CraftView, Discovery, Event, Milestone, Reject, World};
+pub use world::{load_room, PERCEPTION_STEPS, CraftView, Discovery, Event, Milestone, Reject, World};

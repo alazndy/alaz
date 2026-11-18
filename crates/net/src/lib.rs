@@ -14,7 +14,7 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 pub const DEFAULT_PORT: u16 = 7777;
 pub const HASH_EVERY: u64 = 120;
 const MAX_FRAME: usize = 64 << 20;
