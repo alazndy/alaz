@@ -1974,43 +1974,19 @@ pub(crate) fn panel<R>(ui: &mut egui::Ui, margin: f32, add: impl FnOnce(&mut egu
     crate::pxpanel::frame_with(ui, &th, None, margin, add)
 }
 
-/// The interface font follows the age: soft and hand-made while the tribe is in the stone age, a forged gothic hand
-/// in the metal ages, clean and square once machines arrive. Each has its own pixel grid; `grid` is how many
-/// font pixels make up the em, so that sizes 11 and 22 still put every font pixel on whole screen pixels.
-/// Our own 5x7 face (tools/make_pixel_font.py) stays behind them for any glyph they lack.
+/// One face for the whole interface: Liberation Serif, metric-compatible with Times New Roman (which is not
+/// redistributable). Our own 5x7 face (tools/make_pixel_font.py) stays behind it for any glyph it lacks.
 const PIXEL_FONT: &[u8] = include_bytes!("../assets/alaz-pixel.ttf");
-const FONT_STONE: &[u8] = include_bytes!("../assets/pixelify-sans.ttf");
-const FONT_METAL: &[u8] = include_bytes!("../assets/jacquard-12.ttf");
-const FONT_MACHINE: &[u8] = include_bytes!("../assets/jersey-10.ttf");
+const FONT_SERIF: &[u8] = include_bytes!("../assets/liberation-serif.ttf");
 static FONT_GROUP: PerThread = PerThread(&FONT_GROUP_CELL);
 
-/// Which of the three hands an age (the perception level) writes in; matches the three looks of `Theme::era`.
-fn font_group(era: u8) -> u8 {
-    // dev aid for screenshots: ALAZ_FONT_GROUP=0|1|2 forces one
-    if let Some(g) = std::env::var("ALAZ_FONT_GROUP").ok().and_then(|v| v.parse::<u8>().ok()) {
-        return g.min(2);
-    }
-    match era {
-        0 | 1 => 0,
-        2 | 3 => 1,
-        _ => 2,
-    }
-}
-
-fn set_era_font(ctx: &egui::Context, era: u8) {
-    let group = font_group(era);
-    let first = FONT_GROUP.swap(group, std::sync::atomic::Ordering::Relaxed);
-    if first == group {
+fn set_era_font(ctx: &egui::Context, _era: u8) {
+    let first = FONT_GROUP.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if first == 0 {
         return;
     }
-    let (bytes, grid) = match group {
-        0 => (FONT_STONE, 9.0),
-        1 => (FONT_METAL, 12.0),
-        _ => (FONT_MACHINE, 10.0),
-    };
     let mut fonts = egui::FontDefinitions::default();
-    let tweak = egui::FontTweak { scale: 2.0 * grid / 22.0, ..Default::default() };
-    fonts.font_data.insert("alaz-era".into(), std::sync::Arc::new(egui::FontData::from_static(bytes).tweak(tweak)));
+    fonts.font_data.insert("alaz-era".into(), std::sync::Arc::new(egui::FontData::from_static(FONT_SERIF)));
     fonts.font_data.insert("alaz-pixel".into(), std::sync::Arc::new(egui::FontData::from_static(PIXEL_FONT)));
     // first choice everywhere; the default fonts stay behind it for anything it does not draw
     for fam in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
