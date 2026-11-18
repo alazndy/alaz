@@ -15,6 +15,7 @@ struct Globals {
     fires: array<vec4<f32>, 8>, // burning fires: xyz position, w reach in metres (0 = none)
     occ: vec4<f32>,     // x: how many of `fires` burn
     sun_vp_static: mat4x4<f32>, // the static shadow map's own box (trees and rocks; the shadow map starts as a copy of a window of it)
+    cave: vec4<f32>,    // x: 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
@@ -890,7 +891,7 @@ fn cave_open(src: vec3<f32>, dst: vec3<f32>) -> f32 {
 }
 
 fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
-    let k = clamp(globals.cam_r.w - 1.0, 0.0, 1.0);
+    let k = clamp(globals.cave.x - 1.0, 0.0, 1.0);
     let torch = globals.peek.xyz + vec3<f32>(0.0, 0.55, 0.0);
     let reach = 12.0 * k;
     var light = vec3<f32>(0.06, 0.07, 0.10);
@@ -940,7 +941,7 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             if (dither < 0.85 * k) { discard; }
         }
     }
-    let cave_on = globals.cam_r.w > 0.5;
+    let cave_on = globals.cave.x > 0.5;
     // underground: rock between the eye and the player opens up around them, so they are never lost behind a wall
     if (cave_on && v.kind == 4.0 && v.uv.x > 1.5 && globals.peek.w > 0.5) {
         let d = v.world - globals.peek.xyz;

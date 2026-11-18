@@ -1,6 +1,12 @@
 use crate::renderer::*;
 use crate::*;
 
+/// Globals slots that hold the swell's six wave phases (the spare `w` of cam, hwin, cam_r and cam_u).
+pub(crate) const WAVE_SLOTS: [usize; 6] = [22, 23, 26, 27, 63, 67];
+/// Globals slot of the underground flag (`globals.cave.x`): 0 on the surface, else 1 + the torch's strength.
+/// It must not share a slot with anything written on the surface, or models are shaded as if underground.
+pub(crate) const CAVE_SLOT: usize = 120;
+
 impl Renderer {
     /// The surface layer of the tile window: mud, puddles, ice, ash and flames, kept in the kind channel as
     /// `kind + 16 * code` (code: the surface in the low three bits, for fire and ash their progress above them; see
@@ -241,13 +247,12 @@ impl Renderer {
             const DIRS: [f64; 6] = [0.0, 63.0, 118.0, 182.0, 238.0, 301.0];
             const LENS: [f64; 6] = [14.0, 11.0, 8.5, 6.5, 5.3, 3.1];
             let t = world.tick as f64 / 60.0 + self.sim_alpha.unwrap_or(0.0) as f64 / 60.0;
-            let slots = [22, 23, 26, 27, 63, 67];
-            for i in 0..6 {
+            for (i, &slot) in WAVE_SLOTS.iter().enumerate() {
                 let a = DIRS[i].to_radians();
                 let k = std::f64::consts::TAU / LENS[i];
                 let w = (9.8 * k).sqrt();
                 let ph = k * (a.cos() * hx as f64 + a.sin() * hy as f64) - w * t + i as f64 * 1.7;
-                g[slots[i]] = ph.rem_euclid(std::f64::consts::TAU) as f32;
+                g[slot] = ph.rem_euclid(std::f64::consts::TAU) as f32;
             }
         }
         let _ = clock;
@@ -259,13 +264,13 @@ impl Renderer {
             };
             g[56..60].copy_from_slice(&[px, gh(px, pz) + 0.9, pz, 1.0]);
         }
-        // underground: g[63] is 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
+        // underground: the cave slot is 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
         if let Some(c) = cave {
             let left = c.light as f32 / (c.full.max(1) as f32);
             let strength = if c.light == 0 { 0.0 } else { 0.4 + 0.6 * (left / 0.2).min(1.0) };
             let cur = self.cave_light;
             self.cave_light += (strength - cur) * (1.0 - (-6.0 * self.last_frame.elapsed().as_secs_f32().min(0.1)).exp());
-            g[63] = 1.0 + self.cave_light;
+            g[CAVE_SLOT] = 1.0 + self.cave_light;
         } else {
             self.cave_light = 1.0;
         }
@@ -1038,5 +1043,26 @@ impl Renderer {
         });
         self.stats.chunks_built += built as u64;
         self.stats.build_ms += build_ms;
+    }
+}
+
+#[cfg(test)]
+mod globals_slots {
+    use super::{CAVE_SLOT, WAVE_SLOTS};
+
+    /// The cave flag once shared slot 63 with a wave phase, so on the surface the shader often thought the player was
+    /// underground and drew every model nearly black.
+    #[test]
+    fn cave_flag_has_its_own_slot() {
+        assert!(!WAVE_SLOTS.contains(&CAVE_SLOT), "cave flag shares a slot with a wave phase");
+        // `cave` follows `sun_vp_static` (slots 104..120) in the shader's Globals and fits the 656-byte buffer
+        assert_eq!(CAVE_SLOT, 120);
+        assert!(CAVE_SLOT + 4 <= 656 / 4);
+        let shader = include_str!("../shader.wgsl");
+        let globals = &shader[shader.find("struct Globals").unwrap()..];
+        let globals = &globals[..globals.find("};").unwrap()];
+        let tail: Vec<&str> = globals.lines().map(str::trim).filter(|l| !l.is_empty()).rev().take(2).collect();
+        assert!(tail[0].starts_with("cave: vec4<f32>") && tail[1].starts_with("sun_vp_static: mat4x4<f32>"), "{tail:?}");
+        assert!(!shader.contains("globals.cam_r.w > 0.5") && !shader.contains("globals.cam_r.w - 1.0"), "shader still reads the cave flag from cam_r.w");
     }
 }
