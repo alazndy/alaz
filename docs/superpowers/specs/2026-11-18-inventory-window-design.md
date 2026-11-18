@@ -60,10 +60,17 @@ new look.
     non-tool item; fields take manure/fertilizer; stations take an item only if one of their recipes (or alloy)
     uses it, up to `STATION_INPUT_CAP`.
   - Refactor `deposit_into` into one function with an optional `(item, n)` limit, so `Deposit` and `Load` share it.
+  - Partial loads are fine: `Load` moves `min(n, have, room)`. Nothing to move is a silent no-op, as `Deposit` is.
+  - Export the acceptance rule from the sim as `pub fn load_room(rules, b: &Building, item) -> u16` (0 = not
+    taken). The UI uses it to disable and highlight drop targets, so it never mirrors the rule and never sends a
+    `Load` the sim would ignore. No new `Reject` variant.
   - Not allowed in caves: add it to the same list in `world/cave_play.rs` as `Deposit`.
-- Fuel: dropping wood on the fuel slot of a burning building sends `Refuel` once per wood (n ≤ 10 per drop).
-  No new command.
-- `alaz_net::PROTOCOL = 2`.
+- Fuel (my call): the fuel slot of a burning building is "fill the fire". A wood drop or click sends one existing
+  `Refuel`, which already takes as much wood as fits. No count, no new command. The slot is disabled when the
+  fire is out (`fuel == 0`) and the bag has no flint (the sim would reject with `NoFlint`).
+- `alaz_net::PROTOCOL = 2`. Discovery shares it, so 0.4.x and the new version neither find nor join each other.
+  That is accepted: players install the same release. Saves store no protocol number and no commands; debug
+  scripts are text and unaffected.
 
 ### Game UI (crates/game)
 - `inv_window.rs`: the window, its tab row, and widgets:
@@ -82,6 +89,21 @@ new look.
 - İnşa tab: the same groups as today (`BUILD_GROUPS`), each as a grid of tiles (group glyph + name, green frame
   when it can be built now); clicking a tile shows its cost, needs and notes on the right with "Yerleştir".
 - Window size: up to 760×560, shrinks with the screen (same limits idea as today's tab panel).
+
+### Machine tab layouts (my call)
+- Station (has recipes): input grid → arrow with job percent → output grid; fuel and heat when they apply.
+- Storage (depot, cellar, cooler): one storage grid over `b.output`, no arrow. Drop in = `Load`, click = `Collect`.
+- Field: input grid (manure, fertilizer) only, plus today's soil and season lines.
+- Clicking a filled output/storage slot sends `Collect { item: Some(k) }` (whole stack, limited by capacity, as
+  today). Dragging it onto the bag does the same.
+- Bag slot in a machine tab: click = `Load n=1`, Shift+click = `Load n=all`, drag = `Load n=all`.
+- Bag to hand (Yap) is UI-only: it edits `hands`, no command.
+
+### Old code (my call)
+- Delete `tab_bag`, `tab_craft`, `tab_build` and the station/storage/field parts of `draw_building` once the window
+  replaces them. Git history is the rollback.
+- `Tab::{Bag, Craft, Build}` become the window's tabs. Update `main.rs` (`ALAZ_DEMO_TAB`, `toggle_tab`) and migrate
+  the existing hud tests that click the old Yap/Dene buttons to the new window.
 
 ### Tests
 - Sim: `Load` loads only the named item, respects `n`, `STATION_INPUT_CAP`, distance, and refuses unknown items;
