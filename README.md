@@ -214,6 +214,17 @@ Gerisi tohumdan yeniden üretilir. Yüklenen dünyanın hash'i kayıttakiyle kar
 
 ## Çok oyunculu
 
+**Menüden:**
+- Ana menüde **Çok oyunculu** düğmesine bas.
+- **Sunucu kur:** seçili yuvadaki dünyayı açar. Yuva boşsa menüdeki ayarlarla yeni dünya kurar. Port varsayılan 7777.
+- **Ağdaki oyunlar:** aynı ağdaki sunucular kendiliğinden listelenir. **Katıl** ile bağlan.
+- **Adresle katıl:** liste boş kalırsa sunucunun IP adresini yaz (ör. `192.168.1.5`).
+- Bağlantı arka planda kurulur; hata menüde görünür.
+- Portlar: oyun TCP 7777, ağda bulma UDP 7778. Windows ilk sunucu kurulumunda güvenlik duvarı izni sorar: izin ver.
+- Duraklatma menüsü sunucunun adresini ve oyuncu sayısını gösterir.
+
+**Komut satırından:**
+
 ```bash
 cargo run --release -p alaz -- --host            # sunucu (port 7777)
 cargo run --release -p alaz -- --join 192.168.1.5
