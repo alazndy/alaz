@@ -250,8 +250,9 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     for side in [-1.0f32, 1.0] {
         let ph = -side;
         // the foot's swing is the stride, fading in from a standstill; planted feet keep pace with the ground
-        let off = pose.phase.dsin() * pose.stride * (0.84 + 0.16 * (1.0 - stoop)) * pose.amp.min(1.0) * (1.0 - 0.85 * slide) * ph;
-        let lift = ((pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI }).dcos()).max(0.0) * pose.amp * 0.14 * (1.0 + 1.4 * climb) * (1.0 - slide);
+        let (cycle, raise) = foot_cycle(pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI });
+        let off = cycle * pose.stride * (0.84 + 0.16 * (1.0 - stoop)) * pose.amp.min(1.0) * (1.0 - 0.85 * slide);
+        let lift = raise * pose.amp * 0.14 * (1.0 + 1.4 * climb) * (1.0 - slide);
         let planted = if working { 0.1 * ph } else { 0.0 } + slide * 0.16 * ph;
         let hip = at(0.0, y(0.88), side * 0.1);
         let li = if side < 0.0 { 0 } else { 1 };

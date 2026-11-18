@@ -770,6 +770,33 @@ fn spear_hunt_gives_meat() {
     assert!(w.wild.iter().all(|d| d.id != id));
 }
 
+/// The kill says which animal fell and where it stood, so the drawing can show it go down.
+#[test]
+fn spear_hunt_reports_the_kill() {
+    let (mut w, a) = with_agent(1);
+    let id = deer_near(&mut w, 2_500);
+    give(&mut w, ItemKind::Spear, 1);
+    w.step(&[cmd(a, CommandKind::Hunt { wild: id })]);
+    let mut last = None;
+    let mut killed = None;
+    for _ in 0..3000 {
+        if let Some(d) = w.wild.iter().find(|d| d.id == id) {
+            last = Some((d.x, d.y));
+        }
+        w.step(&[]);
+        killed = killed.or_else(|| w.take_events().into_iter().find(|e| matches!(e, Event::Killed { .. })));
+        if killed.is_some() {
+            break;
+        }
+    }
+    let Some(Event::Killed { wild, species, x, y }) = killed else { panic!("no kill reported") };
+    assert_eq!(wild, id);
+    assert_eq!(species, crate::WildSpecies::Deer);
+    let (lx, ly) = last.unwrap();
+    // where it stood on its last tick (it may have taken one more step as the spear flew)
+    assert!((x - lx).abs() <= 200 && (y - ly).abs() <= 200, "fell at ({x},{y}), last seen ({lx},{ly})");
+}
+
 #[test]
 fn meat_nutrition_and_raw_penalty() {
     let (mut w, a) = with_agent(1);

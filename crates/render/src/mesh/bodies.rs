@@ -36,7 +36,18 @@ impl Walk {
     pub(crate) fn smooth(&mut self, x: f32, z: f32, tick: u64, alpha: f32) -> (f32, f32) {
         if tick != self.tick {
             let jump = (x - self.sim[0]).dhypot(z - self.sim[1]);
-            self.prev = if jump > 3.0 { [x, z] } else { self.sim };
+            let ticks = tick.wrapping_sub(self.tick);
+            self.prev = if jump > 3.0 || ticks > 8 {
+                [x, z]
+            } else if ticks == 1 || self.tick == 0 {
+                self.sim
+            } else {
+                // A frame that ran several ticks only sees the newest one. Drawing slides from the tick before it,
+                // so guess that spot from a steady pace since the last frame. Sliding from the older sim spot made
+                // the body lag a tick and jump back and forth at low frame rates.
+                let f = (ticks - 1) as f32 / ticks as f32;
+                [self.sim[0] + (x - self.sim[0]) * f, self.sim[1] + (z - self.sim[1]) * f]
+            };
             self.sim = [x, z];
             self.tick = tick;
         }
@@ -47,6 +58,20 @@ impl Walk {
 /// Foot swing (metres) for a four-legged animal with legs `leg_h` long.
 pub(crate) fn quad_stride(leg_h: f32) -> f32 {
     0.55 * leg_h + 0.04
+}
+
+/// One foot over its cycle at walk phase `p`: its offset along the body (-1 back .. 1 forward, times the stride) and
+/// how high it is lifted (0..1). Half the cycle the foot is planted and moves back in a straight line, so at the rate
+/// `step_walk` advances the phase it keeps exact pace with the ground. The other half it swings forward, lifted.
+/// (A plain sine moved the planted foot at a changing speed, so feet skated whatever the walking speed.)
+pub(crate) fn foot_cycle(p: f32) -> (f32, f32) {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+    let u = (p + FRAC_PI_2).rem_euclid(TAU);
+    if u < PI {
+        (-u.dcos(), u.dsin())
+    } else {
+        (1.0 - 2.0 * (u - PI) / PI, 0.0)
+    }
 }
 
 /// Follow a creature from where it was to where it is now: turn toward the way it goes, advance the stride by the
@@ -755,4 +780,81 @@ pub(crate) fn build_bodies(jobs: &[BodyJob], art: &Art, wind: [f32; 3]) -> (Mesh
         out.extend_from_slice(&m);
     }
     (out, me)
+}
+
+#[cfg(test)]
+mod foot_tests {
+    use super::{foot_cycle, step_walk, Walk};
+
+    /// While a foot is planted (not lifted) it must move back exactly as fast as the body moves forward.
+    #[test]
+    fn planted_foot_keeps_pace_with_the_ground() {
+        let base = 0.3;
+        for &speed in &[1.0f32, 1.5, 2.2] {
+            let mut w = Walk::at(0.0, 0.0, 0.0, 0);
+            let dt = 1.0 / 60.0;
+            let mut z = 0.0;
+            // settle the stride at this pace
+            for _ in 0..240 {
+                z += speed * dt;
+                step_walk(&mut w, 0.0, z, dt, base);
+            }
+            let mut checked = 0;
+            for _ in 0..240 {
+                let (o0, l0) = foot_cycle(w.phase);
+                let foot0 = z + o0 * w.stride;
+                z += speed * dt;
+                step_walk(&mut w, 0.0, z, dt, base);
+                let (o1, l1) = foot_cycle(w.phase);
+                let foot1 = z + o1 * w.stride;
+                if l0 == 0.0 && l1 == 0.0 {
+                    assert!((foot1 - foot0).abs() < 0.02 * speed * dt, "speed {speed}: planted foot slid {}", foot1 - foot0);
+                    checked += 1;
+                }
+            }
+            assert!(checked > 60, "speed {speed}: only {checked} planted frames");
+        }
+    }
+
+    #[test]
+    fn foot_cycle_is_continuous() {
+        let mut last = foot_cycle(0.0);
+        for i in 1..=4000 {
+            let now = foot_cycle(i as f32 * 0.005);
+            assert!((now.0 - last.0).abs() < 0.02 && (now.1 - last.1).abs() < 0.02, "jump at {i}: {last:?} -> {now:?}");
+            last = now;
+        }
+    }
+}
+
+#[cfg(test)]
+mod smooth_tests {
+    use super::Walk;
+
+    /// A body walking at a steady 0.025 m a tick, drawn at frames that each run 0, 1 or 2 ticks (a frame rate near
+    /// the tick rate, or below it). The drawn position must track the true one, never step back, and never lag a
+    /// whole tick.
+    #[test]
+    fn drawing_tracks_steady_motion_when_frames_run_several_ticks() {
+        let v = 0.025f32;
+        let mut w = Walk::at(0.0, 0.0, 0.0, 0);
+        let (mut tick, mut accum) = (1u64, 0.0f32);
+        let mut last = f32::MIN;
+        let frames = [1.3f32, 0.6, 1.9, 1.0, 2.2, 0.4, 1.7, 1.1, 2.0, 0.8, 1.5, 1.9];
+        for (i, &adv) in frames.iter().cycle().take(120).enumerate() {
+            accum += adv;
+            while accum >= 1.0 {
+                accum -= 1.0;
+                tick += 1;
+            }
+            let (x, _) = w.smooth(tick as f32 * v, 0.0, tick, accum);
+            // drawing sits one tick behind the sim: the true spot between tick-1 and tick
+            let truth = (tick as f32 - 1.0 + accum) * v;
+            if i > 2 {
+                assert!((x - truth).abs() < 0.05 * v, "frame {i}: drawn {x}, true {truth}");
+                assert!(x >= last, "frame {i}: stepped back from {last} to {x}");
+            }
+            last = x;
+        }
+    }
 }

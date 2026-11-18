@@ -576,28 +576,24 @@ impl Renderer {
                 // wild animals walk like everyone else: they face where they go and their legs follow the ground covered
                 let st = self.wild_anim.entry(w.id).or_insert(Walk::at(wx, wz, (w.id as f32 * 2.399) % std::f32::consts::TAU, 0));
                 let (wx, wz) = st.smooth(wx, wz, world.tick, alpha);
-                let leg = match w.species {
-                    alaz_sim::WildSpecies::Dog => 0.22,
-                    alaz_sim::WildSpecies::Ox => 0.45,
-                    alaz_sim::WildSpecies::Horse => 0.7,
-                    alaz_sim::WildSpecies::Wolf => 0.35,
-                    alaz_sim::WildSpecies::Deer => 0.65,
-                };
-                let moved = step_walk(st, wx, wz, dt, quad_stride(leg));
+                step_walk(st, wx, wz, dt, quad_stride(wild_leg(w.species)));
                 let idle = Pose { heading: st.heading, phase: st.phase, amp: st.amp, id: w.id, stride: st.stride, ..Pose::idle(secs) };
-                let _ = moved;
                 decal(&mut dynamic, art.shadow_m, wx, wz, WHITE, 0.0);
-                match w.species {
-                    alaz_sim::WildSpecies::Dog => push_creature(&mut dynamic, AgentKind::Dog, wx, wz, false, idle),
-                    alaz_sim::WildSpecies::Ox => push_creature(&mut dynamic, AgentKind::Ox, wx, wz, false, idle),
-                    alaz_sim::WildSpecies::Horse => push_creature(&mut dynamic, AgentKind::Horse, wx, wz, false, idle),
-                    alaz_sim::WildSpecies::Wolf => {
-                        push_quad(&mut dynamic, wx, wz, idle, Quad { body: [0.32, 0.32, 0.35], head: [0.36, 0.36, 0.40], len: 0.4, leg_h: 0.35, thick: 0.2, head_r: 0.13, neck: 0.25, tail: true, horns: false });
-                    }
-                    alaz_sim::WildSpecies::Deer => {
-                        push_quad(&mut dynamic, wx, wz, idle, Quad { body: [0.66, 0.46, 0.26], head: [0.70, 0.50, 0.30], len: 0.42, leg_h: 0.65, thick: 0.2, head_r: 0.11, neck: 0.5, tail: true, horns: true });
-                    }
+                push_wild(&mut dynamic, w.species, wx, wz, idle);
+            }
+            // killed animals fall over where they stood, lie a while and sink away
+            self.falls.retain(|f| (now - f.at).as_secs_f32() < DEATH_SECS);
+            for f in &self.falls {
+                if f.x < view_m.0 || f.x > view_m.2 || f.z < view_m.1 || f.z > view_m.3 {
+                    continue;
                 }
+                let age = (now - f.at).as_secs_f32();
+                // legs stiff, head and tail still (a fixed clock), a flash as the blow lands
+                let pose = Pose { heading: f.heading, id: f.id, stride: f.stride, hurt: (1.0 - age * 2.5).max(0.0), ..Pose::idle(f.id as f32 * 0.37) };
+                let (tip, sink) = death_pose(f.species, age);
+                let start = dynamic.len();
+                push_wild(&mut dynamic, f.species, f.x, f.z, pose);
+                fall_over(&mut dynamic, start, f.species, f.x, f.z, f.heading, f.side, tip, sink);
             }
             // The stray dog that came to the fire waits for a friend: a soft ring marks it until it is tamed.
             if world.milestone_done(alaz_sim::Milestone::Visitor) && !world.milestone_done(alaz_sim::Milestone::Companion) {

@@ -21,6 +21,18 @@ pub(crate) const MAX_CACHED_CHUNKS: usize = 600;
 /// Most chunks whose meshes are built at the same time (each on a thread of its own, while the frame goes on).
 pub(crate) const MAX_BUILDS_PER_FRAME: usize = 4;
 
+/// A killed wild animal on its way down: where it fell (metres), how it stood, which side it falls to, and when.
+pub(crate) struct Fall {
+    pub(crate) id: u32,
+    pub(crate) species: alaz_sim::WildSpecies,
+    pub(crate) x: f32,
+    pub(crate) z: f32,
+    pub(crate) heading: f32,
+    pub(crate) stride: f32,
+    pub(crate) side: f32,
+    pub(crate) at: std::time::Instant,
+}
+
 pub(crate) struct Chunk {
     pub(crate) terrain: Option<(wgpu::Buffer, u32)>,
     pub(crate) nodes: Option<(wgpu::Buffer, u32)>,
@@ -216,6 +228,8 @@ pub struct Renderer {
     pub(crate) anim: HashMap<u32, Walk>,
     /// The same for wild animals, keyed by their wild id.
     pub(crate) wild_anim: HashMap<u32, Walk>,
+    /// Killed wild animals still being drawn as they fall and sink (the sim has already removed them).
+    pub(crate) falls: Vec<Fall>,
     pub(crate) last_frame: std::time::Instant,
     pub(crate) tick_seen: u64,
     pub(crate) tick_at: std::time::Instant,
@@ -531,6 +545,7 @@ impl Renderer {
             chunks: HashMap::new(),
             anim: HashMap::new(),
             wild_anim: HashMap::new(),
+            falls: Vec::new(),
             sim_alpha: None,
             evo: None,
             lineup_id: std::env::var("ALAZ_DEMO_LINEUP_ID").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
@@ -842,6 +857,17 @@ impl Renderer {
     /// Drop cached scene buffers (call when the world is replaced).
     pub fn reset_scene(&mut self) {
         self.chunks.clear();
+    }
+
+    /// A wild animal was killed at (`x_mm`, `y_mm`): draw it falling over there. It keeps the way it was facing and
+    /// falls to a side picked from its id.
+    pub fn wild_killed(&mut self, id: u32, species: alaz_sim::WildSpecies, x_mm: i64, y_mm: i64) {
+        let (x, z) = (x_mm as f32 / 1000.0, y_mm as f32 / 1000.0);
+        let walk = self.wild_anim.remove(&id);
+        let heading = walk.map_or((id as f32 * 2.399) % std::f32::consts::TAU, |w| w.heading);
+        let stride = walk.map_or(0.3, |w| w.stride);
+        let side = if id % 2 == 0 { 1.0 } else { -1.0 };
+        self.falls.push(Fall { id, species, x, z, heading, stride, side, at: std::time::Instant::now() });
     }
 
     /// Where the last frame drew this person (metres): between ticks, not at the tick. The camera follows this, so

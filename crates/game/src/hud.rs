@@ -482,6 +482,8 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         Event::Bitten(a) if *a != me => return None,
         Event::Bitten(_) => "Kurt ısırdı! Yaran kanıyor. Ateşin yanına çekil ya da mızrakla karşılık ver.".into(),
         Event::Hunted { meat, .. } => format!("Av başarılı: {meat} parça çiğ et. Ateşte pişirmeden yeme."),
+        // drawn, not told: the Hunted hint already says the hunt worked
+        Event::Killed { .. } => return None,
         Event::Milestone(Milestone::Visitor) => "Karanlıktan bir köpek ateşinin ışığına yaklaştı. Yanına git, böğürtlen ver: güvenini kazanırsa seninle çalışır.".into(),
         Event::Milestone(m) => format!("Hedef tamamlandı: {}", milestone_name(*m)),
         Event::Camped(a) if *a == me => "Ateşin başında oturdun: üşümen ve yorgunluğun geçti. Yarın için bir hedef seçebilirsin.".into(),

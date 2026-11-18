@@ -1558,6 +1558,13 @@ impl App {
                 }
             }
         }
+        if let Some(g) = self.gfx.as_mut() {
+            for e in &events {
+                if let alaz_sim::Event::Killed { wild, species, x, y } = e {
+                    g.renderer.wild_killed(*wild, *species, *x, *y);
+                }
+            }
+        }
         let died_me = events.iter().any(|e| matches!(e, alaz_sim::Event::Died(id) if *id == me));
         if died_me && matches!(self.net, Net::Solo) && !self.no_save {
             self.handle_death();

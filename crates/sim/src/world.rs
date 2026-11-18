@@ -596,6 +596,8 @@ pub enum Event {
     /// A tool went blunt: it still works, slowly, until it is mended.
     ToolBlunt { agent: AgentId, item: ItemKind },
     Hunted { agent: AgentId, meat: u16 },
+    /// A wild animal was killed and left the world: where it fell, so the drawing can show it go down.
+    Killed { wild: u32, species: crate::WildSpecies, x: i64, y: i64 },
     Bitten(AgentId),
     /// One strike of a craft minigame landed (or missed).
     Struck { agent: AgentId, hit: bool },
@@ -3173,8 +3175,9 @@ impl World {
                 a.inventory.counts[ItemKind::Hide as usize] += 1;
             }
             a.task = Task::Idle;
-            self.wild.remove(wi);
             let aid = a.id;
+            let prey = self.wild.remove(wi);
+            self.events.push(Event::Killed { wild: prey.id, species: prey.species, x: prey.x, y: prey.y });
             self.events.push(Event::Hunted { agent: aid, meat });
         }
     }
