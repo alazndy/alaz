@@ -14,13 +14,7 @@ pub struct NewWorld {
     pub settings: alaz_sim::world::WorldSettings,
 }
 
-// placeholder until alaz_net::discovery::Found lands
-#[derive(Clone, Debug, PartialEq)]
-pub struct Found {
-    pub addr: std::net::SocketAddr,
-    pub players: u32,
-    pub label: String,
-}
+pub use alaz_net::discovery::Found;
 
 pub enum MenuAction {
     Continue(u8),

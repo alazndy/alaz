@@ -5,6 +5,8 @@
 //!
 //! Trust model: friends on one team. Clients may command any agent, the host does not police it.
 
+pub mod discovery;
+
 use alaz_sim::{AgentId, Command, CommandKind, World};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::VecDeque;
@@ -142,13 +144,20 @@ pub struct Host {
     peers: Vec<Peer>,
     queued: Vec<Command>,
     joins_queued: u32,
+    beacon: Option<(discovery::Beacon, String)>,
 }
 
 impl Host {
     pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
-        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0 })
+        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None })
+    }
+
+    /// Answer LAN discovery queries on UDP `port`. On error hosting is unaffected, only discovery stays off.
+    pub fn enable_discovery(&mut self, port: u16, label: String) -> io::Result<()> {
+        self.beacon = Some((discovery::Beacon::bind(port)?, label));
+        Ok(())
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -162,6 +171,10 @@ impl Host {
 
     /// Accept newcomers and collect client commands. Call right before `turn`, with no step in between.
     pub fn poll(&mut self, world: &World) {
+        if let Some((beacon, label)) = &self.beacon {
+            let tcp_port = self.listener.local_addr().map(|a| a.port()).unwrap_or(DEFAULT_PORT);
+            beacon.answer(tcp_port, self.peers.len() as u32 + 1, label);
+        }
         while let Ok((stream, _)) = self.listener.accept() {
             if let Ok(c) = Conn::new(stream) {
                 self.waiting.push((c, Instant::now()));
@@ -206,7 +219,7 @@ impl Host {
         let mut cmds = std::mem::take(&mut self.queued);
         cmds.extend(local);
         self.joins_queued = 0;
-        let turn = Turn { tick: world.tick, cmds, hash: (world.tick % HASH_EVERY == 0).then(|| world.hash()) };
+        let turn = Turn { tick: world.tick, cmds, hash: world.tick.is_multiple_of(HASH_EVERY).then(|| world.hash()) };
         let snapshot = self.peers.iter().any(|p| p.resync).then(|| world.to_bytes());
         for p in &mut self.peers {
             if p.resync {
@@ -463,7 +476,7 @@ mod tests {
             rng ^= rng << 17;
             rng
         };
-        let mut kinds = |who: AgentId, hw: &World, r: u64| -> Option<Command> {
+        let kinds = |who: AgentId, hw: &World, r: u64| -> Option<Command> {
             let (sx, sy) = hw.spawn_mm;
             let off = |k: u64| ((k % 24_000) as i64) - 12_000;
             let kind = match r % 9 {
@@ -489,6 +502,16 @@ mod tests {
         settle(&mut host, &mut hw, &mut client, &mut cw);
         assert_eq!(cw.tick, hw.tick);
         assert_eq!(cw.hash(), hw.hash());
+    }
+
+    #[test]
+    fn enable_discovery_fails_cleanly_when_port_taken() {
+        let mut host = Host::bind("127.0.0.1:0").unwrap();
+        let taken = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
+        assert!(host.enable_discovery(port, "x".into()).is_err());
+        host.poll(&host_world());
+        assert_eq!(host.players(), 1);
     }
 
     #[test]
