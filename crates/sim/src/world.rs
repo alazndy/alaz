@@ -1112,35 +1112,38 @@ pub fn cotton_tuft(seed: u64, tx: i32, ty: i32, warm: i32, wet: i32) -> bool {
     if warm > 520 && wet < 560 { roll < 10 } else { roll == 0 }
 }
 
-/// Put everything a building accepts into it. Depots take all but tools; stations take recipe inputs.
-fn deposit_into(rules: &crate::rules::Rules, inv: &mut Inventory, b: &mut Building) {
+/// How many of `item` the building would take right now (0 = not taken). The one acceptance rule behind both
+/// `Deposit` and `Load`, and what the UI asks before it offers a drop target.
+pub fn load_room(rules: &crate::rules::Rules, b: &Building, item: ItemKind) -> u16 {
     if matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar | BuildingKind::Cooler) {
-        for k in ItemKind::ALL {
-            if !k.is_tool() {
-                b.output[k as usize] += std::mem::take(&mut inv.counts[k as usize]);
-            }
-        }
-        return;
+        return if item.is_tool() { 0 } else { u16::MAX };
     }
-    if b.kind == BuildingKind::Field {
-        b.input[ItemKind::Manure as usize] += std::mem::take(&mut inv.counts[ItemKind::Manure as usize]);
-        b.input[ItemKind::Fertilizer as usize] += std::mem::take(&mut inv.counts[ItemKind::Fertilizer as usize]);
+    if b.kind == BuildingKind::Field && matches!(item, ItemKind::Manure | ItemKind::Fertilizer) {
+        return u16::MAX;
     }
-    for r in rules.recipes.iter().filter(|r| r.station == Some(b.kind)) {
-        if let Some(al) = &r.alloy {
-            for k in [al.base, al.add] {
-                let room = STATION_INPUT_CAP.saturating_sub(b.input[k as usize]);
-                let n = inv.counts[k as usize].min(room);
-                inv.counts[k as usize] -= n;
-                b.input[k as usize] += n;
-            }
+    let used = rules.recipes.iter().filter(|r| r.station == Some(b.kind)).any(|r| {
+        r.alloy.as_ref().is_some_and(|al| al.base == item || al.add == item) || r.inputs.iter().any(|c| c.item == item)
+    });
+    if used { STATION_INPUT_CAP.saturating_sub(b.input[item as usize]) } else { 0 }
+}
+
+/// Put what a building accepts into it: everything, or with `only` one item and at most that many. Depots take all
+/// but tools; stations take recipe inputs.
+fn deposit_into(rules: &crate::rules::Rules, inv: &mut Inventory, b: &mut Building, only: Option<(ItemKind, u16)>) {
+    let storage = matches!(b.kind, BuildingKind::Depot | BuildingKind::Cellar | BuildingKind::Cooler);
+    for k in ItemKind::ALL {
+        let limit = match only {
+            Some((item, n)) if item == k => n,
+            Some(_) => continue,
+            None => u16::MAX,
+        };
+        let n = inv.counts[k as usize].min(limit).min(load_room(rules, b, k));
+        if n == 0 {
+            continue;
         }
-        for c in &r.inputs {
-            let room = STATION_INPUT_CAP.saturating_sub(b.input[c.item as usize]);
-            let n = inv.counts[c.item as usize].min(room);
-            inv.counts[c.item as usize] -= n;
-            b.input[c.item as usize] += n;
-        }
+        inv.counts[k as usize] -= n;
+        let slot = if storage { &mut b.output[k as usize] } else { &mut b.input[k as usize] };
+        *slot = slot.saturating_add(n);
     }
 }
 
@@ -2533,7 +2536,14 @@ impl World {
                 if dist2(ax, ay, b.x, b.y) > USE_RADIUS_MM * USE_RADIUS_MM {
                     return self.reject(id, Reject::TooFar);
                 }
-                deposit_into(&*rules_now, &mut self.agents[idx].inventory, b);
+                deposit_into(&*rules_now, &mut self.agents[idx].inventory, b, None);
+            }
+            CommandKind::Load { building, item, n } => {
+                let Some(b) = self.buildings.get_mut(*building as usize) else { return };
+                if dist2(ax, ay, b.x, b.y) > USE_RADIUS_MM * USE_RADIUS_MM {
+                    return self.reject(id, Reject::TooFar);
+                }
+                deposit_into(&rules_now, &mut self.agents[idx].inventory, b, Some((*item, *n)));
             }
             CommandKind::Collect { building, item } => {
                 let cap = self.agents[idx].capacity();
@@ -3230,7 +3240,7 @@ impl World {
                     let reach = USE_RADIUS_MM - 500;
                     if dist2(a.x, a.y, b.x, b.y) <= reach * reach {
                         match step {
-                            RouteStep::Deposit { .. } => deposit_into(&*rules_now, &mut a.inventory, b),
+                            RouteStep::Deposit { .. } => deposit_into(&*rules_now, &mut a.inventory, b, None),
                             RouteStep::Collect { item, .. } => {
                                 let cap = a.capacity();
                                 collect_from(&mut a.inventory, cap, b, item)

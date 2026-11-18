@@ -7411,3 +7411,78 @@ fn a_milestone_and_a_death_are_written_down() {
     w.step(&[]);
     assert!(w.journal.days.iter().any(|d| d.entries.iter().any(|(_, e)| matches!(e, Entry::Milestone(Milestone::Transistor)))));
 }
+
+#[test]
+fn load_moves_only_the_named_item() {
+    let (mut w, a) = with_agent(1);
+    let (sx, sy) = w.spawn_mm;
+    let furnace = push_building(&mut w, BuildingKind::Furnace, sx + 1500, sy);
+    give(&mut w, ItemKind::CopperOre, 5);
+    w.agents[0].inventory.counts[ItemKind::Wood as usize] = 5;
+    w.step(&[cmd(a, CommandKind::Load { building: furnace, item: ItemKind::CopperOre, n: 3 })]);
+    assert_eq!(count(&w, 0, ItemKind::CopperOre), 2);
+    assert_eq!(w.buildings[furnace as usize].input[ItemKind::CopperOre as usize], 3);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 5);
+    assert_eq!(w.buildings[furnace as usize].input[ItemKind::Wood as usize], 0);
+}
+
+#[test]
+fn load_respects_station_cap() {
+    let (mut w, a) = with_agent(1);
+    let (sx, sy) = w.spawn_mm;
+    let furnace = push_building(&mut w, BuildingKind::Furnace, sx + 1500, sy);
+    give(&mut w, ItemKind::CopperOre, STATION_INPUT_CAP + 5);
+    w.step(&[cmd(a, CommandKind::Load { building: furnace, item: ItemKind::CopperOre, n: u16::MAX })]);
+    assert_eq!(w.buildings[furnace as usize].input[ItemKind::CopperOre as usize], STATION_INPUT_CAP);
+    assert_eq!(count(&w, 0, ItemKind::CopperOre), 5);
+}
+
+#[test]
+fn load_refuses_from_far_away() {
+    let (mut w, a) = with_agent(1);
+    let (sx, sy) = w.spawn_mm;
+    let furnace = push_building(&mut w, BuildingKind::Furnace, sx + 5000, sy);
+    give(&mut w, ItemKind::CopperOre, 5);
+    w.step(&[cmd(a, CommandKind::Load { building: furnace, item: ItemKind::CopperOre, n: 3 })]);
+    assert_eq!(count(&w, 0, ItemKind::CopperOre), 5);
+    assert_eq!(w.buildings[furnace as usize].input[ItemKind::CopperOre as usize], 0);
+    assert!(w.take_events().contains(&Event::Rejected(a, Reject::TooFar)));
+}
+
+#[test]
+fn load_into_depot_takes_any_non_tool() {
+    let (mut w, a) = with_agent(1);
+    let (sx, sy) = w.spawn_mm;
+    let depot = push_building(&mut w, BuildingKind::Depot, sx + 1500, sy);
+    give(&mut w, ItemKind::Berries, 4);
+    give(&mut w, ItemKind::StoneAxe, 1);
+    w.step(&[cmd(a, CommandKind::Load { building: depot, item: ItemKind::Berries, n: 4 })]);
+    assert_eq!(w.buildings[depot as usize].output[ItemKind::Berries as usize], 4);
+    assert_eq!(load_room(rules(), &w.buildings[depot as usize], ItemKind::StoneAxe), 0);
+    w.step(&[cmd(a, CommandKind::Load { building: depot, item: ItemKind::StoneAxe, n: 1 })]);
+    assert_eq!(count(&w, 0, ItemKind::StoneAxe), 1);
+    assert_eq!(w.buildings[depot as usize].output[ItemKind::StoneAxe as usize], 0);
+}
+
+#[test]
+fn load_room_matches_deposit() {
+    let (mut w, a) = with_agent(1);
+    let (sx, sy) = w.spawn_mm;
+    let mut kinds: Vec<BuildingKind> = rules().recipes.iter().filter_map(|r| r.station).collect();
+    kinds.extend([BuildingKind::Depot, BuildingKind::Cellar, BuildingKind::Cooler, BuildingKind::Field]);
+    kinds.sort_by_key(|k| format!("{k:?}"));
+    kinds.dedup();
+    for kind in kinds {
+        let bi = push_building(&mut w, kind, sx + 1500, sy);
+        for item in ItemKind::ALL {
+            let mut probe = w.clone();
+            probe.agents[0].inventory.counts = [0; ItemKind::COUNT];
+            probe.agents[0].inventory.counts[item as usize] = 1;
+            probe.step(&[cmd(a, CommandKind::Deposit { building: bi })]);
+            let moved = probe.agents[0].inventory.get(item) == 0;
+            let room = load_room(rules(), &w.buildings[bi as usize], item);
+            assert_eq!(room > 0, moved, "{kind:?} {item:?}");
+        }
+        w.buildings.pop();
+    }
+}
