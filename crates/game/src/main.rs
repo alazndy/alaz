@@ -570,6 +570,37 @@ fn random_seed() -> u64 {
         .unwrap_or(1)
 }
 
+const JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// A join running on its own thread: one message, the joined client and the host's world, or why it failed.
+type Pending = std::sync::mpsc::Receiver<Result<(Client, World), alaz_net::NetError>>;
+
+/// Connect without blocking the window: `Client::connect` can wait up to `JOIN_TIMEOUT`.
+fn connect_in_background(addr: String) -> Pending {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // the receiver is gone when the player started another world meanwhile; the result is not needed then
+        let _ = tx.send(Client::connect(&addr, JOIN_TIMEOUT));
+    });
+    rx
+}
+
+/// "192.168.1.5" → "192.168.1.5:7777"; an address with a port stays as it is.
+fn normalize_addr(s: &str) -> String {
+    let s = s.trim();
+    if s.contains(':') { s.to_string() } else { format!("{s}:{}", alaz_net::DEFAULT_PORT) }
+}
+
+fn lan_ip_text() -> String {
+    alaz_net::discovery::lan_ip().map_or_else(|| "?".to_string(), |ip| ip.to_string())
+}
+
+/// Let LAN players find this host. Hosting works without it: they can still type the address.
+fn host_discovery(host: &mut Host, slot: u8, world: &World) -> Result<(), String> {
+    host.enable_discovery(alaz_net::discovery::DISCOVERY_PORT, format!("Yuva {slot} · Gün {}", world.day() + 1))
+        .map_err(|e| format!("Ağda bulunma kapalı: {e}. Arkadaşların adresi elle yazabilir."))
+}
+
 struct Gfx {
     window: Arc<Window>,
     renderer: Renderer,
@@ -715,6 +746,12 @@ struct App {
     me: AgentId,
     /// Joined players never write the shared save slot.
     no_save: bool,
+    /// A join started from the menu: the normalized address and its background connect.
+    connecting: Option<(String, Pending)>,
+    /// Looks for LAN hosts while the multiplayer screen is open.
+    finder: Option<alaz_net::discovery::Finder>,
+    /// The finder could not open a socket: do not retry every frame until the screen is opened again.
+    finder_off: bool,
 }
 
 impl App {
@@ -725,8 +762,8 @@ impl App {
         let mut me = AgentId(0);
         let mut joined = None;
         if let Some(addr) = &args.join {
-            let addr = if addr.contains(':') { addr.clone() } else { format!("{addr}:{}", alaz_net::DEFAULT_PORT) };
-            match Client::connect(&addr, std::time::Duration::from_secs(8)) {
+            let addr = normalize_addr(addr);
+            match Client::connect(&addr, JOIN_TIMEOUT) {
                 Ok((client, world)) => {
                     me = client.agent;
                     hints.push((format!("{addr} sunucusuna katıldın."), hud::HINT_SECONDS));
@@ -833,6 +870,9 @@ impl App {
             perf: Perf::from_env(),
             net,
             me,
+            connecting: None,
+            finder: None,
+            finder_off: false,
         };
         // dev aid: ALAZ_DEMO_EVO_CARD=<stage 0..9> shows the card for reaching that stage at the start
         if let Some(i) = std::env::var("ALAZ_DEMO_EVO_CARD").ok().and_then(|v| v.parse::<usize>().ok()) {
@@ -876,7 +916,10 @@ impl App {
         }
         if args.host && !args.join.is_some() {
             match Host::bind(("0.0.0.0", args.port)) {
-                Ok(h) => {
+                Ok(mut h) => {
+                    if let Err(hint) = host_discovery(&mut h, saveio::slot(), &app.world) {
+                        app.say(hint);
+                    }
                     app.net = Net::Host(h);
                     app.say(format!("Coop sunucusu açık: port {}. Arkadaşların --join <senin-ip> ile katılabilir.", args.port));
                 }
@@ -1068,7 +1111,6 @@ impl App {
         use menu::MenuAction as M;
         match a {
             M::Resume => self.menu = None,
-            M::Host { .. } | M::Join(_) => {} // wired in Task 3
             M::Quit => {
                 self.quit = true;
             }
@@ -1083,42 +1125,155 @@ impl App {
                 }
             }
             M::Continue(n) => {
-                if self.menu.as_ref().is_some_and(|m| m.paused) {
-                    self.save_game(false); // keep the current game before swapping
+                if let Err(e) = self.start_slot(n)
+                    && let Some(m) = self.menu.as_mut()
+                {
+                    m.error = Some(e);
                 }
-                saveio::set_slot(n);
-                match saveio::load() {
-                    Ok(Some(w)) => {
-                        self.replace_world(w);
-                        self.no_save = false;
-                        self.menu = None;
-                        self.fx.enter_world(&self.world);
-                        self.say(format!("Yuva {n} yüklendi."));
-                    }
-                    Ok(None) => {}
+            }
+            M::New { slot, seed, size, hardcore, settings } => self.start_new(menu::NewWorld { slot, seed, size, hardcore, settings }),
+            M::Host { slot, port, new } => {
+                // bind first: a taken port must leave the current world and the menu as they are
+                let mut host = match Host::bind(("0.0.0.0", port)) {
+                    Ok(h) => h,
                     Err(e) => {
-                        if let Some(m) = self.menu.as_mut() {
-                            m.error = Some(format!("Yuva {n} yüklenemedi: {e}"));
+                        self.mp_error(format!("Sunucu açılamadı (port {port}): {e}"));
+                        return;
+                    }
+                };
+                match new {
+                    Some(nw) => self.start_new(nw),
+                    None => {
+                        if let Err(e) = self.start_slot(slot) {
+                            self.mp_error(e);
+                            return;
                         }
                     }
                 }
-            }
-            M::New { slot, seed, size, hardcore, settings } => {
-                if self.menu.as_ref().is_some_and(|m| m.paused) {
-                    self.save_game(false);
+                if let Err(hint) = host_discovery(&mut host, slot, &self.world) {
+                    self.say(hint);
                 }
-                saveio::set_slot(slot);
-                let w = new_world_with(seed.unwrap_or_else(random_seed), hardcore, size, settings);
+                self.net = Net::Host(host);
+                self.say(format!("Sunucu açık: {}:{port}", lan_ip_text()));
+            }
+            M::Join(text) => {
+                if self.connecting.is_none() {
+                    let addr = normalize_addr(&text);
+                    self.connecting = Some((addr.clone(), connect_in_background(addr)));
+                    if let Some(m) = self.menu.as_mut() {
+                        m.connecting = true;
+                        m.mp_error = None;
+                    }
+                }
+            }
+        }
+    }
+
+    fn mp_error(&mut self, e: String) {
+        if let Some(m) = self.menu.as_mut() {
+            m.mp_error = Some(e);
+        }
+    }
+
+    /// Open save slot `n` and play it. An empty slot or a broken save is an error and changes nothing.
+    fn start_slot(&mut self, n: u8) -> Result<(), String> {
+        if self.menu.as_ref().is_some_and(|m| m.paused) {
+            self.save_game(false); // keep the current game before swapping
+        }
+        saveio::set_slot(n);
+        match saveio::load() {
+            Ok(Some(w)) => {
                 self.replace_world(w);
-                self.story.begin(&self.world);
                 self.no_save = false;
                 self.menu = None;
                 self.fx.enter_world(&self.world);
-                self.save_game(false);
-                self.say("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.");
-                self.say("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.");
+                self.say(format!("Yuva {n} yüklendi."));
+                Ok(())
+            }
+            Ok(None) => Err(format!("Yuva {n} boş.")),
+            Err(e) => Err(format!("Yuva {n} yüklenemedi: {e}")),
+        }
+    }
+
+    fn start_new(&mut self, nw: menu::NewWorld) {
+        if self.menu.as_ref().is_some_and(|m| m.paused) {
+            self.save_game(false);
+        }
+        saveio::set_slot(nw.slot);
+        let w = new_world_with(nw.seed.unwrap_or_else(random_seed), nw.hardcore, nw.size, nw.settings);
+        self.replace_world(w);
+        self.story.begin(&self.world);
+        self.no_save = false;
+        self.menu = None;
+        self.fx.enter_world(&self.world);
+        self.save_game(false);
+        self.say("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.");
+        self.say("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.");
+    }
+
+    /// Menu-side networking, each frame before the menu draws: finish a background join, run the LAN finder
+    /// while the multiplayer screen is open, and show the host's address in the pause menu.
+    fn menu_net(&mut self) {
+        let Some(m) = self.menu.as_mut() else {
+            // a world was started from the menu meanwhile: that choice wins over a join still under way
+            self.connecting = None;
+            self.finder = None;
+            self.finder_off = false;
+            return;
+        };
+        if let Some((addr, rx)) = &self.connecting {
+            let fail = |why: String| format!("Katılınamadı ({addr}): {why}");
+            let done = match rx.try_recv() {
+                Ok(Ok(joined)) => Some(Ok(joined)),
+                Ok(Err(e)) => Some(Err(fail(e.to_string()))),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(fail("bağlantı kesildi".into()))),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(done) = done {
+                let (addr, _) = self.connecting.take().unwrap();
+                m.connecting = false;
+                match done {
+                    Ok((client, world)) => {
+                        self.replace_world(world);
+                        self.me = client.agent;
+                        self.net = Net::Client(client);
+                        self.no_save = true;
+                        self.menu = None;
+                        self.finder = None;
+                        self.finder_off = false;
+                        self.fx.enter_world(&self.world);
+                        self.say(format!("{addr} sunucusuna katıldın."));
+                        return;
+                    }
+                    Err(e) => m.mp_error = Some(e),
+                }
             }
         }
+        if m.mp_screen {
+            if self.finder.is_none() && !self.finder_off {
+                match alaz_net::discovery::Finder::new() {
+                    Ok(f) => self.finder = Some(f),
+                    Err(_) => {
+                        self.finder_off = true;
+                        m.mp_error = Some("Ağda arama kapalı".into());
+                    }
+                }
+            }
+            if let Some(f) = self.finder.as_mut() {
+                f.poll();
+                m.found = f.found();
+            }
+        } else {
+            self.finder = None;
+            self.finder_off = false;
+        }
+        m.net_line = match &self.net {
+            Net::Host(h) => {
+                let port = h.local_addr().map_or(alaz_net::DEFAULT_PORT, |a| a.port());
+                Some(format!("Sunucu açık: {}:{port} · {} oyuncu", lan_ip_text(), h.players()))
+            }
+            _ => None,
+        };
     }
 
     fn save_game(&mut self, announce: bool) {
@@ -1285,6 +1440,7 @@ impl App {
         let d = self.pitch_goal - self.cam.pitch_deg;
         self.cam.pitch_deg += d * (1.0 - (-10.0 * dt).exp());
 
+        self.menu_net();
         let sim_t0 = Instant::now();
         // fixed-step simulation
         if let Net::Client(client) = &mut self.net {
@@ -2544,6 +2700,52 @@ mod glide_tests {
             let n = glide_evo(v, 860.0, 1.0 / 60.0);
             assert!(n - v < 8.0 && n >= v);
             v = n;
+        }
+    }
+}
+
+#[cfg(test)]
+mod net_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn normalize_addr_adds_default_port() {
+        assert_eq!(normalize_addr("10.0.0.7"), "10.0.0.7:7777");
+        assert_eq!(normalize_addr("10.0.0.7:9000"), "10.0.0.7:9000");
+    }
+
+    #[test]
+    fn background_connect_reports_refused_quickly() {
+        let addr = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+        let t0 = Instant::now();
+        let rx = connect_in_background(addr);
+        assert!(t0.elapsed() < Duration::from_millis(100), "the call itself must not block");
+        assert!(matches!(rx.recv_timeout(Duration::from_secs(10)), Ok(Err(_))));
+    }
+
+    #[test]
+    fn background_connect_joins_a_host() {
+        let mut host = Host::bind("127.0.0.1:0").unwrap();
+        let mut w = World::new(5);
+        let (sx, sy) = w.spawn_mm;
+        w.spawn_agent(sx, sy);
+        let rx = connect_in_background(host.local_addr().unwrap().to_string());
+        let t0 = Instant::now();
+        loop {
+            host.poll(&w);
+            let c = host.turn(&w, vec![]);
+            w.step(&c);
+            match rx.try_recv() {
+                Ok(Ok((client, _))) => {
+                    assert_eq!(client.agent, AgentId(1));
+                    break;
+                }
+                Ok(Err(e)) => panic!("join failed: {e}"),
+                Err(_) => {}
+            }
+            assert!(t0.elapsed() < Duration::from_secs(5), "no join within 5 s");
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
