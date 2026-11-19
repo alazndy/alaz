@@ -181,6 +181,8 @@ crates/
     src/debug.rs      debug kapıları: oyunu satır satır süren betik dili
   render/  wgpu çizici: piksel sanatı geçişi, gölgeler, su/rüzgâr gölgelendiricileri, modeller
   net/     lockstep çok oyunculu (sunucu/istemci)
+  relay-proto/  aracı ile oyun arasındaki mesajlar ve oda kodu (render ve sim bağımlılığı yok)
+  relay/   internet aracısı (alaz-relay): kodla eşleştirir, bağlantıları aktarır; yalnız Linux
   game/    pencere, giriş, arayüz (egui), menü, hikâye, ses
 ```
 
@@ -224,6 +226,23 @@ Gerisi tohumdan yeniden üretilir. Yüklenen dünyanın hash'i kayıttakiyle kar
 - Bağlantı arka planda kurulur; hata menüde görünür.
 - Portlar: oyun TCP 7777, ağda bulma UDP 7778. Windows ilk sunucu kurulumunda güvenlik duvarı izni sorar: izin ver.
 - Duraklatma menüsü sunucunun adresini ve oyuncu sayısını gösterir.
+
+### İnternetten (kodla)
+
+Port açmadan, internet üzerinden arkadaşınla oynayabilirsin. Kuran oyuncu bir kod alır; arkadaşı o kodu yazarak katılır.
+
+- **Ağa aç:** Çok oyunculu ekranında **Ağa aç**'a bas. `K7Q4-XM2P` gibi bir kod çıkar. **Kopyala** düğmesiyle panoya kopyalayabilirsin. Bağlı oyuncu sayısı da görünür.
+- **Kodla katıl:** Arkadaşın **Kodla katıl** alanına kodu yazar. Büyük-küçük harf, boşluk ve tire önemli değildir.
+- **Yeni kod:** Yeni bir kod alır. Eski kod hemen geçersiz olur.
+- **Ağı kapat:** Kod geçersiz olur. Ağda olan oyuncular oyunda kalır.
+- Kod, ağı açık tuttuğun sürece geçerlidir. Bir odada en çok 8 oyuncu olabilir (kuran dahil).
+- **Dikkat:** Kodu yalnız güvendiğin arkadaşlarınla paylaş. Kodu bilen herkes katılıp takımda oynayabilir. Oyun kimin ne yaptığını kontrol etmez.
+- Ana menüden **Ağa aç** yalnız internet yolunu açar; LAN portu açılmaz. Oyun zaten LAN için açıksa ikisi de çalışır.
+- Oyun bağlantıyı `relay.alazlab.com` (port 443, TLS) adresindeki bir aracı sunucu üzerinden kurar. Aracı iki oyuncuyu eşleştirir. Oyunun kendisi değişmez; eşzamanlı (lockstep) çalışmaya devam eder.
+- Aracı kod ya da oyun içeriğini saklamaz; yalnız sayaç tutar. TLS aracıda sonlandığı için aracı trafiği teknik olarak görebilir.
+- Herkes aynı oyun sürümünü kullanmalı.
+- Aracının adresini `ALAZ_RELAY=host:port` ortam değişkeniyle değiştirebilirsin (test ya da kendi aracın için). Aracıyı kurma adımları: `packaging/relay/RUNBOOK.md`.
+- LAN ile oynama ("Sunucu kur", "Ağdaki oyunlar", `--host`, `--join`) eskisi gibi çalışır.
 
 **Komut satırından:**
 
@@ -286,6 +305,7 @@ shot NAME / state
 | `ALAZ_DEMO_LINEUP=<kıyafet maskesi>[,lod\|walk\|sit]` | Oyuncunun önüne on evrim aşamasını yan yana dizer (aynı kişi: `ALAZ_DEMO_LINEUP_ID`, varsayılan 12) |
 | `ALAZ_DEMO_FALL=deer\|wolf\|ox\|horse\|dog` | Kameranın önünde bu türden bir hayvan tekrar tekrar ölüp devrilir (ölüm animasyonu) |
 | `ALAZ_DEMO_SURFACE=mud\|puddle\|ice\|fire\|ash` | Zemin durumlarını gösterir: yağmur sonrası çamur, birikinti, buz (`ALAZ_DEMO_HOUR=9` ve `ALAZ_DEMO_WEATHER=snow` ile), yanan çimen, kül |
+| `ALAZ_RELAY=host:port` | İnternet aracısının adresi (varsayılan `relay.alazlab.com:443`); test ve kendi aracın için |
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |
 
