@@ -92,6 +92,8 @@ pub(crate) fn push_creature(out: &mut Mesh, kind: AgentKind, x: f32, z: f32, mar
 }
 
 /// A short trail of paw prints behind an animal.
+/// Used as a fixed mesh-hash fixture for the mark geometry and both colors.
+#[cfg(test)]
 pub(crate) fn push_tracks(out: &mut Mesh, id: u32, x: f32, z: f32, heading: (i64, i64), wolf: bool) {
     out.set_anchor(x, z);
     let (hx, hz) = (heading.0 as f32, heading.1 as f32);
@@ -103,11 +105,16 @@ pub(crate) fn push_tracks(out: &mut Mesh, id: u32, x: f32, z: f32, heading: (i64
         let a = (id.wrapping_mul(2654435761) >> 8) as f32 * 0.0001;
         (a.dcos(), a.dsin())
     };
-    let col = if wolf { [0.20, 0.17, 0.15] } else { [0.30, 0.25, 0.19] };
     for i in 1..=6 {
         let d = 0.9 + i as f32 * 0.8;
         let side = if i % 2 == 0 { 0.18 } else { -0.18 };
         let (px, pz) = (x + dx * d - dz * side, z + dz * d + dx * side);
-        push_box(out, [px, 0.015, pz], [0.07, 0.008, 0.09], col, 0.0);
+        push_paw_mark(out, px, pz, wolf);
     }
+}
+
+/// Paint one paw mark. The caller sets the terrain anchor before drawing.
+pub(crate) fn push_paw_mark(out: &mut Mesh, x: f32, z: f32, wolf: bool) {
+    let col = if wolf { [0.20, 0.17, 0.15] } else { [0.30, 0.25, 0.19] };
+    push_box(out, [x, 0.015, z], [0.07, 0.008, 0.09], col, 0.0);
 }

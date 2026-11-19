@@ -6,7 +6,7 @@ use crate::quality::{self, scene_source, Quality, ShadowQuality};
 use crate::{hotreload, pipelines, Camera, DEPTH_FORMAT, NIGHT_TINT, SHADOW_FORMAT};
 use alaz_sim::time::daylight_permille;
 use alaz_sim::{rules, AgentKind, BuildingKind, Terrain, World};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::event::WindowEvent;
@@ -220,6 +220,8 @@ pub struct Renderer {
     pub(crate) tick_seen: u64,
     pub(crate) tick_at: std::time::Instant,
     pub(crate) tick_gap: f32,
+    wild_track_steps: HashMap<u32, frame::TrackStepper>,
+    wild_tracks: VecDeque<frame::TrackMark>,
     /// Tile of the resource node under the pointer: drawn with a bright rim so it is clear what can be taken.
     pub hover_node: Option<(i32, i32)>,
     /// `ALAZ_DEMO_VIEW=<model name>`: the preview screen shows only this model (or an item icon), the camera circling.
@@ -551,6 +553,8 @@ impl Renderer {
             tick_seen: 0,
             tick_at: std::time::Instant::now(),
             tick_gap: 1.0 / 60.0,
+            wild_track_steps: HashMap::new(),
+            wild_tracks: VecDeque::new(),
             frame_no: 0,
             stats: RenderStats::default(),
             globals,
@@ -842,6 +846,8 @@ impl Renderer {
     /// Drop cached scene buffers (call when the world is replaced).
     pub fn reset_scene(&mut self) {
         self.chunks.clear();
+        self.wild_track_steps.clear();
+        self.wild_tracks.clear();
     }
 
     /// Where the last frame drew this person (metres): between ticks, not at the tick. The camera follows this, so
