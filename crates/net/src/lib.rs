@@ -6,6 +6,11 @@
 //! Trust model: friends on one team. Clients may command any agent, the host does not police it.
 
 pub mod discovery;
+mod relay_client;
+mod stream;
+
+pub use alaz_relay_proto::Code;
+pub use relay_client::RelayStatus;
 
 use alaz_sim::{AgentId, Command, CommandKind, World};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -13,9 +18,11 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
+use stream::Stream;
 
 pub const PROTOCOL: u32 = 2;
 pub const DEFAULT_PORT: u16 = 7777;
+pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
 const MAX_FRAME: usize = 64 << 20;
 const MAX_OUTBOX: usize = 64 << 20;
@@ -56,7 +63,7 @@ pub fn apply_turn(world: &mut World, turn: &Turn) -> bool {
 
 /// Non-blocking, length-prefixed message pipe.
 struct Conn {
-    stream: TcpStream,
+    stream: Stream,
     rbuf: Vec<u8>,
     wbuf: Vec<u8>,
     wpos: usize,
@@ -64,9 +71,9 @@ struct Conn {
 }
 
 impl Conn {
-    fn new(stream: TcpStream) -> io::Result<Self> {
-        stream.set_nonblocking(true)?;
-        stream.set_nodelay(true)?;
+    fn new(stream: Stream) -> io::Result<Self> {
+        stream.tcp().set_nonblocking(true)?;
+        stream.tcp().set_nodelay(true)?;
         Ok(Self { stream, rbuf: Vec::new(), wbuf: Vec::new(), wpos: 0, dead: false })
     }
 
@@ -90,6 +97,10 @@ impl Conn {
         if self.wpos == self.wbuf.len() {
             self.wbuf.clear();
             self.wpos = 0;
+            // TLS may still hold encrypted bytes the socket refused earlier; a plain stream ignores this
+            if !self.dead {
+                let _ = self.stream.flush();
+            }
         }
         if self.wbuf.len() - self.wpos > MAX_OUTBOX {
             self.dead = true;
@@ -145,13 +156,45 @@ pub struct Host {
     queued: Vec<Command>,
     joins_queued: u32,
     beacon: Option<(discovery::Beacon, String)>,
+    relay: Option<relay_client::RelayLink>,
 }
 
 impl Host {
     pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
-        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None })
+        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None, relay: None })
+    }
+
+    /// Open this world to the internet through the relay. Returns at once; follow `relay_status`.
+    pub fn open_relay(&mut self, relay: &str) -> Result<(), NetError> {
+        self.open_relay_with(relay, relay_client::PING_EVERY)
+    }
+
+    pub(crate) fn open_relay_with(&mut self, relay: &str, ping_every: Duration) -> Result<(), NetError> {
+        if relay_client::host_part(relay).is_none() {
+            return Err(NetError("röle adresi geçersiz".into()));
+        }
+        // dropping the old link closes its control connection first, so the old code dies
+        self.relay = None;
+        self.relay = Some(relay_client::RelayLink::start(relay, ping_every));
+        Ok(())
+    }
+
+    pub fn relay_status(&self) -> RelayStatus {
+        self.relay.as_ref().map_or(RelayStatus::Closed, |l| l.status())
+    }
+
+    /// Replace the code; the old one stops working. Players already connected stay.
+    pub fn relay_new_code(&mut self) {
+        if let Some(l) = &self.relay {
+            l.request_new_code();
+        }
+    }
+
+    /// Stop accepting people through the relay. Players already connected stay.
+    pub fn relay_close(&mut self) {
+        self.relay = None;
     }
 
     /// Answer LAN discovery queries on UDP `port`. On error hosting is unaffected, only discovery stays off.
@@ -176,8 +219,15 @@ impl Host {
             beacon.answer(tcp_port, self.peers.len() as u32 + 1, label);
         }
         while let Ok((stream, _)) = self.listener.accept() {
-            if let Ok(c) = Conn::new(stream) {
+            if let Ok(c) = Conn::new(Stream::Plain(stream)) {
                 self.waiting.push((c, Instant::now()));
+            }
+        }
+        if let Some(link) = &self.relay {
+            while let Some(stream) = link.try_tunnel() {
+                if let Ok(c) = Conn::new(stream) {
+                    self.waiting.push((c, Instant::now()));
+                }
             }
         }
         let mut still = Vec::new();
@@ -244,6 +294,11 @@ impl std::fmt::Display for NetError {
     }
 }
 
+/// The relay to use: `ALAZ_RELAY=host:port` (tests, self-hosting) or the public one.
+pub fn relay_address() -> String {
+    std::env::var("ALAZ_RELAY").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| DEFAULT_RELAY.to_string())
+}
+
 pub struct Client {
     conn: Conn,
     turns: VecDeque<Turn>,
@@ -262,6 +317,24 @@ impl Client {
             .next()
             .ok_or_else(|| NetError("adres çözülemedi".into()))?;
         let stream = TcpStream::connect_timeout(&sock, timeout).map_err(|e| err(&e))?;
+        Self::handshake(Stream::Plain(stream), timeout)
+    }
+
+    /// Join through the relay with the code a host gave. `timeout` covers DNS, TCP, TLS, pairing and the handshake.
+    pub fn connect_code(code: &str, timeout: Duration) -> Result<(Client, World), NetError> {
+        Self::connect_code_via(&relay_address(), code, timeout)
+    }
+
+    pub(crate) fn connect_code_via(relay: &str, code: &str, timeout: Duration) -> Result<(Client, World), NetError> {
+        let until = Instant::now() + timeout;
+        let code = Code::parse(code).ok_or_else(|| NetError("kod geçersiz".into()))?;
+        let target = relay_client::Target::resolve(relay, until)?;
+        let stream = relay_client::join(&target, code, until)?;
+        Self::handshake(stream, until.saturating_duration_since(Instant::now()))
+    }
+
+    fn handshake(stream: Stream, timeout: Duration) -> Result<(Client, World), NetError> {
+        let err = |e: &dyn std::fmt::Display| NetError(format!("{e}"));
         let mut client = Client {
             conn: Conn::new(stream).map_err(|e| err(&e))?,
             turns: VecDeque::new(),
@@ -350,19 +423,21 @@ impl Client {
 }
 
 #[cfg(test)]
+mod relay_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use alaz_sim::{ItemKind, NodeKind};
     use std::thread;
 
-    fn host_world() -> World {
+    pub(crate) fn host_world() -> World {
         let mut w = World::new(5);
         let (sx, sy) = w.spawn_mm;
         w.spawn_agent(sx, sy);
         w
     }
 
-    fn setup() -> (Host, World, Client, World) {
+    pub(crate) fn setup() -> (Host, World, Client, World) {
         let mut host = Host::bind("127.0.0.1:0").unwrap();
         let addr = host.local_addr().unwrap().to_string();
         let mut hw = host_world();
@@ -378,7 +453,7 @@ mod tests {
     }
 
     /// Run host turns, let the client follow, optionally with a per-tick hook.
-    fn run(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World, ticks: u32, mut hook: impl FnMut(u32, &mut Host, &mut World, &mut Client, &mut World)) {
+    pub(crate) fn run(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World, ticks: u32, mut hook: impl FnMut(u32, &mut Host, &mut World, &mut Client, &mut World)) {
         for i in 0..ticks {
             hook(i, host, hw, client, cw);
             host.poll(hw);
@@ -397,7 +472,7 @@ mod tests {
         }
     }
 
-    fn settle(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World) {
+    pub(crate) fn settle(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World) {
         for _ in 0..2000 {
             if cw.tick == hw.tick {
                 break;
