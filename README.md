@@ -182,7 +182,7 @@ crates/
   render/  wgpu çizici: piksel sanatı geçişi, gölgeler, su/rüzgâr gölgelendiricileri, modeller
   net/     lockstep çok oyunculu (sunucu/istemci)
   relay-proto/  aracı ile oyun arasındaki mesajlar ve oda kodu (render ve sim bağımlılığı yok)
-  relay/   internet aracısı (alaz-relay): kodla eşleştirir, bağlantıları aktarır; yalnız Linux
+  relay/   internet aracısı (alaz-relay): kodla eşleştirir, bağlantıları aktarır; Linux/Unix
   game/    pencere, giriş, arayüz (egui), menü, hikâye, ses
 ```
 
@@ -237,9 +237,9 @@ Port açmadan, internet üzerinden arkadaşınla oynayabilirsin. Kuran oyuncu bi
 - **Ağı kapat:** Kod geçersiz olur. Ağda olan oyuncular oyunda kalır.
 - Kod, ağı açık tuttuğun sürece geçerlidir. Bir odada en çok 8 oyuncu olabilir (kuran dahil).
 - **Dikkat:** Kodu yalnız güvendiğin arkadaşlarınla paylaş. Kodu bilen herkes katılıp takımda oynayabilir. Oyun kimin ne yaptığını kontrol etmez.
-- Ana menüden **Ağa aç** yalnız internet yolunu açar; LAN portu açılmaz. Oyun zaten LAN için açıksa ikisi de çalışır.
+- Çok oyunculu ekranından **Ağa aç** yalnız internet yolunu açar; LAN portu açılmaz. Oyun zaten LAN için açıksa ikisi de çalışır.
 - Oyun bağlantıyı `relay.alazlab.com` (port 443, TLS) adresindeki bir aracı sunucu üzerinden kurar. Aracı iki oyuncuyu eşleştirir. Oyunun kendisi değişmez; eşzamanlı (lockstep) çalışmaya devam eder.
-- Aracı kod ya da oyun içeriğini saklamaz; yalnız sayaç tutar. TLS aracıda sonlandığı için aracı trafiği teknik olarak görebilir.
+- Aracı kod ya da oyun içeriğini kaydetmez; yalnız sayaç tutar. TLS aracıda sonlandığı için aracı trafiği teknik olarak görebilir.
 - Herkes aynı oyun sürümünü kullanmalı.
 - Aracının adresini `ALAZ_RELAY=host:port` ortam değişkeniyle değiştirebilirsin (test ya da kendi aracın için). Aracıyı kurma adımları: `packaging/relay/RUNBOOK.md`.
 - LAN ile oynama ("Sunucu kur", "Ağdaki oyunlar", `--host`, `--join`) eskisi gibi çalışır.

@@ -37,7 +37,7 @@ Ayrıntılar için README'ye bak.
 - **Ağı kapat:** kod geçersiz olur; ağda olan oyuncular oyunda kalır.
 - Bir odada en çok 8 oyuncu.
 - **Dikkat:** Kodu yalnız güvendiğin arkadaşlarınla paylaş. Kodu bilen herkes katılıp takımda oynayabilir.
-- **Sürüm:** Herkes aynı oyun sürümünü kullanmalı. Ağ protokolü değişmedi; yine de farklı sürümler senkron dışına düşebilir.
+- **Sürüm:** Herkes aynı oyun sürümünü kullanmalı. Oyun protokolü 2 olarak kaldı; aracı protokolü (1) yeni. Farklı sürümler yine de senkron dışına düşebilir.
 - **LAN:** "Sunucu kur", "Ağdaki oyunlar" ve `--host`/`--join` eskisi gibi çalışır.
 
 ## 0.5.0'da yeni

@@ -702,7 +702,7 @@ impl Menu {
                     ui.add_space(4.0);
                     painted_field(ui, "KOD", "K7Q4-XM2P", &mut self.code_text);
                     // char-wise: byte truncation panics inside a multibyte character (ç, ş, ...)
-                self.code_text = self.code_text.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '-').take(24).collect();
+                    self.code_text = self.code_text.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '-').take(24).collect();
                     ui.add_space(4.0);
                     if button(ui, "Kodla katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.code_text.trim().is_empty() {
                         act = Some(MenuAction::JoinCode(self.code_text.clone()));
