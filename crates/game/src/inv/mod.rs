@@ -206,7 +206,7 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) {
                 Top::Build => {}
                 Top::Machine(i) => machine::click(cx, i, k, shift),
             };
-            let grid = egui::ScrollArea::vertical().id_salt("inv_bag").max_height(rest * 0.5).auto_shrink([false, true]).show(ui, |ui| bag_grid(ui, cx, &mut click));
+            let grid = egui::ScrollArea::vertical().id_salt("inv_bag").max_height(rest * 0.5).auto_shrink([false, true]).show(ui, |ui| bag_grid(ui, cx, top, &mut click));
             // the whole bag area takes back what was carried out of it (machine output, a held item)
             let zone = ui.interact(grid.inner_rect, egui::Id::NULL.with("inv_bag_zone"), egui::Sense::hover());
             if hovering(&zone).is_some_and(|c| !matches!(c, Carry::Bag(_))) {
@@ -274,8 +274,8 @@ fn tab_row(ui: &mut Ui, cx: &mut Cx, top: Top) {
     });
 }
 
-/// The bag, grouped by what the eye can tell apart, one slot per heap.
-fn bag_grid(ui: &mut Ui, cx: &mut Cx, click: BagClick) {
+/// The bag, grouped by what the eye can tell apart, one slot per heap. An open machine dims what it would not take.
+fn bag_grid(ui: &mut Ui, cx: &mut Cx, top: Top, click: BagClick) {
     let (w, inv) = (cx.w, &cx.me.inventory);
     let mut items: Vec<(ItemKind, u16)> = Vec::new();
     for &k in ItemKind::ALL.iter() {
@@ -300,7 +300,11 @@ fn bag_grid(ui: &mut Ui, cx: &mut Cx, click: BagClick) {
         for (n, (k, count)) in items.into_iter().enumerate() {
             // from a mixed heap, whichever comes to hand (the biggest share)
             let real = crate::lang::hidden_in(w, inv, k).into_iter().max_by_key(|(_, c)| *c).map_or(k, |(r, _)| r);
-            let resp = slot(ui, w, Some(k), count, SlotLook::Normal);
+            let look = match top {
+                Top::Machine(i) => machine::bag_look(cx, i, real),
+                _ => SlotLook::Normal,
+            };
+            let resp = slot(ui, w, Some(k), count, look);
             drag_source(&resp, Carry::Bag(real));
             if resp.clicked() {
                 click(cx, real, shift);

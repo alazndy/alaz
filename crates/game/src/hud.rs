@@ -1,7 +1,7 @@
 use alaz_render::egui::{self, Align2, Color32, Rect, RichText, Stroke};
 use alaz_sim::rules::{rules, ItemCount};
 use alaz_sim::time::{minute_of_day, TICKS_PER_SECOND};
-use alaz_sim::world::{FIRE_FUEL_MAX, MAX_STAT};
+use alaz_sim::world::MAX_STAT;
 use alaz_sim::{
     AgentId, AgentKind, BuildingKind, CommandKind, Discovery, Event, ItemKind, Milestone, RecipeId, Reject, RouteStep,
     Terrain,
@@ -1785,7 +1785,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         Some(Selection::Building(i)) => {
             // machines show in the inventory window instead
             if let Some(b) = w.buildings.get(i).filter(|b| !crate::inv::machine::opens_window(w, b.kind)) {
-                draw_building(ctx, w, i, b, me, acts);
+                draw_building(ctx, w, i, b, acts);
             }
         }
         Some(Selection::Agent(i)) => {
@@ -2518,7 +2518,6 @@ fn draw_building(
     w: &World,
     i: usize,
     b: &alaz_sim::Building,
-    me: &alaz_sim::world::Agent,
     acts: &mut Vec<UiAction>,
 ) {
     let defs = rules();
@@ -2559,24 +2558,17 @@ fn draw_building(
                 });
             }
             ui.separator();
-            building_body(ui, w, i, b, me, acts);
+            building_notes(ui, w, i, b, acts);
+            ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
         });
     });
 }
 
-/// What the building panel says about one building under its title: fuel, heat, notes, contents, recipes.
-pub(crate) fn building_body(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim::Building, me: &alaz_sim::world::Agent, acts: &mut Vec<UiAction>) {
+/// What is said about one building besides its slots: heat, notes, warnings, requirement lines. The building panel
+/// and the machine tab both show it.
+pub(crate) fn building_notes(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim::Building, acts: &mut Vec<UiAction>) {
     let defs = rules();
     let def = defs.building(b.kind);
-    let inv = &me.inventory;
-    if b.kind.burns() {
-        let frac = b.fuel as f32 / FIRE_FUEL_MAX as f32;
-        let secs = b.fuel as u64 / TICKS_PER_SECOND;
-        crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &format!("Yakıt {}:{:02}", secs / 60, secs % 60), frac, Color32::from_rgb(232, 118, 44), 270.0);
-        if ui.add_enabled(inv.get(ItemKind::Wood) > 0, egui::Button::new("Odun at (+1 odun)")).clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Refuel { building: i as u32 }));
-        }
-    }
     if def.heat_max > 0 {
         // the eye reads heat as colour first; only a learned tribe puts a number on it
         let t = b.temp;
@@ -2688,18 +2680,6 @@ pub(crate) fn building_body(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim
     if b.kind == BuildingKind::Cooler {
         let live = w.electric_live().get(i).copied().unwrap_or(false);
         ui.label(RichText::new(if live { "Çalışıyor: içindeki yiyecek kilerden 3 kat yavaş bozulur." } else { "Elektrik yok: soğutmuyor, sıradan bir kutu." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
-        ui.label(format!("İçindekiler: {}", fmt_counts(&b.output)));
-        if ui.button("Hepsini yükle (araçlar hariç)").clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-        }
-        ui.horizontal_wrapped(|ui| {
-            for k in ItemKind::ALL {
-                let n = b.output[k as usize];
-                if n > 0 && ui.small_button(format!("Al: {} ({})", item_name(k), n)).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: Some(k) }));
-                }
-            }
-        });
     }
     if b.kind == BuildingKind::AssemblyRobot {
         let live = w.electric_live().get(i).copied().unwrap_or(false);
@@ -2747,7 +2727,6 @@ pub(crate) fn building_body(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim
         ui.label(RichText::new("Aynı türden iki hayvan içerideyken yem verirsen yavru olur.").small().weak());
     }
     if b.kind == BuildingKind::Depot {
-        ui.label(format!("İçindekiler: {}", fmt_counts(&b.output)));
         ui.label(RichText::new("Aç kalan işçiler buradaki yemiş/kömürden kendi kendine yer.").small().weak());
         let jars = b.output[ItemKind::LargePot as usize].min(4);
         ui.label(RichText::new(if jars > 0 {
@@ -2755,17 +2734,6 @@ pub(crate) fn building_body(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim
         } else {
             "Buraya konan büyük çömlekler yiyeceğin bozulmasını yavaşlatır.".to_string()
         }).small().weak());
-        if ui.button("Hepsini yükle (araçlar hariç)").clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-        }
-        ui.horizontal_wrapped(|ui| {
-            for k in ItemKind::ALL {
-                let n = b.output[k as usize];
-                if n > 0 && ui.small_button(format!("Al: {} ({})", item_name(k), n)).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: Some(k) }));
-                }
-            }
-        });
     }
     let recipes: Vec<(usize, &_)> =
         defs.recipes.iter().enumerate().filter(|(_, r)| r.station == Some(b.kind) && r.discovery != Discovery::Retired).collect();
@@ -2785,70 +2753,6 @@ pub(crate) fn building_body(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim
             ui.label(RichText::new(format!("Bakır ve kalay taşı yükle: {}–{} bakır ölçüsünde bronz olur.", lo, hi)).small().weak());
         }
     }
-    if !recipes.is_empty() {
-        ui.label(format!("Girdi deposu: {}", fmt_counts(&b.input)));
-        if ui.button("Girdileri yükle").clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-        }
-        if let Some(job) = &b.job {
-            let r = &defs.recipes[job.recipe as usize];
-            let done = 1.0 - job.remaining as f32 / r.ticks as f32;
-            let left = job.remaining as u64 / TICKS_PER_SECOND;
-            crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Hammer, &format!("{} · {} sn kaldı", r.name, left), done, Color32::from_rgb(120, 190, 120), 270.0);
-        }
-        for (ri, r) in recipes {
-            if !w.knows(r.discovery) {
-                ui.add_enabled(false, egui::Button::new(format!("{} (henüz bilinmiyor)", r.name)));
-                continue;
-            }
-            let label = format!("{} ({} sn)", r.name, r.ticks as u64 / TICKS_PER_SECOND);
-            egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(0, 0, 0, 60))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(70, 56, 40)))
-                .corner_radius(0)
-                .inner_margin(6)
-                .show(ui, |ui| {
-                    ui.set_width(258.0);
-                    need_row(ui, w, &r.inputs, inv);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("->").strong().color(Color32::from_rgb(240, 200, 100)));
-                        match r.spawns {
-                            Some(k) => {
-                                ui.label(kind_name(k));
-                            }
-                            None => {
-                                for it in &r.outputs {
-                                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                                    crate::icons::draw_slot(ui.painter(), rect, it.item, w.has_seen(it.item));
-                                    resp.on_hover_text(crate::lang::item_word(w, it.item));
-                                    ui.label(format!("x{}", it.n));
-                                }
-                            }
-                        }
-                    });
-            ui.horizontal(|ui| {
-                let can_start = b.job.is_none() && inv.has(&r.inputs);
-                if ui.add_enabled(can_start, egui::Button::new(label)).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::StartJob {
-                        building: i as u32,
-                        recipe: RecipeId(ri as u16),
-                    }));
-                }
-                let auto_on = b.auto == Some(ri as u16);
-                if ui.selectable_label(auto_on, "Otomatik").clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::SetAuto {
-                        building: i as u32,
-                        recipe: if auto_on { None } else { Some(RecipeId(ri as u16)) },
-                    }));
-                }
-            });
-                });
-        }
-        if b.output_total() > 0 && ui.button(format!("Topla: {}", fmt_counts(&b.output))).clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: None }));
-        }
-    }
-    ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
 }
 
 /// What the design table is being set to (kept in the UI's memory between frames).
