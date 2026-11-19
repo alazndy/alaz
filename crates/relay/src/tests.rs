@@ -1,7 +1,7 @@
 use crate::{Limits, Relay, Transport};
 use alaz_relay_proto::{Code, FromRelay, Refusal, RELAY_PROTOCOL, ToRelay, read_msg, write_msg};
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -30,6 +30,9 @@ impl Transport for Tcp {
     }
     fn set_read_timeout(&self, d: Option<Duration>) {
         let _ = self.0.set_read_timeout(d);
+    }
+    fn set_write_timeout(&self, d: Option<Duration>) {
+        let _ = self.0.set_write_timeout(d);
     }
 }
 
@@ -290,4 +293,115 @@ fn splice_never_parses_bytes() {
     look_alike.extend_from_slice(&[0xFF; 16]);
     echo_once(&mut j, &mut h, &look_alike);
     echo_once(&mut h, &mut j, &look_alike);
+}
+
+#[test]
+fn stuck_receiver_tunnel_is_reaped_and_slots_released() {
+    let (r, a) = start(Limits { write_stall: Duration::from_millis(300), tunnel_rate: 1 << 30, tunnel_burst: 1 << 30, ..lenient() });
+    let (mut ctrl, code) = open(a);
+    let (j, mut h) = pair(a, &mut ctrl, code);
+    drop(ctrl);
+    // the joiner never reads; the host floods until the relay gives up on the tunnel
+    let flood = thread::spawn(move || {
+        let block = vec![1u8; 65536];
+        while h.write_all(&block).is_ok() {}
+    });
+    wait_for(|| r.counters().tunnels == 0 && r.counters().rooms == 0 && r.ips.conns(Ipv4Addr::LOCALHOST.into()) == 0);
+    flood.join().unwrap();
+    assert_eq!(r.active_joins.load(std::sync::atomic::Ordering::Relaxed), 0);
+    drop(j);
+}
+
+#[test]
+fn silent_control_connection_is_dropped_and_pinging_one_is_kept() {
+    let (r, a) = start(Limits { control_idle: Duration::from_millis(300), ..lenient() });
+    let (_silent, silent_code) = open(a);
+    let (mut pinger, ping_code) = open(a);
+    let end = Instant::now() + Duration::from_millis(900);
+    while Instant::now() < end {
+        send(&mut pinger, ToRelay::Ping);
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(r.counters().rooms, 1);
+    assert_eq!(join_reply(a, silent_code), FromRelay::Refused(Refusal::NoSuchCode));
+    let mut j = dial(a);
+    send(&mut j, join_msg(ping_code));
+    assert!(matches!(recv(&mut pinger), FromRelay::Incoming { .. }));
+}
+
+#[test]
+fn first_message_deadline_covers_the_whole_frame() {
+    let (_r, a) = start(Limits { control_idle: Duration::from_millis(300), ..lenient() });
+    let mut c = dial(a);
+    let t = Instant::now();
+    // one byte at a time: each read alone is well inside the limit
+    for b in 8u32.to_le_bytes() {
+        if c.write_all(&[b]).is_err() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    let mut rest = Vec::new();
+    let _ = c.read_to_end(&mut rest);
+    assert!(t.elapsed() < Duration::from_secs(3));
+    assert!(rest.is_empty());
+}
+
+#[test]
+fn accept_is_exempt_from_lockout() {
+    let (_r, a) = start(Limits { max_fails_per_window: 1, fail_delay: Duration::ZERO, ..Limits::default() });
+    let (mut ctrl, code) = open(a);
+    for _ in 0..3 {
+        join_reply(a, Code::generate());
+    }
+    assert_eq!(join_reply(a, code), FromRelay::Refused(Refusal::TooManyAttempts));
+    let mut h = dial(a);
+    send(&mut h, ToRelay::Accept { id: 12345 });
+    assert_eq!(recv(&mut h), FromRelay::Refused(Refusal::NoSuchCode));
+    // the host's own control connection still works while the IP is locked
+    send(&mut ctrl, ToRelay::NewCode);
+    assert!(matches!(recv(&mut ctrl), FromRelay::Opened { .. }));
+}
+
+#[test]
+fn small_burst_and_low_rate_actually_delay() {
+    let (_r, a) = start(Limits { tunnel_rate: 1 << 20, tunnel_burst: 64 << 10, ..lenient() });
+    let (mut ctrl, code) = open(a);
+    let (mut j, mut h) = pair(a, &mut ctrl, code);
+    const N: usize = 512 << 10;
+    let t = Instant::now();
+    let w = thread::spawn(move || j.write_all(&vec![9u8; N]).map(|_| j));
+    let mut got = vec![0u8; N];
+    h.read_exact(&mut got).unwrap();
+    let _j = w.join().unwrap().unwrap();
+    // (512 - 64) KiB at 1 MiB/s is about 440 ms; accept anything above half of that
+    assert!(t.elapsed() >= Duration::from_millis(200), "{:?}", t.elapsed());
+}
+
+#[test]
+fn ipv6_addresses_in_one_slash_64_share_a_lockout_and_stale_entries_vanish() {
+    let lim = Limits { max_fails_per_window: 1, fail_window: Duration::from_millis(100), ..Limits::default() };
+    let t = crate::room::IpTable::new(lim.fail_window);
+    let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+    let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+    let other: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+    assert!(!t.record_fail(a, &lim));
+    assert!(t.record_fail(b, &lim));
+    assert!(t.is_locked(a) && t.is_locked(b) && !t.is_locked(other));
+    let c: IpAddr = "192.0.2.1".parse().unwrap();
+    for _ in 0..3 {
+        t.record_fail(c, &lim);
+        t.record_fail(other, &lim);
+    }
+    assert!(t.len() >= 2);
+    // lockout lasts 300 s, so use a fresh table for the staleness check
+    let t = crate::room::IpTable::new(lim.fail_window);
+    let big = Limits { max_fails_per_window: 1000, ..lim.clone() };
+    t.record_fail(c, &big);
+    t.record_fail(other, &big);
+    assert_eq!(t.len(), 2);
+    thread::sleep(Duration::from_millis(250));
+    assert!(t.try_add_conn(a, 5));
+    t.drop_conn(a);
+    assert_eq!(t.len(), 0);
 }

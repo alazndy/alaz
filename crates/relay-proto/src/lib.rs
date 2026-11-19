@@ -66,6 +66,8 @@ pub enum ToRelay {
     NewCode,
     Join { protocol: u32, code: Code },
     Accept { id: u64 },
+    /// Keeps a host control connection alive; the relay does not answer it.
+    Ping,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +209,7 @@ mod tests {
         rt(ToRelay::NewCode);
         rt(ToRelay::Join { protocol: RELAY_PROTOCOL, code });
         rt(ToRelay::Accept { id: u64::MAX });
+        rt(ToRelay::Ping);
         rt(FromRelay::Opened { code });
         rt(FromRelay::Incoming { id: 7 });
         rt(FromRelay::Paired);

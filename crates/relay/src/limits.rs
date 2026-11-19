@@ -15,8 +15,11 @@ pub struct Limits {
     pub max_players: usize,
     /// Joiners paired or waiting, over all rooms.
     pub max_tunnels: usize,
-    /// How long a connection may stay silent before its first message is complete.
+    /// Whole-frame deadline for a connection's first message, and the longest a host control
+    /// connection may send no frame at all (a `Ping` counts as a frame).
     pub control_idle: Duration,
+    /// A tunnel write that makes no progress for this long means the receiver is stuck: the tunnel is closed.
+    pub write_stall: Duration,
     pub pair_timeout: Duration,
     /// Failed lookups answer no sooner than this, so a miss costs the same however it came about.
     pub fail_delay: Duration,
@@ -39,7 +42,8 @@ impl Default for Limits {
             max_rooms: 1000,
             max_players: 8,
             max_tunnels: 4000,
-            control_idle: Duration::from_secs(30),
+            control_idle: Duration::from_secs(60),
+            write_stall: Duration::from_secs(30),
             pair_timeout: Duration::from_secs(10),
             fail_delay: Duration::from_millis(300),
             tunnel_rate: 2 << 20,

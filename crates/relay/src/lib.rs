@@ -22,6 +22,7 @@ pub trait Transport: Read + Write + Send + 'static {
     fn peer_ip(&self) -> IpAddr;
     fn shutdown(&self);
     fn set_read_timeout(&self, d: Option<Duration>);
+    fn set_write_timeout(&self, d: Option<Duration>);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -46,9 +47,9 @@ pub struct Relay {
 impl Relay {
     pub fn new(limits: Limits) -> Arc<Relay> {
         Arc::new(Relay {
+            ips: room::IpTable::new(limits.fail_window),
             limits,
             state: Mutex::default(),
-            ips: room::IpTable::default(),
             active_joins: AtomicUsize::new(0),
             tunnels: AtomicUsize::new(0),
             stats: room::Stats::default(),
@@ -86,13 +87,15 @@ impl Relay {
     }
 
     fn handle<T: Transport>(self: Arc<Self>, mut conn: T, slot: ConnSlot) {
-        conn.set_read_timeout(Some(self.limits.control_idle));
-        let first = read_msg::<ToRelay, _>(&mut conn);
+        // a stuck peer must not park this thread inside a write
+        conn.set_write_timeout(Some(self.limits.control_idle));
+        let mut frames = Frames::default();
+        let first = frames.read_until(&mut conn, Instant::now() + self.limits.control_idle);
         match first {
             Ok(ToRelay::Open { protocol }) => self.host_control(conn, protocol),
             Ok(ToRelay::Join { protocol, code }) => self.joiner(conn, protocol, code),
             Ok(ToRelay::Accept { id }) => self.accept(conn, slot, id),
-            Ok(ToRelay::NewCode) | Err(_) => conn.shutdown(),
+            Ok(ToRelay::NewCode | ToRelay::Ping) | Err(_) => conn.shutdown(),
         }
     }
 
@@ -152,33 +155,23 @@ impl Relay {
         if write_msg(conn, &FromRelay::Opened { code: *code }).is_err() {
             return;
         }
-        // frames are assembled by hand: a read timeout in the middle of read_exact would lose bytes
-        conn.set_read_timeout(Some(Duration::from_millis(20)));
-        let mut buf: Vec<u8> = Vec::new();
-        let mut tmp = [0u8; 256];
+        let mut frames = Frames::default();
+        let mut last_frame = Instant::now();
         loop {
             while let Ok(id) = inbox.try_recv() {
                 if write_msg(conn, &FromRelay::Incoming { id }).is_err() {
                     return;
                 }
             }
-            match conn.read(&mut tmp) {
-                Ok(0) => return,
-                Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
-                Err(_) => return,
+            if last_frame.elapsed() > self.limits.control_idle {
+                return;
             }
-            while let Some(len) = buf.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) {
-                if len > MAX_RELAY_FRAME {
-                    return;
-                }
-                if buf.len() < 4 + len {
-                    break;
-                }
-                let msg = read_msg::<ToRelay, _>(&mut &buf[..4 + len]);
-                buf.drain(..4 + len);
-                match msg {
-                    Ok(ToRelay::NewCode) => {
+            loop {
+                match frames.next() {
+                    Ok(None) => break,
+                    Ok(Some(ToRelay::Ping)) => last_frame = Instant::now(),
+                    Ok(Some(ToRelay::NewCode)) => {
+                        last_frame = Instant::now();
                         let new = {
                             let mut st = self.state.lock().unwrap();
                             let new = Self::fresh_code(&st);
@@ -193,6 +186,9 @@ impl Relay {
                     }
                     _ => return,
                 }
+            }
+            if frames.fill(conn).is_err() {
+                return;
             }
         }
     }
@@ -264,16 +260,68 @@ impl Relay {
     }
 
     fn accept<T: Transport>(self: &Arc<Self>, mut conn: T, slot: ConnSlot, id: u64) {
-        let ip = slot.ip;
-        if self.ips.is_locked(ip) {
-            return self.refuse(&mut conn, Refusal::TooManyAttempts);
-        }
+        // exempt from lockout and fail counting: the 64-bit random id authenticates the host, and a host
+        // behind the same NAT as a mistyping joiner must not be locked out
         let pending = self.state.lock().unwrap().pending.remove(&id);
         let Some(p) = pending else {
-            return self.refuse_miss(&mut conn, ip);
+            return self.refuse(&mut conn, Refusal::NoSuchCode);
         };
         if let Err(mpsc::SendError(mut h)) = p.handoff.send(Handoff { conn: Box::new(conn), _slot: slot }) {
             self.refuse(&mut h.conn, Refusal::NoSuchCode);
         }
     }
 }
+
+/// Assembles frames by hand: a read timeout in the middle of `read_exact` would lose bytes.
+#[derive(Default)]
+struct Frames {
+    buf: Vec<u8>,
+}
+
+impl Frames {
+    /// Ok(None) when no whole frame is buffered yet; Err on an oversize or undecodable frame.
+    fn next(&mut self) -> Result<Option<ToRelay>, ()> {
+        let Some(len) = self.buf.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else {
+            return Ok(None);
+        };
+        if len > MAX_RELAY_FRAME {
+            return Err(());
+        }
+        if self.buf.len() < 4 + len {
+            return Ok(None);
+        }
+        let msg = read_msg::<ToRelay, _>(&mut &self.buf[..4 + len]).map_err(|_| ());
+        self.buf.drain(..4 + len);
+        msg.map(Some)
+    }
+
+    /// One read of at most the connection's poll timeout; Err when the peer is gone.
+    fn fill<T: Transport>(&mut self, conn: &mut T) -> Result<(), ()> {
+        conn.set_read_timeout(Some(POLL));
+        let mut tmp = [0u8; 256];
+        match conn.read(&mut tmp) {
+            Ok(0) => Err(()),
+            Ok(n) => {
+                self.buf.extend_from_slice(&tmp[..n]);
+                Ok(())
+            }
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => Ok(()),
+            Err(_) => Err(()),
+        }
+    }
+
+    /// Reads one frame, giving up when `deadline` passes however slowly bytes trickle in.
+    fn read_until<T: Transport>(&mut self, conn: &mut T, deadline: Instant) -> Result<ToRelay, ()> {
+        loop {
+            if let Some(m) = self.next()? {
+                return Ok(m);
+            }
+            if Instant::now() >= deadline {
+                return Err(());
+            }
+            self.fill(conn)?;
+        }
+    }
+}
+
+const POLL: Duration = Duration::from_millis(20);

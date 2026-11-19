@@ -41,6 +41,7 @@ impl Bucket {
 type Shared = Arc<Mutex<Box<dyn Transport>>>;
 
 struct Pump {
+    stall: Duration,
     done: Arc<AtomicBool>,
     moved: Arc<AtomicU64>,
     cut: Arc<AtomicBool>,
@@ -51,7 +52,9 @@ fn is_retry(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted)
 }
 
-fn write_all(dst: &Shared, mut data: &[u8], done: &AtomicBool) -> io::Result<()> {
+/// Retries on timeout but never holds the lock across a wait, so teardown can always take it.
+fn write_all(dst: &Shared, mut data: &[u8], done: &AtomicBool, stall: Duration) -> io::Result<()> {
+    let mut progress = Instant::now();
     while !data.is_empty() {
         if done.load(Ordering::Relaxed) {
             return Err(io::ErrorKind::BrokenPipe.into());
@@ -59,12 +62,28 @@ fn write_all(dst: &Shared, mut data: &[u8], done: &AtomicBool) -> io::Result<()>
         let r = dst.lock().unwrap().write(data);
         match r {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-            Ok(n) => data = &data[n..],
-            Err(e) if is_retry(&e) => thread::sleep(Duration::from_millis(1)),
+            Ok(n) => {
+                data = &data[n..];
+                progress = Instant::now();
+            }
+            Err(e) if is_retry(&e) => {
+                if progress.elapsed() > stall {
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
             Err(e) => return Err(e),
         }
     }
-    dst.lock().unwrap().flush()
+    loop {
+        let r = dst.lock().unwrap().flush();
+        match r {
+            Err(e) if is_retry(&e) && !done.load(Ordering::Relaxed) && progress.elapsed() <= stall => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            other => return other,
+        }
+    }
 }
 
 fn pump(src: Shared, dst: Shared, p: Pump, lim: &Limits) {
@@ -97,7 +116,7 @@ fn pump(src: Shared, dst: Shared, p: Pump, lim: &Limits) {
             p.cut.store(true, Ordering::Relaxed);
             break;
         }
-        if write_all(&dst, &buf[..n], &p.done).is_err() {
+        if write_all(&dst, &buf[..n], &p.done, p.stall).is_err() {
             break;
         }
     }
@@ -114,12 +133,14 @@ fn finish(src: &Shared, dst: &Shared, p: &Pump) {
 pub fn splice(a: Box<dyn Transport>, b: Box<dyn Transport>, lim: &Limits) -> bool {
     a.set_read_timeout(Some(POLL));
     b.set_read_timeout(Some(POLL));
+    a.set_write_timeout(Some(POLL));
+    b.set_write_timeout(Some(POLL));
     let a: Shared = Arc::new(Mutex::new(a));
     let b: Shared = Arc::new(Mutex::new(b));
     let done = Arc::new(AtomicBool::new(false));
     let moved = Arc::new(AtomicU64::new(0));
     let cut = Arc::new(AtomicBool::new(false));
-    let mk = || Pump { done: done.clone(), moved: moved.clone(), cut: cut.clone(), abuse_cut: lim.abuse_cut };
+    let mk = || Pump { stall: lim.write_stall, done: done.clone(), moved: moved.clone(), cut: cut.clone(), abuse_cut: lim.abuse_cut };
     let other = {
         let (a, b, p, lim) = (a.clone(), b.clone(), mk(), lim.clone());
         thread::spawn(move || pump(b, a, p, &lim))

@@ -6,7 +6,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// What a host's tunnel connection hands to the waiting joiner thread.
 pub struct Handoff {
@@ -45,16 +45,57 @@ pub struct Stats {
     pub abuse_cuts: AtomicU64,
 }
 
+/// IPv6 clients get whole /64 networks to themselves, so rotating addresses inside one does not dodge limits.
+fn key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6((u128::from(v6) & (!0u128 << 64)).into()),
+        },
+    }
+}
+
 /// Per-IP bookkeeping: connection counts, failure windows, lockouts.
-#[derive(Default)]
 pub struct IpTable {
-    map: Mutex<HashMap<IpAddr, IpState>>,
+    window: Duration,
+    inner: Mutex<(HashMap<IpAddr, IpState>, Instant)>,
 }
 
 impl IpTable {
+    pub fn new(window: Duration) -> IpTable {
+        IpTable { window, inner: Mutex::new((HashMap::new(), Instant::now())) }
+    }
+
+    /// Drops entries that hold nothing live; runs at most once per window (or when the table is large).
+    fn sweep(&self, g: &mut (HashMap<IpAddr, IpState>, Instant)) {
+        let now = Instant::now();
+        if g.0.len() <= 256 && now.duration_since(g.1) < self.window {
+            return;
+        }
+        g.1 = now;
+        let window = self.window;
+        g.0.retain(|_, s| {
+            s.conns > 0
+                || s.locked_until.is_some_and(|t| now < t)
+                || s.fails.back().is_some_and(|t| now.duration_since(*t) <= window)
+        });
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().0.len()
+    }
+
+    #[cfg(test)]
+    pub fn conns(&self, ip: IpAddr) -> usize {
+        self.inner.lock().unwrap().0.get(&key(ip)).map_or(0, |s| s.conns)
+    }
+
     pub fn try_add_conn(&self, ip: IpAddr, max: usize) -> bool {
-        let mut m = self.map.lock().unwrap();
-        let s = m.entry(ip).or_default();
+        let mut g = self.inner.lock().unwrap();
+        self.sweep(&mut g);
+        let s = g.0.entry(key(ip)).or_default();
         if s.conns >= max {
             return false;
         }
@@ -63,18 +104,19 @@ impl IpTable {
     }
 
     pub fn drop_conn(&self, ip: IpAddr) {
-        let mut m = self.map.lock().unwrap();
-        if let Some(s) = m.get_mut(&ip) {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(s) = g.0.get_mut(&key(ip)) {
             s.conns = s.conns.saturating_sub(1);
             if s.conns == 0 && s.fails.is_empty() && s.locked_until.is_none() {
-                m.remove(&ip);
+                g.0.remove(&key(ip));
             }
         }
+        self.sweep(&mut g);
     }
 
     pub fn is_locked(&self, ip: IpAddr) -> bool {
-        let mut m = self.map.lock().unwrap();
-        let Some(s) = m.get_mut(&ip) else { return false };
+        let mut g = self.inner.lock().unwrap();
+        let Some(s) = g.0.get_mut(&key(ip)) else { return false };
         match s.locked_until {
             Some(t) if Instant::now() < t => true,
             Some(_) => {
@@ -89,8 +131,8 @@ impl IpTable {
     /// Records a failed attempt; true when this one starts a lockout.
     pub fn record_fail(&self, ip: IpAddr, lim: &Limits) -> bool {
         let now = Instant::now();
-        let mut m = self.map.lock().unwrap();
-        let s = m.entry(ip).or_default();
+        let mut g = self.inner.lock().unwrap();
+        let s = g.0.entry(key(ip)).or_default();
         while s.fails.front().is_some_and(|t| now.duration_since(*t) > lim.fail_window) {
             s.fails.pop_front();
         }
