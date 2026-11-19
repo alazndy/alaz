@@ -1086,6 +1086,10 @@ pub fn guide_text(w: &World, me: &alaz_sim::world::Agent) -> String {
     let inv = &me.inventory;
     let n = |k: ItemKind| inv.get(k);
     let fire = w.buildings.iter().any(|b| b.kind == alaz_sim::BuildingKind::Campfire);
+    // a full pack stops all gathering without a sound: say so for as long as it is true
+    if inv.is_full(me.capacity()) {
+        return "Çantan dolu, hiçbir şey toplayamazsın: fazla odun ve lifi sürükleyip pencerenin dışına bırak.".into();
+    }
     if !w.milestone_done(Milestone::FirstFire) || w.day() == 0 {
         if me.thirst < 2500 {
             return "Susadın: suya yaklaş, Su iç de.".into();
@@ -1142,7 +1146,7 @@ pub fn guide_text(w: &World, me: &alaz_sim::world::Agent) -> String {
     match next {
         Some(Milestone::Harvest) => {
             return if !w.knows(Discovery::Farming) {
-                "Uzun otlara sağ tıkla: başaklarından arada bir tohum dökülür.".into()
+                "Uzun otlara sağ tıkla: dört tutamdan birinde tohum çıkar. Kuru yerdeki otlara bak; sulak yerde keten çıkar.".into()
             } else if n(ItemKind::Hoe) == 0 {
                 "Keskin taş, iki dal ve bir lifi ellerinde dene: çapa olur.".into()
             } else if field.is_none() {
@@ -3435,8 +3439,12 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
         panel(ui, 6.0, |ui| {
             ui.set_min_width(190.0);
             let names = ["Üst galeri", "Orta galeri", "Derin galeri", "En dip"];
-            ui.label(RichText::new(format!("Mağara  ·  {}. kat  ·  {} m", c.level, c.level as u32 * 4)).strong());
-            ui.label(RichText::new(names[(c.level as usize - 1).min(3)]).small());
+            if let Some(z) = c.elevation_m() {
+                ui.label(RichText::new(format!("Mağara  ·  Rakım {z} m")).strong());
+            } else {
+                ui.label(RichText::new(format!("Mağara  ·  {}. kat  ·  {} m", c.level, c.level as u32 * 4)).strong());
+                ui.label(RichText::new(names[(c.level as usize - 1).min(3)]).small());
+            }
             let frac = (c.light as f32 / c.full.max(1) as f32).clamp(0.0, 1.0);
             let (lb, _) = ui.allocate_exact_size(egui::vec2(190.0, 7.0), egui::Sense::hover());
             ui.painter().rect_filled(lb, 0.0, Color32::from_gray(35));
