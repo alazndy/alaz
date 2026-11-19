@@ -1666,6 +1666,7 @@ fn set_era_font(ctx: &egui::Context, _era: u8) {
         list.insert(0, "alaz-pixel".into());
         list.insert(0, "alaz-era".into());
     }
+    crate::style::add_fonts(&mut fonts);
     ctx.set_fonts(fonts);
     if first == u8::MAX {
         // and the interface size chosen last time
@@ -1693,7 +1694,7 @@ pub fn apply_style(ctx: &egui::Context) {
 }
 
 pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState, acts: &mut Vec<UiAction>) {
-    ERA.store(w.perception_level(), std::sync::atomic::Ordering::Relaxed);
+    ERA.store(crate::style::era_level(w.perception_level()), std::sync::atomic::Ordering::Relaxed);
     apply_style(ctx);
     let Some(me) = w.agents.get(ui_ctx.me.0 as usize) else { return };
 

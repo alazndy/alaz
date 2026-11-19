@@ -25,7 +25,9 @@ mod fx;
 mod gfxcfg;
 mod saveio;
 mod story;
+mod style;
 mod ui_art;
+mod uishot;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -2821,6 +2823,12 @@ fn main() {
     if let Some(i) = args.iter().position(|a| a == "--export-assets") {
         let dir = args.get(i + 1).cloned().unwrap_or_else(|| "alaz-assets".into());
         export::run(std::path::Path::new(&dir));
+        return;
+    }
+    // `--ui-shot <folder>`: draw the inventory window per era and tab into PNGs, then leave (no window)
+    if let Some(i) = args.iter().position(|a| a == "--ui-shot") {
+        let dir = args.get(i + 1).cloned().unwrap_or_else(|| "alaz-ui-shots".into());
+        uishot::run(std::path::Path::new(&dir));
         return;
     }
     let el = EventLoop::new().expect("event loop");

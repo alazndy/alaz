@@ -16,7 +16,8 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
         inv.load() as f32 / me.capacity().max(1) as f32,
         Color32::from_rgb(150, 120, 70),
         200.0,
-    );
+    )
+    .on_hover_text("Bırakmak için eşyaya sağ tıkla ya da pencerenin dışına sürükle. Yerdekini toplamak için üstüne sağ tıkla.");
     // tools wear with use; a blunt one still works, three times slower, until it is mended
     let worn: Vec<_> = w.rules().tools.iter().filter(|t| t.durability > 0 && inv.get(t.item) > 0).collect();
     if !worn.is_empty() {
@@ -39,8 +40,6 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
             });
         }
     }
-    ui.add_space(4.0);
-    ui.label(RichText::new("Bırakmak için eşyaya sağ tıkla ya da pencerenin dışına sürükle. Yerdekini toplamak için üstüne sağ tıkla.").small().weak());
 }
 
 /// With only the bag open a click just points at the item (its tooltip says what it is); nothing is sent, so a
