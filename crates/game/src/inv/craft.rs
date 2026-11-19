@@ -235,7 +235,6 @@ mod tests {
     use crate::hud::{Tab, UiAction};
     use crate::keys::Keybinds;
     use alaz_sim::World;
-    use alaz_render::egui;
     use egui_kittest::kittest::Queryable;
 
     fn with_cx<R>(w: &World, hands: &mut [u8; 4], f: impl FnOnce(&mut Cx) -> R) -> R {
@@ -265,9 +264,9 @@ mod tests {
     #[test]
     fn clicking_a_bag_slot_puts_it_in_a_hand() {
         let w = world_with(&[(ItemKind::Stone, 2)]);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let mut h = harness(w, Some(Tab::Craft), None);
-        for n in h.query_all_by_role(egui::accesskit::Role::Button) { eprintln!("BTN {:?}", n); }
-        h.get_by_label("Taş").click();
+        h.get_by_label(&stone).click();
         h.run();
         assert_eq!(h.state().knap.hands[0], ItemKind::Stone as u8);
     }

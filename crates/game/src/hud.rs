@@ -3274,6 +3274,7 @@ mod ui_tests {
         w.forget_everything();
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
@@ -3282,9 +3283,9 @@ mod ui_tests {
         pump(&mut h);
         assert_eq!(h.state().tab, Some(Tab::Craft), "the Yap button opens the craft tab");
         // pick the stone twice, then Dene
-        h.get_by_label("Taş").click();
+        h.get_by_label(&stone).click();
         h.run();
-        h.get_by_label("Taş").click();
+        h.get_by_label(&stone).click();
         h.run();
         assert!(h.state().knap.hands.iter().filter(|&&i| i == ItemKind::Stone as u8).count() == 2, "two stones in hands");
         h.get_by_label("Dene").click();
@@ -3306,10 +3307,11 @@ mod ui_tests {
         w.spawn_agent(sx, sy);
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: Some(Tab::Craft), binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
-        h.get_by_label("Taş").click();
+        h.get_by_label(&stone).click();
         h.run();
         h.get_by_label_contains("El 1: ").click();
         h.run();
