@@ -696,7 +696,8 @@ impl Menu {
                     }
                     ui.add_space(4.0);
                     painted_field(ui, "KOD", "K7Q4-XM2P", &mut self.code_text);
-                    self.code_text.truncate(24);
+                    // char-wise: byte truncation panics inside a multibyte character (ç, ş, ...)
+                self.code_text = self.code_text.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '-').take(24).collect();
                     ui.add_space(4.0);
                     if button(ui, "Kodla katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.code_text.trim().is_empty() {
                         act = Some(MenuAction::JoinCode(self.code_text.clone()));
@@ -1092,6 +1093,23 @@ mod tests {
         h.get_by_label("Kodla katıl").click();
         h.run();
         assert!(matches!(&h.state().got, Some(MenuAction::JoinCode(c)) if c == "k7q4 xm2p"));
+    }
+
+    #[test]
+    fn code_field_survives_multibyte_text() {
+        for typed in ["abcdefghijklmnopqrstuvwç".to_string() + "şğöü", "çşğöüçşğöüçşğöüçşğöüçşğöüçşğöü".to_string(), "abçcd-ef gh".to_string()] {
+            let mut h = open_mp(Menu::new(false));
+            let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+            fields[fields.len() - 2].click();
+            h.run();
+            let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+            fields[fields.len() - 2].type_text(&typed);
+            h.run();
+            h.run();
+            let t = &h.state().menu.code_text;
+            assert!(t.chars().count() <= 24);
+            assert!(t.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-'), "got {t:?}");
+        }
     }
 
     #[test]
