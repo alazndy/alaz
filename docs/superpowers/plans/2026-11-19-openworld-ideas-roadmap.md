@@ -44,8 +44,7 @@ Sayfalar arasında ileri-geri gezilir (eşya → tarif → başka eşya), taray�
 | 1.4 | Algıya göre gösterim, ekran görüntüleri (`--ui-shot` sayfası), elle kontrol | Opus |
 | 1.5 | README, test taraması | Haiku |
 
-**Açık soru (senin):** Kısayol R mi olsun, yoksa başka bir tuş mu? (R şu an "Yollar" sekmesi.) Önerim: **orta tık +
-Shift+tık değil, U tuşu** ("Bu ne?"). Karar gelene kadar orta tık kullanılır.
+**Karar (Göktuğ, 2026-11-19):** Kısayol **U tuşu** ("Bu ne?"). R, "Yollar" sekmesinde kalır.
 
 ---
 
@@ -74,8 +73,8 @@ sayfası: neyi açtığı (tarifler, binalar), nasıl bulunur ipucu (algıya gö
 | 2.4 | Hedef şeridi (H) "sıradaki"yi buradan alsın | Sonnet |
 | 2.5 | Ekran görüntüleri, README, test taraması | Haiku |
 
-**Açık soru (senin):** Uzaktaki (önkoşulu bilinmeyen) keşifler hiç görünmesin mi, yoksa soluk "?" olarak yeri belli mi
-olsun? Openworld hepsini gösteriyor. Önerim: **soluk "?"** (oyuncu yolun uzunluğunu görsün ama içeriğini değil).
+**Karar (Göktuğ, 2026-11-19):** Uzaktaki (önkoşulu bilinmeyen) keşifler **soluk "?"** olarak görünür. Oyuncu yolun
+uzunluğunu görür, içeriğini görmez.
 
 ---
 
@@ -112,10 +111,12 @@ bilmek gerekmez.
 | 3.5 | Güvenlik incelemesi (kod tahmini, DoS, kaynak tüketimi) | Opus |
 | 3.6 | README, sürüm notu | Haiku |
 
-**Açık sorular (senin):**
-1. Sunucu nerede: A, B ya da C? A ise hangi sağlayıcı (elinde Oracle Cloud hesabı var mı)?
-2. Alan adı var mı (TLS sertifikası için)? Yoksa aracı kendi sertifikasını oyuna gömer.
-3. Openworld gibi aylık ücretli mi olacak, yoksa ücretsiz mi? (Ücretsizse yukarıdaki sınırlar yeterli.)
+**Kararlar (Göktuğ, 2026-11-19):**
+- Alan adı **var**; TLS sertifikası onun üzerinden alınır. (Hangi alan adı: proje başlarken sorulacak.)
+- Kodla katılma **ücretsiz**; yukarıdaki sınırlar yeterli.
+
+**Açık soru (senin):** Sunucu nerede: A, B ya da C? **Henüz karar yok.** Proje 3 bu karara kadar bekler; 1 ve 2
+etkilenmez.
 
 ---
 
