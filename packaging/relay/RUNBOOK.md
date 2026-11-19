@@ -86,6 +86,8 @@ sudo ufw enable
    Oracle imajında ufw yerine `iptables` kuralı gerekebilir. Önce mevcut kuralları oku (`sudo iptables -S`), sonra karar ver.
 6. DNS'in yayıldığını bilgisayarında kontrol et: `dig +short relay.alazlab.com` VM'in IP'sini vermeli.
 
+**Not:** `ALAZ_RELAY` bir IP adresine (ör. `1.2.3.4:443`) işaret ederse TLS doğrulaması çalışmaz; sertifika IP için (IP SAN) düzenlenmemiştir. Her zaman ana makine adı kullan (`relay.alazlab.com:443`).
+
 ## Adım 2: Binary'yi derle ve kopyala
 
 Derleme ayrı bir makinede veya VM'de yapılabilir. Dosyalar **sadece senin kullanıcına ait, 0700 modlu** bir klasöre konur (ortak `/tmp` klasörüne düz yazılmaz; başka bir yerel kullanıcı dosyaları sudo çalışmadan önce değiştirebilir). Derlediğin makinede SHA-256 özetini al, VM'de karşılaştır.

@@ -16,6 +16,11 @@ self="$(readlink -f "${BASH_SOURCE[0]}")"
 deploy() {
     # certbot sets RENEWED_LINEAGE for hooks; fall back to the default path for manual runs.
     local live="${RENEWED_LINEAGE:-/etc/letsencrypt/live/$domain}"
+    # certbot runs deploy hooks for every certificate on the machine; only ours may be installed
+    if [[ "$(basename "$live")" != "$domain" ]]; then
+        echo "skipping lineage $(basename "$live"): not $domain" >&2
+        exit 0
+    fi
     [[ -f "$live/fullchain.pem" && -f "$live/privkey.pem" ]] || { echo "no certificate in $live" >&2; exit 1; }
 
     # /etc/letsencrypt is root-only, so the service gets its own copies.
@@ -34,7 +39,8 @@ deploy() {
 # The hook lives in certbot's own hooks directory, so the copy + SIGHUP happens
 # whichever scheduler renews (the distro certbot.timer, cron, or a manual run).
 install_hook() {
-    install -m 0755 "$self" /usr/local/sbin/alaz-relay-renew
+    # running the installed copy: install would refuse to copy a file onto itself
+    cmp -s "$self" /usr/local/sbin/alaz-relay-renew || install -m 0755 "$self" /usr/local/sbin/alaz-relay-renew
     install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
     cat >/etc/letsencrypt/renewal-hooks/deploy/alaz-relay <<'HOOK'
 #!/bin/sh
