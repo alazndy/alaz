@@ -31,6 +31,8 @@ pub(crate) enum Chip {
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum Line {
     Title(String),
+    /// A small heading word over a group of lines; `inv::info` does not group its lines yet.
+    #[allow(dead_code)]
     Label(&'static str),
     Pictos(Vec<Picto>),
     Chips(Vec<Chip>),

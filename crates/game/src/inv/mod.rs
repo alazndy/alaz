@@ -158,6 +158,10 @@ pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look:
         SlotLook::Normal if resp.hovered() => crate::style::highlight(p, rect, pal.light),
         _ => {}
     }
+    if let (Some(k), true) = (item, resp.hovered()) {
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx().data_mut(|d| d.insert_temp(hover_id(), (pass, k)));
+    }
     let name = item.map_or_else(|| "boş".to_string(), |k| crate::lang::item_word(w, crate::lang::looks_like(w, k)));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, look != SlotLook::Disabled, &name));
     let Some(k) = item else { return resp };
@@ -169,6 +173,17 @@ pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look:
         });
     }
     resp.on_hover_text(hud::item_tip(w, crate::lang::looks_like(w, k)))
+}
+
+fn hover_id() -> egui::Id {
+    egui::Id::NULL.with("inv_hover_item")
+}
+
+/// The item in the slot under the pointer, this pass or the one before: the bag is drawn after the tab, so a tab's
+/// info panel learns of a bag hover one pass late.
+pub(crate) fn hovered_item(ctx: &Context) -> Option<ItemKind> {
+    let now = ctx.cumulative_pass_nr();
+    ctx.data(|d| d.get_temp::<(u64, ItemKind)>(hover_id())).filter(|&(at, _)| at + 1 >= now).map(|(_, k)| k)
 }
 
 /// Makes `resp` a drag source carrying `c`.
