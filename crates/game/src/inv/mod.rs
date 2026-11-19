@@ -10,6 +10,9 @@ use crate::hud::{self, Selection, Tab, UiAction};
 pub(crate) mod bag;
 pub(crate) mod build;
 pub(crate) mod craft;
+// Consumed by the tabs in later tasks.
+#[allow(dead_code)]
+pub(crate) mod info;
 pub(crate) mod machine;
 
 /// What is being dragged, and where it was picked up.

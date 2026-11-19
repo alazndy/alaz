@@ -25,6 +25,7 @@ mod fx;
 mod gfxcfg;
 mod saveio;
 mod story;
+mod style;
 mod ui_art;
 
 use std::collections::HashSet;

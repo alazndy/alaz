@@ -677,7 +677,7 @@ pub(crate) fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static 
 }
 
 /// Why a machine stands idle when what it needs is missing.
-fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
+pub(crate) fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç yok: 8 m içinde su çarkı, yel değirmeni, çalışan buhar ya da elektrik motoru (ya da 6 m içinde manejde hayvan) gerek.",
