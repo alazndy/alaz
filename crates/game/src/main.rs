@@ -1,6 +1,7 @@
 // On Windows the game is a window, not a console program (no empty terminal behind it).
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use alaz_render::glam::{Vec2, Vec3};
 use alaz_render::{Camera, Ghost, Renderer};
 use alaz_sim::time::TICKS_PER_SECOND;
 use alaz_sim::world::{dist2, BUILD_RADIUS_MM};
@@ -1086,9 +1087,6 @@ impl App {
                     self.issue(CommandKind::MoveTo { x, y });
                 }
             }
-            A::View => {
-                self.pitch_goal = if self.pitch_goal >= 89.0 { Camera::PITCH_ISO } else { Camera::PITCH_TOP };
-            }
             A::Bag => self.toggle_tab(hud::Tab::Bag),
             A::Craft => self.toggle_tab(hud::Tab::Craft),
             A::Build => self.toggle_tab(hud::Tab::Build),
@@ -1755,18 +1753,18 @@ impl App {
             facing: self.facing,
         });
         // what the pointer is on gets a bright rim, so it is plain what a right click would take
-        let hover = if self.menu.is_none() && self.build_mode.is_none() && self.world.craft_view(self.me).is_none() {
-            self.pick_node().and_then(|id| self.world.nodes.get(id.0 as usize)).map(|n| (n.tx, n.ty))
-        } else {
-            None
-        };
+        let pointer_active = self.menu.is_none() && self.build_mode.is_none() && self.world.craft_view(self.me).is_none()
+            && self.gfx.as_ref().is_some_and(|g| !g.renderer.pointer_over_ui());
+        let surface = if pointer_active && !self.in_cave() { self.pointer_surface() } else { None };
+        let picked = surface.and_then(|(ray, ground)| self.pick_node(ray, ground));
+        let hover = picked.and_then(|id| self.world.nodes.get(id.0 as usize)).map(|n| (n.tx, n.ty));
         // dev aid for screenshots: rim the nearest tree when the pointer is not on anything
         let hover = hover.or_else(|| {
             std::env::var_os("ALAZ_DEMO_HOVER")?;
             let me = self.me_agent()?;
             self.world.nodes.iter().filter(|n| n.kind == alaz_sim::NodeKind::Tree).min_by_key(|n| dist2(me.x, me.y, n.center_mm().0, n.center_mm().1)).map(|n| (n.tx, n.ty))
         });
-        let pointer_text = if self.menu.is_none() && self.world.craft_view(self.me).is_none() { self.pointer_text() } else { None };
+        let pointer_text = if pointer_active { self.pointer_text(surface, picked) } else { None };
         let Some(g) = self.gfx.as_mut() else { return };
         g.renderer.hover_node = hover;
         let (world, hints) = (&self.world, &self.hints);
@@ -1971,14 +1969,28 @@ impl App {
         }
     }
 
-    /// Ground point (meters) under the mouse cursor.
-    fn cursor_ground(&self) -> Option<alaz_render::glam::Vec3> {
+    fn pointer_ray(&self) -> Option<PointerRay> {
         let g = self.gfx.as_ref()?;
+        let mut cam = self.cam;
         let (w, h) = g.renderer.size();
+        cam.win = (w, h);
         let ndc = (2.0 * self.cursor.0 / w as f32 - 1.0, 1.0 - 2.0 * self.cursor.1 / h as f32);
+        PointerRay::from_camera(&cam, ndc)
+    }
+
+    fn pointer_surface(&self) -> Option<(PointerRay, Vec3)> {
+        let ray = self.pointer_ray()?;
         let seed = self.world.seed;
-        let flat = self.in_cave();
-        self.cam.ground_at_height(ndc.0, ndc.1, |x, z| if flat { 0.0 } else { alaz_render::ground_height(seed, x, z) })
+        let ground = ray.terrain_hit(|x, z| alaz_sim::elevation_mm(seed, x, z) as f32 / 1000.0);
+        Some((ray, ground))
+    }
+
+    /// Ground point (meters) under the mouse cursor.
+    fn cursor_ground(&self) -> Option<Vec3> {
+        if self.in_cave() {
+            return Some(self.pointer_ray()?.at(0.0));
+        }
+        self.pointer_surface().map(|(_, ground)| ground)
     }
 
     /// Dev aid (ALAZ_DEMO_PHYS): `tree` fells a tree beside the player every few seconds, `rock` drops stones down the
@@ -2092,63 +2104,45 @@ impl App {
         })
     }
 
-    /// The pointer's ray, walked down from 2.5 m to the ground: the ground point under it at each height (mm).
-    fn pointer_samples(&self) -> Vec<(i64, i64)> {
-        let Some(g) = self.gfx.as_ref() else { return Vec::new() };
-        if g.renderer.pointer_over_ui() {
-            return Vec::new();
-        }
-        let (w, h) = g.renderer.size();
-        let ndc = (2.0 * self.cursor.0 / w as f32 - 1.0, 1.0 - 2.0 * self.cursor.1 / h as f32);
-        let seed = self.world.seed;
-        (0..=10)
-            .rev()
-            .filter_map(|k| {
-                let lift = k as f32 * 0.25;
-                self.cam.ground_at_height(ndc.0, ndc.1, |x, z| alaz_render::ground_height(seed, x, z) + lift).map(|p| ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64))
-            })
-            .collect()
-    }
-
     /// The building whose model the pointer is on, if any (its roof as well as its foot).
-    fn pick_building(&self) -> Option<usize> {
-        if self.in_cave() {
-            return None;
-        }
-        self.pointer_samples().into_iter().find_map(|(x, y)| self.world.building_at(x, y, 300))
+    fn pick_building(&self, ray: PointerRay, ground: Vec3) -> Option<usize> {
+        self.world.buildings.iter().enumerate().filter_map(|(i, b)| {
+            let at = Vec2::new(b.x as f32, b.y as f32) / 1000.0;
+            let radius = (self.world.rules().building(b.kind).radius_mm + 300) as f32 / 1000.0;
+            let base = ray.model_base(self.world.seed, at, radius, ground.y)?;
+            ray.column_hit(at, radius, ground.y.max(base), base + 2.5).map(|y| (i, y))
+        }).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i)
     }
 
     /// The worker (dog, ox, horse, bot) the pointer is on, if any.
-    fn pick_worker(&self) -> Option<usize> {
-        if self.in_cave() {
-            return None;
-        }
-        self.pointer_samples().into_iter().find_map(|(x, y)| self.world.worker_at(x, y, 700))
+    fn pick_worker(&self, ray: PointerRay, ground: Vec3) -> Option<usize> {
+        self.world.agents.iter().enumerate().filter(|(_, a)| a.kind.is_worker() && a.cave.is_none()).filter_map(|(i, a)| {
+            let at = Vec2::new(a.x as f32, a.y as f32) / 1000.0;
+            let base = ray.model_base(self.world.seed, at, 0.7, ground.y)?;
+            ray.column_hit(at, 0.7, ground.y.max(base), base + 2.5).map(|y| (i, y))
+        }).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i)
     }
 
     /// What the pointer is on, in words, with what a right click would do: a resource, something lying on the
     /// ground, a building, a person or an animal.
-    fn pointer_text(&self) -> Option<String> {
+    fn pointer_text(&self, surface: Option<(PointerRay, Vec3)>, picked: Option<alaz_sim::NodeId>) -> Option<String> {
         use alaz_sim::physics::{BodyKind, Q};
-        let g = self.gfx.as_ref()?;
         // dev aid for close-up screenshots of the character: no tip beside the pointer
-        if g.renderer.pointer_over_ui() || self.build_mode.is_some() || std::env::var_os("ALAZ_DEMO_NOTIP").is_some() {
+        if std::env::var_os("ALAZ_DEMO_NOTIP").is_some() {
             return None;
         }
         let w = &self.world;
         if self.in_cave() {
             return self.cave_pointer_text();
         }
-        if let Some(p) = self.cursor_ground() {
-            if w.surface_at(p.x.floor() as i32, p.z.floor() as i32) == alaz_sim::Surface::Fire {
-                return Some("Yanıyor! Uzak dur".to_string());
-            }
+        let (ray, p) = surface?;
+        if w.surface_at(p.x.floor() as i32, p.z.floor() as i32) == alaz_sim::Surface::Fire {
+            return Some("Yanıyor! Uzak dur".to_string());
         }
-        if let Some(id) = self.pick_node() {
+        if let Some(id) = picked {
             let n = w.nodes.get(id.0 as usize)?;
             return Some(format!("{}  ·  sağ tık: topla", hud::node_label(w, n)));
         }
-        let p = self.cursor_ground()?;
         let (x, y) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
         match self.body_at(x, y) {
             Some(CommandKind::Pick { body }) => {
@@ -2162,10 +2156,10 @@ impl App {
             _ => {}
         }
         let rules = w.rules();
-        if let Some(b) = self.pick_building().and_then(|i| w.buildings.get(i)) {
+        if let Some(b) = self.pick_building(ray, p).and_then(|i| w.buildings.get(i)) {
             return Some(format!("{}  ·  sol tık: aç", rules.building(b.kind).name));
         }
-        if let Some(a) = self.pick_worker().and_then(|i| w.agents.get(i)) {
+        if let Some(a) = self.pick_worker(ray, p).and_then(|i| w.agents.get(i)) {
             return Some(format!("{}  ·  sol tık: aç", hud::kind_name(a.kind)));
         }
         if let Some(a) = w.agents.iter().filter(|a| a.id != self.me && a.health > 0).find(|a| dist2(a.x, a.y, x, y) <= 700 * 700) {
@@ -2255,49 +2249,39 @@ impl App {
         self.me_agent().is_some_and(|a| dist2(a.x, a.y, x, y) <= r * r)
     }
 
-    /// The resource node the pointer is on. The pointer's ray is tried from high to low, so a tree is found by its
-    /// crown as well as its trunk, and whatever stands nearest the eye wins.
-    fn pick_node(&self) -> Option<alaz_sim::NodeId> {
-        if self.in_cave() {
-            return None;
-        }
-        let g = self.gfx.as_ref()?;
-        if g.renderer.pointer_over_ui() {
-            return None;
-        }
-        let (w, h) = g.renderer.size();
-        let ndc = (2.0 * self.cursor.0 / w as f32 - 1.0, 1.0 - 2.0 * self.cursor.1 / h as f32);
-        let seed = self.world.seed;
-        // walk the ray from near the eye to the ground; the first model it passes through wins. Each node is a
-        // column as tall as its model really is (a sapling does not hide the reeds behind it), and a tree is only
-        // its trunk below the crown, so the fibre and herbs growing round its foot can be pointed at.
-        for k in (0..=32).rev() {
-            let lift = k as f32 * 0.25;
-            let Some(p) = self.cam.ground_at_height(ndc.0, ndc.1, |x, z| alaz_render::ground_height(seed, x, z) + lift) else { continue };
-            let (tx, ty) = (p.x.floor() as i32, p.z.floor() as i32);
-            let mut best: Option<(f32, alaz_sim::NodeId)> = None;
-            for dy in -2..=2 {
-                for dx in -2..=2 {
-                    let Some(id) = self.world.node_at(tx + dx, ty + dy) else { continue };
-                    let n = &self.world.nodes[id.0 as usize];
-                    let (at, r, h) = alaz_render::node_bounds(&self.world, n);
-                    if lift > h {
-                        continue;
-                    }
-                    let r = if n.kind == alaz_sim::NodeKind::Tree && lift < h * 0.45 { 0.32 } else { r };
-                    let d = ((p.x - at[0]).powi(2) + (p.z - at[1]).powi(2)).sqrt();
-                    // a small thing is also taken anywhere on its own tile
-                    let on_tile = dx == 0 && dy == 0 && n.kind != alaz_sim::NodeKind::Tree;
-                    if (d <= r || on_tile) && best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, id));
-                    }
-                }
+    /// Find the closest resource model before the ray reaches the ground.
+    fn pick_node(&self, ray: PointerRay, ground: Vec3) -> Option<alaz_sim::NodeId> {
+        let mut top = PointerRay::MAX_MODEL_Y;
+        while top > ground.y {
+            // Query the node index in short sections along the ray. Even the widest tree has a radius under 4 m.
+            let bottom = (top - 8.0).max(ground.y);
+            let a = ray.horizontal(top);
+            let b = ray.horizontal(bottom);
+            let lo = (a.min(b) - Vec2::splat(4.0)).floor();
+            let hi = (a.max(b) + Vec2::splat(4.0)).ceil();
+            let hit = self.world.nodes_in(lo.x as i32, lo.y as i32, hi.x as i32, hi.y as i32)
+                .filter_map(|n| {
+                    let (anchor, radius, height) = alaz_render::node_bounds(&self.world, n);
+                    let at = Vec2::from_array(anchor);
+                    let base = ray.model_base(self.world.seed, at, radius, bottom)?;
+                    let y = if n.kind == alaz_sim::NodeKind::Tree {
+                        let crown = base + height * 0.45;
+                        ray.column_hit(at, radius, bottom.max(crown), top.min(base + height))
+                            .or_else(|| ray.column_hit(at, 0.32, bottom.max(base), top.min(crown)))
+                    } else {
+                        ray.column_hit(at, radius, bottom.max(base), top.min(base + height))
+                    }?;
+                    Some((n, y))
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((n, _)) = hit {
+                return self.world.node_at(n.tx, n.ty);
             }
-            if let Some((_, id)) = best {
-                return Some(id);
-            }
+            top = bottom;
         }
-        None
+        // Small resources are also selectable anywhere on the tile where they grow.
+        self.world.node_at(ground.x.floor() as i32, ground.z.floor() as i32)
+            .filter(|id| self.world.nodes[id.0 as usize].kind != alaz_sim::NodeKind::Tree)
     }
 
     /// Where a building would go (mm), optionally snapped to tile centers.
@@ -2439,15 +2423,15 @@ impl App {
             }
             return;
         }
-        let Some(p) = self.cursor_ground() else { return };
+        let Some((ray, p)) = self.pointer_surface() else { return };
         let (px, py) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
         if primary {
             // a building or a worker under the pointer (anywhere on its model): open it; elsewhere, walk there
-            if let Some(i) = self.pick_building() {
+            if let Some(i) = self.pick_building(ray, p) {
                 self.selected = Some(Selection::Building(i));
                 return;
             }
-            if let Some(i) = self.pick_worker() {
+            if let Some(i) = self.pick_worker(ray, p) {
                 self.selected = Some(Selection::Agent(i));
                 return;
             }
@@ -2459,11 +2443,11 @@ impl App {
             self.issue(kind);
             return;
         }
-        if let Some(i) = self.pick_building() {
+        if let Some(i) = self.pick_building(ray, p) {
             self.selected = Some(Selection::Building(i));
             return;
         }
-        if let Some(i) = self.pick_worker() {
+        if let Some(i) = self.pick_worker(ray, p) {
             // your own dog, close by: a right click pets it
             let me = self.me_agent().map(|m| (m.x, m.y));
             if let (Some(d), Some((mx, my))) = (self.world.agents.get(i), me) {
@@ -2493,7 +2477,7 @@ impl App {
             }
             return;
         }
-        let picked = self.pick_node().or_else(|| self.world.node_at(p.x.floor() as i32, p.z.floor() as i32));
+        let picked = self.pick_node(ray, p).or_else(|| self.world.node_at(p.x.floor() as i32, p.z.floor() as i32));
         if let Some(node) = picked {
             if self.world.nodes[node.0 as usize].kind == alaz_sim::NodeKind::CaveMouth {
                 // a cave is entered, not harvested from outside: walk up to it, then step in with a torch
@@ -2646,6 +2630,159 @@ fn view_item() -> Option<alaz_sim::ItemKind> {
         let v = std::env::var("ALAZ_DEMO_VIEW").ok()?;
         alaz_sim::ItemKind::ALL.iter().copied().find(|k| alaz_render::assets::snake(&format!("{k:?}")) == v)
     })
+}
+
+/// The orthographic pointer line, parameterized by world height in meters.
+#[derive(Clone, Copy)]
+struct PointerRay {
+    zero: Vec2,
+    rise: Vec2,
+}
+
+impl PointerRay {
+    // The generator adds at most 21.21 m of base height and 42.22 m of ledges.
+    const MAX_GROUND_Y: f32 = 64.0;
+    const MAX_MODEL_Y: f32 = Self::MAX_GROUND_Y + 16.0;
+
+    fn from_camera(cam: &Camera, ndc: (f32, f32)) -> Option<Self> {
+        let p = cam.ground_at(ndc.0, ndc.1, 1.0)?;
+        let (sin, cos) = cam.yaw_deg.to_radians().sin_cos();
+        let (up, across) = cam.pitch_deg.to_radians().sin_cos();
+        Some(Self { zero: Vec2::new(p.x, p.z), rise: Vec2::new(sin, cos) * (across / up) })
+    }
+
+    fn horizontal(self, y: f32) -> Vec2 {
+        self.zero + self.rise * y
+    }
+
+    fn at(self, y: f32) -> Vec3 {
+        let p = self.horizontal(y);
+        Vec3::new(p.x, y, p.y)
+    }
+
+    fn terrain_hit(self, height: impl Fn(i32, i32) -> f32) -> Vec3 {
+        let mut top = Self::MAX_GROUND_Y;
+        let mut tile = self.horizontal(top).floor().as_ivec2();
+        let next_edge = |axis: usize, tile: i32| {
+            let rise = self.rise[axis];
+            if rise == 0.0 {
+                return f32::NEG_INFINITY;
+            }
+            let edge = tile + i32::from(rise < 0.0);
+            (edge as f32 - self.zero[axis]) / rise
+        };
+        while top > 0.0 {
+            let x_edge = next_edge(0, tile.x);
+            let z_edge = next_edge(1, tile.y);
+            let bottom = x_edge.max(z_edge).clamp(0.0, top);
+            let xz = tile.as_vec2();
+            let a = height(tile.x, tile.y);
+            let b = height(tile.x + 1, tile.y);
+            let c = height(tile.x + 1, tile.y + 1);
+            let d = height(tile.x, tile.y + 1);
+            let clearance = |y| {
+                let p = self.horizontal(y) - xz;
+                // The terrain mesh splits each tile along the diagonal from (0, 0) to (1, 1).
+                let surface = if p.x >= p.y {
+                    a + (b - a) * p.x + (c - b) * p.y
+                } else {
+                    a + (c - d) * p.x + (d - a) * p.y
+                };
+                y - surface
+            };
+            let diagonal = (xz.x - xz.y - self.zero.x + self.zero.y) / (self.rise.x - self.rise.y);
+            let mut from = top;
+            let mut above = clearance(from);
+            for to in [diagonal, bottom].into_iter().filter(|&y| y >= bottom && y < top) {
+                let below = clearance(to);
+                if above <= 0.0 {
+                    return self.at(from);
+                }
+                if below <= 0.0 {
+                    return self.at(from + (to - from) * (above / (above - below)));
+                }
+                from = to;
+                above = below;
+            }
+            if x_edge >= z_edge {
+                tile.x += if self.rise.x > 0.0 { -1 } else { 1 };
+            }
+            if z_edge >= x_edge {
+                tile.y += if self.rise.y > 0.0 { -1 } else { 1 };
+            }
+            top = bottom;
+        }
+        self.at(0.0)
+    }
+
+    fn column_hit(self, center: Vec2, radius: f32, bottom: f32, top: f32) -> Option<f32> {
+        if bottom > top {
+            return None;
+        }
+        let offset = self.horizontal(top) - center;
+        let radius_sq = radius * radius;
+        if offset.length_squared() <= radius_sq {
+            return Some(top);
+        }
+        let speed_sq = self.rise.length_squared();
+        if speed_sq == 0.0 {
+            return None;
+        }
+        let nearest = offset.dot(self.rise) / speed_sq;
+        if nearest <= 0.0 {
+            return None;
+        }
+        let miss_sq = (offset - self.rise * nearest).length_squared();
+        if miss_sq > radius_sq {
+            return None;
+        }
+        let y = top - nearest + ((radius_sq - miss_sq) / speed_sq).sqrt();
+        (y >= bottom).then_some(y.min(top))
+    }
+
+    /// Static model vertices all use the terrain height at their anchor, plus a 2 cm lift.
+    fn model_base(self, seed: u64, at: Vec2, radius: f32, min_y: f32) -> Option<f32> {
+        self.column_hit(at, radius, min_y, Self::MAX_MODEL_Y)?;
+        Some(alaz_render::ground_height(seed, at.x, at.y) + 0.02)
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn projected_point_lies_on_pointer_ray() {
+        for pitch_deg in [28.0, 45.0, 90.0] {
+            let cam = Camera { target: Vec3::new(658.0, 32.0, 777.0), pitch_deg, yaw_deg: 213.0, ..Camera::new() };
+            let point = Vec3::new(660.0, 34.0, 778.0);
+            let [x, y] = cam.project(1.0, point);
+            let ray = PointerRay::from_camera(&cam, (x, y)).unwrap();
+            assert!(ray.at(point.y).distance(point) < 0.002);
+        }
+    }
+
+    #[test]
+    fn pointer_hits_front_of_ridge_before_the_ground_behind_it() {
+        let ray = PointerRay { zero: Vec2::new(0.0, 0.5), rise: Vec2::X };
+        let hit = ray.terrain_hit(|x, _| if x == 3 { 5.0 } else { 0.0 });
+        assert!(hit.distance(Vec3::new(10.0 / 3.0, 10.0 / 3.0, 0.5)) < 0.001);
+    }
+
+    #[test]
+    fn terrain_hit_uses_the_mesh_diagonal() {
+        let ray = PointerRay { zero: Vec2::new(0.25, 0.75), rise: Vec2::ZERO };
+        let hit = ray.terrain_hit(|x, z| if x == 1 && z == 1 { 8.0 } else { 0.0 });
+        assert_eq!(hit, Vec3::new(0.25, 2.0, 0.75));
+    }
+
+    #[test]
+    fn ray_picks_side_of_model_above_the_ground_hit() {
+        let ray = PointerRay { zero: Vec2::ZERO, rise: Vec2::X };
+        let target = Vec2::new(5.0, 0.0);
+        assert_eq!(ray.column_hit(target, 0.5, 3.0, 7.0), Some(5.5));
+        assert_eq!(ray.column_hit(target, 0.5, 6.0, 7.0), None);
+    }
 }
 
 fn main() {

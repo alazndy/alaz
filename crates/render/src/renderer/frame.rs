@@ -7,6 +7,85 @@ pub(crate) const WAVE_SLOTS: [usize; 6] = [22, 23, 26, 27, 63, 67];
 /// It must not share a slot with anything written on the surface, or models are shaded as if underground.
 pub(crate) const CAVE_SLOT: usize = 120;
 
+const TRACK_SPACING_M: f32 = 0.8;
+const TRACK_LIFETIME_TICKS: u64 = 12 * alaz_sim::time::TICKS_PER_SECOND;
+const MAX_TRACK_MARKS: usize = 768;
+
+pub(super) struct TrackMark {
+    at: glam::Vec2,
+    tick: u64,
+    wolf: bool,
+}
+
+#[derive(Default)]
+pub(super) struct TrackStepper {
+    previous: Option<(u64, glam::Vec2)>,
+    carried_m: f32,
+    left: bool,
+}
+
+impl TrackStepper {
+    fn advance(&mut self, to: glam::Vec2, frame: u64, mut stamp: impl FnMut(glam::Vec2)) {
+        let Some((last_frame, from)) = self.previous.replace((frame, to)) else { return };
+        let motion = to - from;
+        let distance = motion.length();
+        if frame.saturating_sub(last_frame) != 1 || distance >= 3.0 {
+            // Culling and position corrections can skip part of a path.
+            self.carried_m = 0.0;
+            return;
+        }
+        if distance == 0.0 {
+            return;
+        }
+        let along = motion / distance;
+        let across = glam::Vec2::new(-along.y, along.x);
+        let mut next = TRACK_SPACING_M - self.carried_m;
+        while next <= distance {
+            let offset = if self.left { 0.18 } else { -0.18 };
+            stamp(from + along * next + across * offset);
+            self.left = !self.left;
+            next += TRACK_SPACING_M;
+        }
+        self.carried_m = (distance - next + TRACK_SPACING_M).max(0.0);
+    }
+}
+
+#[cfg(test)]
+mod track_tests {
+    use super::*;
+    use glam::Vec2;
+
+    #[test]
+    fn paw_marks_stay_at_footfalls_when_animal_turns_or_stops() {
+        let mut steps = TrackStepper::default();
+        let mut marks = Vec::new();
+        for (frame, to) in [
+            (1, Vec2::ZERO),
+            (2, Vec2::new(0.5, 0.0)),
+            (3, Vec2::X),
+            (4, Vec2::ONE),
+            (5, Vec2::ONE),
+        ] {
+            steps.advance(to, frame, |at| marks.push(at));
+        }
+        assert_eq!(marks.len(), 2);
+        assert!(marks[0].distance(Vec2::new(0.8, -0.18)) < 0.001);
+        assert!(marks[1].distance(Vec2::new(0.82, 0.6)) < 0.001);
+    }
+
+    #[test]
+    fn paw_marks_do_not_connect_unobserved_positions() {
+        let mut steps = TrackStepper::default();
+        for (frame, to) in [
+            (1, Vec2::X),
+            (3, Vec2::new(2.0, 0.0)),
+            (4, Vec2::new(6.0, 0.0)),
+        ] {
+            steps.advance(to, frame, |_| panic!("no marks across a gap"));
+        }
+    }
+}
+
 impl Renderer {
     /// The surface layer of the tile window: mud, puddles, ice, ash and flames, kept in the kind channel as
     /// `kind + 16 * code` (code: the surface in the low three bits, for fire and ash their progress above them; see
@@ -571,8 +650,19 @@ impl Renderer {
             let alpha = self.sim_alpha.unwrap_or_else(|| ((now - self.tick_at).as_secs_f32() / self.tick_gap.max(1e-3)).clamp(0.0, 1.0));
             push_bodies(&mut dynamic, world, alpha, &inside);
             push_fish(&mut dynamic, world, view_m, (world.tick as f32 + alpha) / 60.0, alpha);
+            let tracks_visible = world.perception_level() >= 2;
             for w in world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)) {
                 let (wx, wz) = (w.x as f32 / 1000.0, w.y as f32 / 1000.0);
+                if tracks_visible {
+                    let steps = self.wild_track_steps.entry(w.id).or_default();
+                    let wolf = w.species == alaz_sim::WildSpecies::Wolf;
+                    steps.advance(glam::Vec2::new(wx, wz), self.frame_no, |at| {
+                        if self.wild_tracks.len() >= MAX_TRACK_MARKS {
+                            self.wild_tracks.pop_front();
+                        }
+                        self.wild_tracks.push_back(TrackMark { at, tick, wolf });
+                    });
+                }
                 // wild animals walk like everyone else: they face where they go and their legs follow the ground covered
                 let st = self.wild_anim.entry(w.id).or_insert(Walk::at(wx, wz, (w.id as f32 * 2.399) % std::f32::consts::TAU, 0));
                 let (wx, wz) = st.smooth(wx, wz, world.tick, alpha);
@@ -611,15 +701,23 @@ impl Renderer {
                     }
                 }
             }
-            // Once the tribe makes more sense of the world, it notices the tracks animals leave behind.
-            if world.perception_level() >= 2 {
-                for w in world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)) {
-                    push_tracks(&mut dynamic, w.id, w.x as f32 / 1000.0, w.y as f32 / 1000.0, w.heading_mm(), w.species == alaz_sim::WildSpecies::Wolf);
+            while self.wild_tracks.front().is_some_and(|m| tick.saturating_sub(m.tick) >= TRACK_LIFETIME_TICKS) {
+                self.wild_tracks.pop_front();
+            }
+            // A mark uses its own ground height and stays visible when its animal leaves the view.
+            if tracks_visible {
+                for mark in &self.wild_tracks {
+                    let (x, z) = (mark.at.x, mark.at.y);
+                    if inside(x, z) {
+                        dynamic.set_anchor(x, z);
+                        push_paw_mark(&mut dynamic, x, z, mark.wolf);
+                    }
                 }
             }
-            if self.wild_anim.len() > 512 {
+            if self.wild_anim.len() > 512 || self.wild_track_steps.len() > 512 {
                 let live: std::collections::HashSet<u32> = world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)).iter().map(|w| w.id).collect();
                 self.wild_anim.retain(|k, _| live.contains(k));
+                self.wild_track_steps.retain(|k, _| live.contains(k));
             }
             // a person a few dozen pixels tall (zoomed far out) is drawn in a simpler build; the player never is
             let lod_humans = human_lod(&cam);
