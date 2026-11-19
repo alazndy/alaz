@@ -8,6 +8,7 @@ use crate::pxui::{snap_rect, unit};
 
 pub(crate) mod icons;
 pub(crate) mod lines;
+pub(crate) mod machines;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Era {
@@ -522,6 +523,22 @@ pub(crate) fn family(kind: BuildingKind) -> Family {
         // the late stations that run on the grid
         B::Computer | B::AssemblyRobot | B::ArcFurnace | B::Electrolysis | B::Welder | B::CrystalPuller | B::Photolith | B::Radio | B::Telegraph | B::VacuumPump => Family::Electric,
         _ => Family::Bench,
+    }
+}
+
+pub(crate) fn family_name(f: Family) -> &'static str {
+    match f {
+        Family::Fire => "fire",
+        Family::Kiln => "kiln",
+        Family::Furnace => "furnace",
+        Family::Smithing => "smithing",
+        Family::Grinding => "grinding",
+        Family::Bench => "bench",
+        Family::Textile => "textile",
+        Family::MachineTool => "tool",
+        Family::Storage => "storage",
+        Family::Growing => "growing",
+        Family::Electric => "electric",
     }
 }
 

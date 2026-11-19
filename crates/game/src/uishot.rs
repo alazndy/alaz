@@ -185,8 +185,8 @@ fn sample(tex: &Textures, id: TextureId, u: f32, v: f32) -> [f32; 4] {
 }
 
 /// Fills the triangles into a premultiplied RGBA canvas of `SHOT_W` x `SHOT_H` pixels.
-fn rasterize(canvas: &mut [[f32; 4]], prims: &[egui::ClippedPrimitive], tex: &Textures, ppp: f32) {
-    let (dw, dh) = (SHOT_W as usize, SHOT_H as usize);
+fn rasterize(canvas: &mut [[f32; 4]], prims: &[egui::ClippedPrimitive], tex: &Textures, ppp: f32, size: (u32, u32)) {
+    let (dw, dh) = (size.0 as usize, size.1 as usize);
     for prim in prims {
         let Primitive::Mesh(mesh) = &prim.primitive else { continue };
         let clip = prim.clip_rect;
@@ -298,7 +298,7 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         let prims = sh.ctx.tessellate(out.shapes, ppp);
         // a muted ground behind the interface, as the world would be
         let mut canvas = vec![[58.0f32, 72.0, 60.0, 255.0]; (SHOT_W * SHOT_H) as usize];
-        rasterize(&mut canvas, &prims, &sh.tex, ppp);
+        rasterize(&mut canvas, &prims, &sh.tex, ppp, (SHOT_W, SHOT_H));
         let mut rgba = Vec::with_capacity(canvas.len() * 4);
         for c in canvas {
             for ch in &c[..3] {
@@ -311,6 +311,67 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
     crate::style::force_level(None);
     let path = dir.join(format!("{level}-{}.png", tab.name()));
     std::fs::write(&path, assets::encode_png(SHOT_W, SHOT_H, &rgba))?;
+    Ok(path)
+}
+
+const SHEET_W: u32 = 2016;
+const SHEET_H: u32 = 1180;
+
+/// Draws every machine family in `level`'s era, idle and working, plus one blocked, and writes
+/// `<dir>/machines-<era>.png`. A bigger canvas than the window shots: the drawings are 56 x 40 cells.
+pub(crate) fn shoot_machines(dir: &Path, level: u8) -> std::io::Result<PathBuf> {
+    use crate::style::machines::{draw_machine, MachineState};
+    use crate::style::{accent, family_name, palette, Family};
+    let fams = [Family::Fire, Family::Kiln, Family::Furnace, Family::Smithing, Family::Grinding, Family::Bench, Family::Textile, Family::MachineTool, Family::Storage, Family::Growing, Family::Electric];
+    let era = crate::style::era_of(level);
+    let pal = palette(era);
+    let idle = MachineState { fuel: 0.0, glow: 0.0, working: false, blocked: false, t: 0.0 };
+    let busy = MachineState { fuel: 0.8, glow: 0.9, working: true, blocked: false, t: 0.35 };
+    let blocked = MachineState { fuel: 0.0, glow: 0.0, working: false, blocked: true, t: 0.0 };
+    // tiles in reading order: idle then working per family, then one blocked furnace
+    let mut tiles: Vec<(Family, &str, &MachineState)> = Vec::new();
+    for f in fams {
+        tiles.push((f, "bos", &idle));
+        tiles.push((f, "calisiyor", &busy));
+    }
+    tiles.push((Family::Furnace, "tikali", &blocked));
+    let (cols, tw, th) = (6usize, 336.0f32, 288.0f32);
+    let ctx = egui::Context::default();
+    let mut tex = HashMap::new();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SHEET_W as f32, SHEET_H as f32));
+    let mut last = None;
+    for _ in 0..3 {
+        let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+        let out = ctx.run_ui(input, |ui| {
+            let p = ui.painter().clone();
+            p.rect_filled(screen, 0.0, pal.base);
+            for (i, (fam, label, st)) in tiles.iter().enumerate() {
+                let (col, row) = (i % cols, i / cols);
+                let cell = egui::Rect::from_min_size(egui::pos2(col as f32 * tw, row as f32 * th), egui::vec2(tw, th)).shrink(3.0);
+                crate::style::well(&p, cell, era);
+                let art = egui::Rect::from_min_size(cell.min + egui::vec2(0.0, 24.0), egui::vec2(cell.width(), cell.height() - 24.0));
+                draw_machine(&p, art, *fam, era, st);
+                p.text(cell.min + egui::vec2(8.0, 3.0), egui::Align2::LEFT_TOP, format!("{} / {label}", family_name(*fam)), egui::FontId::proportional(18.0), accent(*fam));
+            }
+        });
+        apply_textures(&mut tex, &out.textures_delta);
+        last = Some(out);
+    }
+    let out = last.expect("frames ran");
+    let ppp = out.pixels_per_point;
+    let prims = ctx.tessellate(out.shapes, ppp);
+    let mut canvas = vec![[0.0f32, 0.0, 0.0, 255.0]; (SHEET_W * SHEET_H) as usize];
+    rasterize(&mut canvas, &prims, &tex, ppp, (SHEET_W, SHEET_H));
+    let mut rgba = Vec::with_capacity(canvas.len() * 4);
+    for c in canvas {
+        for ch in &c[..3] {
+            rgba.push(ch.round().clamp(0.0, 255.0) as u8);
+        }
+        rgba.push(255);
+    }
+    let name = ["stone", "metal", "machine", "computer"][era as usize];
+    let path = dir.join(format!("machines-{name}.png"));
+    std::fs::write(&path, assets::encode_png(SHEET_W, SHEET_H, &rgba))?;
     Ok(path)
 }
 
@@ -333,6 +394,18 @@ pub fn run(dir: &Path) {
                     eprintln!("{level}-{}: {e}", tab.name());
                     std::process::exit(1);
                 }
+            }
+        }
+    }
+    for level in [0u8, 2, 4, 5] {
+        match shoot_machines(dir, level) {
+            Ok(p) => {
+                println!("{}", p.display());
+                n += 1;
+            }
+            Err(e) => {
+                eprintln!("machines {level}: {e}");
+                std::process::exit(1);
             }
         }
     }
