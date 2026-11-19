@@ -7,7 +7,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,6 +17,32 @@ use std::time::{Duration, Instant};
 pub(crate) const PING_EVERY: Duration = Duration::from_secs(15);
 const STEP_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(100);
+/// An honest relay announces at most seven joiners per room; a hostile one must not make us start more threads.
+pub(crate) const MAX_DIALS: usize = 16;
+const THREAD_STACK: usize = 256 << 10;
+
+/// Runs `work` on a small thread unless `cap` of them are already running or the OS refuses a thread.
+/// False means the work was dropped; nothing here may panic, because a panic aborts the whole game.
+pub(crate) fn spawn_capped(live: &Arc<AtomicUsize>, cap: usize, work: impl FnOnce() + Send + 'static) -> bool {
+    if live.fetch_add(1, Ordering::SeqCst) >= cap {
+        live.fetch_sub(1, Ordering::SeqCst);
+        return false;
+    }
+    struct Release(Arc<AtomicUsize>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let guard = Release(live.clone());
+    thread::Builder::new()
+        .stack_size(THREAD_STACK)
+        .spawn(move || {
+            let _guard = guard;
+            work();
+        })
+        .is_ok()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
@@ -90,9 +116,12 @@ impl Target {
         let host = host_part(relay).ok_or_else(|| err("röle adresi geçersiz"))?.to_string();
         let (tx, rx) = mpsc::channel();
         let name = relay.to_string();
-        thread::spawn(move || {
+        let lookup = thread::Builder::new().stack_size(THREAD_STACK).spawn(move || {
             let _ = tx.send(name.to_socket_addrs().map(|i| i.collect::<Vec<_>>()));
         });
+        if lookup.is_err() {
+            return Err(err("röle adresi çözülemedi"));
+        }
         match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(Ok(addrs)) if !addrs.is_empty() => Ok(Target { host, addrs }),
             Ok(_) => Err(err("röle adresi çözülemedi")),
@@ -174,12 +203,16 @@ impl RelayLink {
         let ctrl = Arc::new(Mutex::new(None));
         let shared = Shared { status: status.clone(), stop: stop.clone(), ctrl: ctrl.clone() };
         let relay = relay.to_string();
-        thread::spawn(move || {
+        let failed = shared.status.clone();
+        let started = thread::Builder::new().stack_size(THREAD_STACK).spawn(move || {
             let end = control(&relay, ping_every, &shared, &wants, &tx);
             if let Err(e) = end {
                 shared.set(RelayStatus::Failed(e.0));
             }
         });
+        if started.is_err() {
+            *failed.lock().unwrap() = RelayStatus::Failed("iş parçacığı başlatılamadı".into());
+        }
         RelayLink { status, new_code, tunnels, stop, ctrl }
     }
 
@@ -256,6 +289,7 @@ fn control(
     ctrl.tcp().set_write_timeout(Some(STEP_WAIT)).map_err(io_err)?;
 
     let mut buf = Vec::new();
+    let dials = Arc::new(AtomicUsize::new(0));
     // the relay answers one request at a time: no Ping or NewCode while an Opened is owed
     let mut owed = Some(Instant::now());
     let mut last_ping = Instant::now();
@@ -292,8 +326,8 @@ fn control(
                 }
                 FromRelay::Incoming { id } => {
                     let (target, tx) = (target.clone(), tunnels.clone());
-                    thread::spawn(move || {
-                        // a failed tunnel only costs that one joiner, who sees the relay's pairing timeout
+                    // over the cap or out of threads: that joiner sees the relay's pairing timeout
+                    spawn_capped(&dials, MAX_DIALS, move || {
                         if let Ok(s) = accept_tunnel(&target, id) {
                             let _ = tx.send(s);
                         }

@@ -25,6 +25,14 @@ pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
 const MAX_FRAME: usize = 64 << 20;
+/// A connection that has not said Hello is a stranger: a Hello is a few bytes, so it may buffer this much.
+const MAX_PRE_HELLO: usize = 4 << 10;
+/// Client to host frames are commands and never need more; host to client keeps `MAX_FRAME` for snapshots.
+const MAX_FROM_CLIENT: usize = 1 << 20;
+/// Turns a client may hold unapplied before it treats the host as broken (minutes of lag; a resync is cheaper).
+const MAX_TURN_BACKLOG: usize = 10_000;
+/// Longest error text from a remote peer shown to the player.
+const MAX_REMOTE_TEXT: usize = 200;
 const MAX_OUTBOX: usize = 64 << 20;
 
 #[derive(Serialize, Deserialize)]
@@ -68,13 +76,15 @@ struct Conn {
     wbuf: Vec<u8>,
     wpos: usize,
     dead: bool,
+    /// Largest frame accepted from the peer; also bounds how much `recv` buffers.
+    limit: usize,
 }
 
 impl Conn {
-    fn new(stream: Stream) -> io::Result<Self> {
+    fn new(stream: Stream, limit: usize) -> io::Result<Self> {
         stream.tcp().set_nonblocking(true)?;
         stream.tcp().set_nodelay(true)?;
-        Ok(Self { stream, rbuf: Vec::new(), wbuf: Vec::new(), wpos: 0, dead: false })
+        Ok(Self { stream, rbuf: Vec::new(), wbuf: Vec::new(), wpos: 0, dead: false, limit })
     }
 
     fn send<T: Serialize>(&mut self, msg: &T) {
@@ -110,7 +120,8 @@ impl Conn {
     fn recv<T: DeserializeOwned>(&mut self) -> Vec<T> {
         self.flush();
         let mut chunk = [0u8; 64 * 1024];
-        while !self.dead {
+        // a peer that streams faster than we parse must not grow the buffer without bound
+        while !self.dead && self.rbuf.len() <= self.limit + 4 {
             match self.stream.read(&mut chunk) {
                 Ok(0) => self.dead = true,
                 Ok(n) => self.rbuf.extend_from_slice(&chunk[..n]),
@@ -123,7 +134,7 @@ impl Conn {
         let mut at = 0;
         while self.rbuf.len() - at >= 4 {
             let len = u32::from_le_bytes(self.rbuf[at..at + 4].try_into().unwrap()) as usize;
-            if len > MAX_FRAME {
+            if len > self.limit {
                 self.dead = true;
                 break;
             }
@@ -164,6 +175,17 @@ impl Host {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None, relay: None })
+    }
+
+    /// A host that only the relay can reach: loopback, any free port, no LAN discovery. The relay
+    /// tunnels arrive over outgoing connections, so nothing listens on the network.
+    pub fn bind_online_only() -> io::Result<Self> {
+        Self::bind(("127.0.0.1", 0))
+    }
+
+    /// True when the lockstep listener accepts connections from other machines (LAN hosting).
+    pub fn lan_open(&self) -> bool {
+        self.listener.local_addr().is_ok_and(|a| !a.ip().is_loopback())
     }
 
     /// Open this world to the internet through the relay. Returns at once; follow `relay_status`.
@@ -219,13 +241,13 @@ impl Host {
             beacon.answer(tcp_port, self.peers.len() as u32 + 1, label);
         }
         while let Ok((stream, _)) = self.listener.accept() {
-            if let Ok(c) = Conn::new(Stream::Plain(stream)) {
+            if let Ok(c) = Conn::new(Stream::Plain(stream), MAX_PRE_HELLO) {
                 self.waiting.push((c, Instant::now()));
             }
         }
         if let Some(link) = &self.relay {
             while let Some(stream) = link.try_tunnel() {
-                if let Ok(c) = Conn::new(stream) {
+                if let Ok(c) = Conn::new(stream, MAX_PRE_HELLO) {
                     self.waiting.push((c, Instant::now()));
                 }
             }
@@ -239,6 +261,7 @@ impl Host {
                     self.joins_queued += 1;
                     self.queued.push(Command { agent: AgentId(agent), kind: CommandKind::Join });
                     conn.send(&ToClient::Welcome { agent, snapshot: world.to_bytes() });
+                    conn.limit = MAX_FROM_CLIENT;
                     self.peers.push(Peer { conn, resync: false });
                 }
                 Some(ToHost::Hello { .. }) => {
@@ -336,7 +359,7 @@ impl Client {
     fn handshake(stream: Stream, timeout: Duration) -> Result<(Client, World), NetError> {
         let err = |e: &dyn std::fmt::Display| NetError(format!("{e}"));
         let mut client = Client {
-            conn: Conn::new(stream).map_err(|e| err(&e))?,
+            conn: Conn::new(stream, MAX_FRAME).map_err(|e| err(&e))?,
             turns: VecDeque::new(),
             fresh: None,
             awaiting_resync: false,
@@ -352,8 +375,8 @@ impl Client {
                         client.agent = AgentId(agent);
                         world = Some(World::from_bytes(&snapshot).map_err(|e| err(&format!("{e:?}")))?);
                     }
-                    ToClient::Turn(t) if world.is_some() => client.turns.push_back(t),
-                    ToClient::Refused(why) => return Err(NetError(why)),
+                    ToClient::Turn(t) if world.is_some() => client.queue_turn(t),
+                    ToClient::Refused(why) => return Err(NetError(why.chars().take(MAX_REMOTE_TEXT).collect())),
                     _ => {}
                 }
             }
@@ -369,7 +392,7 @@ impl Client {
     pub fn poll(&mut self) {
         for m in self.conn.recv::<ToClient>() {
             match m {
-                ToClient::Turn(t) if !self.awaiting_resync => self.turns.push_back(t),
+                ToClient::Turn(t) if !self.awaiting_resync => self.queue_turn(t),
                 ToClient::Resync { snapshot } => {
                     if let Ok(w) = World::from_bytes(&snapshot) {
                         self.turns.clear();
@@ -379,6 +402,15 @@ impl Client {
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn queue_turn(&mut self, t: Turn) {
+        if self.turns.len() >= MAX_TURN_BACKLOG {
+            self.turns.clear();
+            self.conn.dead = true;
+        } else {
+            self.turns.push_back(t);
         }
     }
 
@@ -577,6 +609,102 @@ mod tests {
         settle(&mut host, &mut hw, &mut client, &mut cw);
         assert_eq!(cw.tick, hw.tick);
         assert_eq!(cw.hash(), hw.hash());
+    }
+
+    fn pump(host: &mut Host, w: &World, rounds: u32) {
+        for _ in 0..rounds {
+            host.poll(w);
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn oversize_pre_hello_data_is_dropped_quickly() {
+        let mut host = Host::bind("127.0.0.1:0").unwrap();
+        let mut s = TcpStream::connect(host.local_addr().unwrap()).unwrap();
+        // a plausible header for a 1 MB frame, then more than the 4 KiB a stranger may buffer
+        let mut junk = 1_000_000u32.to_le_bytes().to_vec();
+        junk.extend_from_slice(&[7u8; 6000]);
+        s.write_all(&junk).unwrap();
+        let w = host_world();
+        let t = Instant::now();
+        pump(&mut host, &w, 20);
+        assert!(host.waiting.is_empty(), "stranger still buffered after {:?}", t.elapsed());
+        assert_eq!(host.players(), 1);
+        s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut b = [0u8; 8];
+        assert!(matches!(s.read(&mut b), Ok(0) | Err(_)), "socket still open");
+    }
+
+    #[test]
+    fn client_frame_over_1_mib_kills_only_that_peer() {
+        let (mut host, mut hw, mut client, mut cw) = setup();
+        let addr = host.local_addr().unwrap();
+        let mut raw = TcpStream::connect(addr).unwrap();
+        let hello = postcard::to_allocvec(&ToHost::Hello { protocol: PROTOCOL }).unwrap();
+        raw.write_all(&(hello.len() as u32).to_le_bytes()).unwrap();
+        raw.write_all(&hello).unwrap();
+        for _ in 0..200 {
+            host.poll(&hw);
+            let c = host.turn(&hw, vec![]);
+            hw.step(&c);
+            if host.players() == 3 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(host.players(), 3);
+        raw.write_all(&1_048_577u32.to_le_bytes()).unwrap();
+        raw.write_all(&[1u8; 64]).unwrap();
+        run(&mut host, &mut hw, &mut client, &mut cw, 100, |_, _, _, _, _| {});
+        assert_eq!(host.players(), 2, "the oversize sender is gone");
+        assert!(client.is_connected(), "the other player is untouched");
+        settle(&mut host, &mut hw, &mut client, &mut cw);
+        assert_eq!(cw.hash(), hw.hash());
+    }
+
+    #[test]
+    fn turn_backlog_is_bounded() {
+        let (mut host, mut hw, mut client, _cw) = setup();
+        for _ in 0..MAX_TURN_BACKLOG + 200 {
+            let c = host.turn(&hw, vec![]);
+            hw.step(&c);
+        }
+        for _ in 0..200 {
+            client.poll();
+            if !client.is_connected() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!client.is_connected(), "a flooding host must not grow the queue without bound");
+        assert!(client.backlog() <= MAX_TURN_BACKLOG);
+    }
+
+    #[test]
+    fn long_remote_refusal_is_cut_to_200_chars() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let server = thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let body = postcard::to_allocvec(&ToClient::Refused("ş".repeat(5000))).unwrap();
+            s.write_all(&(body.len() as u32).to_le_bytes()).unwrap();
+            s.write_all(&body).unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let e = Client::connect(&addr, Duration::from_secs(5)).err().expect("refused");
+        assert_eq!(e.0.chars().count(), 200);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn online_only_host_listens_on_loopback_and_lan_host_does_not() {
+        let online = Host::bind_online_only().unwrap();
+        let a = online.local_addr().unwrap();
+        assert!(a.ip().is_loopback() && a.port() != 0);
+        assert!(!online.lan_open());
+        let lan = Host::bind(("0.0.0.0", 0)).unwrap();
+        assert!(lan.lan_open());
     }
 
     #[test]

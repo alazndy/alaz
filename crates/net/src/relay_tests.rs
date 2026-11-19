@@ -7,7 +7,7 @@ use alaz_relay::tls::{Reloadable, accept_loop};
 use alaz_relay::{Limits, Relay};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 struct Env {
@@ -237,4 +237,30 @@ impl ParseCode for String {
     fn parse_code(&self) -> Code {
         Code::parse(self).unwrap()
     }
+}
+
+#[test]
+fn dial_threads_are_capped_and_released() {
+    use crate::relay_client::spawn_capped;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    let live = Arc::new(AtomicUsize::new(0));
+    let (release, gate) = mpsc::channel::<()>();
+    let gate = Arc::new(Mutex::new(gate));
+    for i in 0..3 {
+        let gate = gate.clone();
+        assert!(spawn_capped(&live, 3, move || {
+            let _ = gate.lock().unwrap().recv();
+            let _ = i;
+        }));
+    }
+    assert!(!spawn_capped(&live, 3, || {}), "a fourth dial over the cap must be dropped");
+    assert_eq!(live.load(Ordering::SeqCst), 3);
+    drop(release);
+    let end = Instant::now() + Duration::from_secs(5);
+    while live.load(Ordering::SeqCst) != 0 {
+        assert!(Instant::now() < end, "slots not released");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(spawn_capped(&live, 3, || {}));
 }
