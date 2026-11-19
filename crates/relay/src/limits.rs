@@ -16,6 +16,11 @@ pub struct Limits {
     pub max_total_conns: usize,
     /// Per IPv4 address or IPv6 /64 (a /48 may use four times as many).
     pub max_conns_per_ip: usize,
+    /// Sockets a locked-out IP may hold. It gets a small pool instead of being shut out, because a
+    /// host behind the same NAT as a guesser must still be able to Open and Accept.
+    pub max_locked_per_ip: usize,
+    /// Locked-IP sockets over all IPs; beyond it they are closed unanswered.
+    pub max_locked_total: usize,
     /// Per IPv4 address or IPv6 /48.
     pub max_rooms_per_ip: usize,
     /// Joiners (paired or waiting) per IPv4 address or IPv6 /48.
@@ -33,7 +38,8 @@ pub struct Limits {
     pub first_frame_timeout: Duration,
     /// A tunnel write that makes no progress for this long means the receiver is stuck: the tunnel is closed.
     pub write_stall: Duration,
-    /// A paired tunnel that moves no byte in either direction for this long is closed.
+    /// A paired tunnel that moves no byte in either direction for this long is closed. Long on purpose:
+    /// a host whose window is minimised or hidden may stop ticking, and must not lose its players.
     pub tunnel_idle: Duration,
     /// Stack of every thread the relay starts; small because a connection thread does little.
     pub stack_size: usize,
@@ -58,6 +64,8 @@ impl Default for Limits {
             reserved_attempts_per_sec: 10,
             max_total_conns: 3000,
             max_conns_per_ip: 64,
+            max_locked_per_ip: 8,
+            max_locked_total: 256,
             max_rooms_per_ip: 4,
             max_tunnels_per_ip: 16,
             max_rooms: 500,
@@ -66,7 +74,7 @@ impl Default for Limits {
             control_idle: Duration::from_secs(60),
             first_frame_timeout: Duration::from_secs(10),
             write_stall: Duration::from_secs(30),
-            tunnel_idle: Duration::from_secs(120),
+            tunnel_idle: Duration::from_secs(300),
             stack_size: 128 << 10,
             pair_timeout: Duration::from_secs(10),
             fail_delay: Duration::from_millis(300),

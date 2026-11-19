@@ -36,18 +36,20 @@ pub enum Kind {
     Conn = 0,
     Room = 1,
     Tunnel = 2,
+    /// Sockets of an IP that is locked out of joining; see `Limits::max_locked_per_ip`.
+    Locked = 3,
 }
 
 #[derive(Default)]
 struct IpState {
-    counts: [usize; 3],
+    counts: [usize; 4],
     fails: VecDeque<Instant>,
     locked_until: Option<Instant>,
 }
 
 impl IpState {
     fn idle(&self) -> bool {
-        self.counts == [0; 3] && self.fails.is_empty() && self.locked_until.is_none()
+        self.counts == [0; 4] && self.fails.is_empty() && self.locked_until.is_none()
     }
 }
 
@@ -125,7 +127,7 @@ impl IpTable {
         }
         let window = self.window;
         g.map.retain(|_, s| {
-            s.counts != [0; 3]
+            s.counts != [0; 4]
                 || s.locked_until.is_some_and(|t| now < t)
                 || s.fails
                     .back()
@@ -266,11 +268,18 @@ impl IpTable {
 pub struct ConnSlot {
     pub relay: Arc<crate::Relay>,
     pub ip: IpAddr,
+    /// Counted in the locked-IP pool instead of the normal per-IP connection count.
+    pub pooled: bool,
 }
 
 impl Drop for ConnSlot {
     fn drop(&mut self) {
-        self.relay.ips.release(self.ip, Kind::Conn);
+        if self.pooled {
+            self.relay.ips.release(self.ip, Kind::Locked);
+            self.relay.locked_conns.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            self.relay.ips.release(self.ip, Kind::Conn);
+        }
         self.relay.total_conns.fetch_sub(1, Ordering::Relaxed);
     }
 }

@@ -57,6 +57,7 @@ pub struct Relay {
     /// (window start, attempts, attempts by IPs with recent failures)
     pub(crate) attempts: Mutex<(Instant, u32, u32)>,
     pub(crate) total_conns: AtomicUsize,
+    pub(crate) locked_conns: AtomicUsize,
     #[cfg(test)]
     pub(crate) spawned: AtomicUsize,
 }
@@ -72,6 +73,7 @@ impl Relay {
             stats: room::Stats::default(),
             attempts: Mutex::new((Instant::now(), 0, 0)),
             total_conns: AtomicUsize::new(0),
+            locked_conns: AtomicUsize::new(0),
             #[cfg(test)]
             spawned: AtomicUsize::new(0),
         })
@@ -84,14 +86,37 @@ impl Relay {
             self.total_conns.fetch_sub(1, Ordering::Relaxed);
             return None;
         }
-        if self.ips.is_locked(ip) || !self.ips.try_add_conn(ip, self.limits.max_conns_per_ip) {
+        let pooled = self.ips.is_locked(ip);
+        let admitted = if pooled {
+            // locked IPs may still reach Open and Accept, but only through a small bounded pool; their Join is refused later
+            self.admit_locked(ip)
+        } else {
+            self.ips.try_add_conn(ip, self.limits.max_conns_per_ip)
+        };
+        if !admitted {
             self.total_conns.fetch_sub(1, Ordering::Relaxed);
             return None;
         }
         Some(ConnSlot {
             relay: self.clone(),
             ip,
+            pooled,
         })
+    }
+
+    fn admit_locked(&self, ip: IpAddr) -> bool {
+        if self.locked_conns.fetch_add(1, Ordering::Relaxed) >= self.limits.max_locked_total {
+            self.locked_conns.fetch_sub(1, Ordering::Relaxed);
+            return false;
+        }
+        if !self
+            .ips
+            .acquire(ip, Kind::Locked, self.limits.max_locked_per_ip)
+        {
+            self.locked_conns.fetch_sub(1, Ordering::Relaxed);
+            return false;
+        }
+        true
     }
 
     /// Admits and serves one connection (the accept loop calls `admit` itself, before the TLS wrapper exists).
@@ -350,8 +375,8 @@ impl Relay {
     }
 
     fn accept<T: Transport>(self: &Arc<Self>, mut conn: T, slot: ConnSlot, id: u64) {
-        // exempt from lockout and fail counting: the 64-bit random id authenticates the host, and a host
-        // behind the same NAT as a mistyping joiner must not be locked out
+        // exempt from lockout and fail counting (admit lets locked IPs in for this): the 64-bit random id
+        // authenticates the host, and a host behind the same NAT as a mistyping joiner must not be locked out
         let pending = self.state.lock().unwrap().pending.remove(&id);
         let Some(p) = pending else {
             return self.refuse(&mut conn, Refusal::NoSuchCode);

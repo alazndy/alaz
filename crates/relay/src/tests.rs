@@ -247,11 +247,11 @@ fn per_ip_failures_lock_out_that_ip() {
         join_reply(a, Code::generate()),
         FromRelay::Refused(Refusal::NoSuchCode)
     );
-    // a locked IP is closed at accept, with no reply and no thread
-    let spawned = r.spawned.load(Ordering::Relaxed);
-    assert!(closed_silently(a));
-    assert_eq!(r.spawned.load(Ordering::Relaxed), spawned);
-    let _ = code;
+    // a locked IP still gets in (hosts behind its NAT need to), but its Join is refused
+    assert_eq!(
+        join_reply(a, code),
+        FromRelay::Refused(Refusal::TooManyAttempts)
+    );
     assert_eq!(r.counters().lockouts, 1);
 }
 
@@ -463,9 +463,13 @@ fn accept_is_exempt_from_lockout() {
     for _ in 0..3 {
         miss(a);
     }
-    // new sockets from the locked IP are closed at accept; connections already open keep working
-    assert!(closed_silently(a));
-    let _ = code;
+    assert_eq!(
+        join_reply(a, code),
+        FromRelay::Refused(Refusal::TooManyAttempts)
+    );
+    let mut h = dial(a);
+    send(&mut h, ToRelay::Accept { id: 12345 });
+    assert_eq!(recv(&mut h), FromRelay::Refused(Refusal::NoSuchCode));
     // the host's own control connection still works while the IP is locked
     send(&mut ctrl, ToRelay::NewCode);
     assert!(matches!(recv(&mut ctrl), FromRelay::Opened { .. }));
@@ -589,19 +593,72 @@ fn refused_thread_drops_the_connection_and_frees_every_slot() {
 }
 
 #[test]
-fn locked_ip_is_closed_at_accept_not_after_the_first_frame() {
+fn locked_ip_can_still_accept_and_open_but_its_join_is_refused() {
+    let (_r, a) = start(Limits {
+        max_fails_per_window: 1,
+        ..lenient()
+    });
+    let (mut ctrl, code) = open(a);
+    // a joiner is waiting for its host when the IP gets locked
+    let mut j = dial(a);
+    send(&mut j, join_msg(code));
+    let FromRelay::Incoming { id } = recv(&mut ctrl) else {
+        panic!("no incoming")
+    };
+    for _ in 0..3 {
+        miss(a);
+    }
+    assert_eq!(
+        join_reply(a, code),
+        FromRelay::Refused(Refusal::TooManyAttempts)
+    );
+    let mut h = dial(a);
+    send(&mut h, ToRelay::Accept { id });
+    assert_eq!(recv(&mut h), FromRelay::Paired);
+    assert_eq!(recv(&mut j), FromRelay::Paired);
+    let (_c2, _code2) = open(a);
+}
+
+#[test]
+fn locked_ip_pool_per_ip_bound_closes_the_extra_socket() {
     let (r, a) = start(Limits {
         max_fails_per_window: 1,
+        max_locked_per_ip: 2,
         ..lenient()
     });
     for _ in 0..3 {
         miss(a);
     }
+    let _held = (dial(a), dial(a));
+    wait_for(|| {
+        r.ips
+            .count(Ipv4Addr::LOCALHOST.into(), crate::room::Kind::Locked)
+            == 2
+    });
     let n = r.spawned.load(Ordering::Relaxed);
-    for _ in 0..5 {
-        assert!(closed_silently(a));
+    assert!(closed_silently(a));
+    assert_eq!(
+        r.spawned.load(Ordering::Relaxed),
+        n,
+        "no thread for the extra socket"
+    );
+}
+
+#[test]
+fn locked_ip_pool_total_bound_closes_the_extra_socket() {
+    let (r, a) = start(Limits {
+        max_fails_per_window: 1,
+        max_locked_total: 2,
+        ..lenient()
+    });
+    for _ in 0..3 {
+        miss(a);
     }
-    assert_eq!(r.spawned.load(Ordering::Relaxed), n);
+    let _held = (dial(a), dial(a));
+    wait_for(|| r.locked_conns.load(Ordering::Relaxed) == 2);
+    assert!(closed_silently(a));
+    drop(_held);
+    wait_for(|| r.locked_conns.load(Ordering::Relaxed) == 0);
 }
 
 #[test]
@@ -683,7 +740,8 @@ fn default_limits_match_the_documented_numbers() {
     let l = Limits::default();
     assert_eq!(l.global_attempts_per_sec, 20);
     assert_eq!(l.max_rooms_per_ip, 4);
-    assert_eq!(l.tunnel_idle, Duration::from_secs(120));
+    assert_eq!(l.tunnel_idle, Duration::from_secs(300));
+    assert_eq!((l.max_locked_per_ip, l.max_locked_total), (8, 256));
     // two sockets per tunnel plus one per room must fit under the socket cap
     assert!(l.max_tunnels * 2 + l.max_rooms < l.max_total_conns);
 }

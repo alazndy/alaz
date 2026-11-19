@@ -54,9 +54,10 @@ Diğer sınırlar (hepsi `Limits` içinde):
 | IPv4 adresi / IPv6 /64 başına bağlantı | 64 (bir /48 en çok 4 katı = 256) |
 | IP (IPv6'da /48) başına oda | 4 |
 | IP (IPv6'da /48) başına katılımcı tüneli | 16 |
-| Yanlış kod: pencere ve kilit | 60 sn'de 10 hata (/48'de 40), sonra 5 dk kilit; kilitli IP bağlanamaz, soket kabulde kapatılır |
+| Yanlış kod: pencere ve kilit | 60 sn'de 10 hata (/48'de 40), sonra 5 dk kilit; kilitli IP'nin Join'i reddedilir |
 | Genel katılma bütçesi | 20 deneme/sn. Yakın zamanda hata yapmış IP'ler bunun 10'unu kullanabilir; 10'u hata yapmamış IP'lere ayrılmıştır |
-| Boşta tünel | 120 sn iki yönde de bayt yoksa kapanır |
+| Boşta tünel | 300 sn iki yönde de bayt yoksa kapanır. Uzun tutuldu: küçültülmüş ya da başka pencerenin altında kalan bir oyun turları göndermeyi durdurabilir; host oyuncularını kaybetmemeli |
+| Kilitli IP | Kilitli IP kapatılmaz: IP başına 8, toplam 256 soketlik küçük bir havuza girer. Open ve Accept çalışır (aynı NAT'taki host etkilenmez); Join "çok fazla deneme" ile reddedilir. Havuz dolarsa soket cevapsız kapanır |
 | Oda / tünel (genel) | 500 / 1000 |
 
 ### Tarama maliyeti (bilinen, şimdilik kabul)
