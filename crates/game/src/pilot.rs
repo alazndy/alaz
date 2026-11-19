@@ -130,10 +130,20 @@ pub struct View<'a> {
     pub pick: &'a dyn Fn(f32, f32) -> Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum WalkGoal {
+    Node(NodeKind),
+    /// A tall-grass tuft that drops grain seed (not flax, lentil or cotton).
+    Seed,
+    /// 0 any wild animal, 1 a tameable one, 2 prey
+    Wild(u8),
+}
+
 #[derive(Clone, Debug)]
 pub enum Target {
     Px(f32, f32),
     Node(NodeKind),
+    SeedTuft,
     NodeId(u32),
     Ui(String),
     Me,
@@ -146,12 +156,16 @@ pub enum Target {
     RubStart,
     RubEnd,
     CraftMid,
+    /// The nearest wild animal in sight: 0 any, 1 one that can be tamed, 2 one that is hunted.
+    Wild(u8),
 }
 
 enum Step {
     Move { target: Target, dur: Option<f64>, run: Option<MoveRun> },
     Wait { ms: f64, until: Option<(f64, u64)> },
     Speed(u32),
+    TryBegin,
+    TryEnd,
     Press(Btn),
     Release(Btn),
     KeyDown(KeyCode),
@@ -166,6 +180,8 @@ enum Step {
     Hold,
     /// Plays the craft in front of the player, one try at a time, until it is over.
     CraftPlay { left: u32 },
+    /// Walk with the WASD keys toward the nearest node of a kind (even off screen) until it is this close (mm).
+    Walk { goal: WalkGoal, stop_mm: i64, until: Option<f64>, max_ms: f64, held: [bool; 4] },
     /// Slow to normal speed for a minigame, and back.
     SpeedLow,
     SpeedBack,
@@ -195,6 +211,7 @@ pub struct Pilot {
     /// Speed asked for by a `speed` line (0 = paused); main takes it.
     pub speed_req: Option<u32>,
     speed: u32,
+    in_try: bool,
     saved_speed: u32,
     last_pos: u32,
 }
@@ -203,6 +220,15 @@ pub struct Pilot {
 /// the UI sees every state a hand would have shown it.
 const MOVE_FRAMES: f64 = 10.0;
 const WAIT_FRAMES: u64 = 2;
+
+/// A fibre tuft that gives grain seed when picked (the sim's rule: dry-enough and not a flax or lentil zone).
+fn is_seed_tuft(w: &World, n: &alaz_sim::world::Node) -> bool {
+    if n.kind != NodeKind::FiberPlant {
+        return false;
+    }
+    let (warm, wet) = alaz_sim::climate(w.seed, n.tx, n.ty);
+    wet <= 550 && !(warm > 580 && wet < 480)
+}
 
 fn key_named(n: &str) -> Option<KeyCode> {
     use KeyCode::*;
@@ -263,8 +289,18 @@ fn parse_target(s: &str) -> Option<Target> {
     if s == "me" {
         return Some(Target::Me);
     }
+    if s == "node:seed" {
+        return Some(Target::SeedTuft);
+    }
     if let Some(k) = s.strip_prefix("node:") {
         return alaz_sim::debug::node_named(k).map(Target::Node);
+    }
+    if let Some(k) = s.strip_prefix("wild:") {
+        return Some(Target::Wild(match k {
+            "tame" => 1,
+            "prey" => 2,
+            _ => 0,
+        }));
     }
     if let Some(l) = s.strip_prefix("ui:") {
         return Some(Target::Ui(l.to_string()));
@@ -282,7 +318,7 @@ impl Pilot {
         let path = PathBuf::from(std::env::var_os("ALAZ_PILOT")?);
         let log_path = std::env::var_os("ALAZ_PILOT_LOG").map(PathBuf::from).unwrap_or_else(|| path.with_extension("log"));
         let _ = std::fs::write(&log_path, "");
-        Some(Pilot { path, log_path, read: 0, steps: VecDeque::new(), t_ms: 0.0, mouse: (400.0, 300.0), rng: 0x9E37_79B9_7F4A_7C15, wants: Vec::new(), log: Vec::new(), started: false, frame: 0, speed_req: None, speed: 10, saved_speed: 10, last_pos: 0 })
+        Some(Pilot { path, log_path, read: 0, steps: VecDeque::new(), t_ms: 0.0, mouse: (400.0, 300.0), rng: 0x9E37_79B9_7F4A_7C15, wants: Vec::new(), log: Vec::new(), started: false, frame: 0, speed_req: None, speed: 10, in_try: false, saved_speed: 10, last_pos: 0 })
     }
 
     fn rand(&mut self) -> f64 {
@@ -320,6 +356,24 @@ impl Pilot {
         self.read += (end + 1) as u64;
         for line in text.lines() {
             let line = line.split('#').next().unwrap_or("").trim();
+            // `!` lines do not wait for the queue: look around, stop, or throw the queue away
+            if let Some(cmd) = line.strip_prefix('!') {
+                let w: Vec<&str> = cmd.split_whitespace().collect();
+                match w.first().copied() {
+                    Some("clear") => {
+                        self.steps.clear();
+                        self.in_try = false;
+                    }
+                    Some("pause") => self.speed_req = Some(0),
+                    Some("speed") => self.speed_req = w.get(1).and_then(|s| s.parse().ok()),
+                    Some("state") => self.wants.push(Want::State),
+                    Some("look") => self.wants.push(Want::Look),
+                    Some("marks") => self.wants.push(Want::Marks),
+                    Some("shot") => self.wants.push(Want::Shot(w.get(1).copied().unwrap_or("shot").to_string())),
+                    _ => self.say(sim_s, format!("? {line}")),
+                }
+                continue;
+            }
             if !line.is_empty() {
                 if let Err(e) = self.queue(line) {
                     self.say(sim_s, format!("? {line}: {e}"));
@@ -337,6 +391,14 @@ impl Pilot {
             Some("middle") => Btn::Middle,
             _ => Btn::Left,
         };
+        if w[0] == "try" {
+            // an action that is skipped, without ending the batch, when its target is not there
+            let before = self.steps.len();
+            self.queue(line[3..].trim())?;
+            self.steps.insert(before, Step::TryBegin);
+            self.steps.push_back(Step::TryEnd);
+            return Ok(());
+        }
         let mut out: Vec<Step> = Vec::new();
         match w[0] {
             "move" => out.push(Step::Move { target: tgt(1)?, dur: ms(2), run: None }),
@@ -378,6 +440,18 @@ impl Pilot {
                 out.push(Step::Wait { ms: 250.0, until: None });
                 out.push(Step::KeyUp(t));
                 out.push(self.react());
+            }
+            "walk" => {
+                let goal = match w.get(1).copied() {
+                    Some("node:seed") => WalkGoal::Seed,
+                    Some(s) if s.starts_with("node:") => WalkGoal::Node(alaz_sim::debug::node_named(&s[5..]).ok_or("unknown node kind")?),
+                    Some("wild:tame") => WalkGoal::Wild(1),
+                    Some("wild:prey") => WalkGoal::Wild(2),
+                    Some("wild:any") => WalkGoal::Wild(0),
+                    _ => return Err("walk node:KIND|wild:tame|wild:prey [metres] [max_s]".into()),
+                };
+                let stop = ms(2).unwrap_or(2.2) * 1000.0;
+                out.push(Step::Walk { goal, stop_mm: stop as i64, until: None, max_ms: ms(3).unwrap_or(40.0) * 1000.0, held: [false; 4] });
             }
             "craft" => {
                 // plays the open craft to its end the way a hand would, at normal speed whatever the game speed is
@@ -431,7 +505,8 @@ impl Pilot {
                 let (x, y) = n.center_mm();
                 Some(ground(x, y, 0.5))
             }
-            Target::Node(k) => self.nearest_node(*k, v).and_then(|i| self.resolve(&Target::NodeId(i), v)),
+            Target::Node(k) => self.nearest_node(Some(*k), v).and_then(|i| self.resolve(&Target::NodeId(i), v)),
+            Target::SeedTuft => self.nearest_node(None, v).and_then(|i| self.resolve(&Target::NodeId(i), v)),
             Target::KnapRim => {
                 let cv = v.craft.as_ref()?;
                 let hit = v.marks.iter().find(|(l, _)| l == "knap")?;
@@ -458,6 +533,25 @@ impl Pilot {
                 };
                 Some((pt.x * v.ppp, pt.y * v.ppp))
             }
+            Target::Wild(kind) => {
+                let mut best: Option<(i64, (f32, f32))> = None;
+                for w in &v.world.wild {
+                    let ok = match kind {
+                        1 => w.species.tamed().is_some(),
+                        2 => w.species.huntable(),
+                        _ => true,
+                    };
+                    if !ok {
+                        continue;
+                    }
+                    let (px, py) = ground(w.x, w.y, 0.3);
+                    let d = alaz_sim::world::dist2(me.x, me.y, w.x, w.y);
+                    if px > 8.0 && py > 8.0 && px < v.win.0 as f32 - 8.0 && py < v.win.1 as f32 - 8.0 && best.is_none_or(|b| d < b.0) {
+                        best = Some((d, (px, py)));
+                    }
+                }
+                best.map(|b| b.1)
+            }
             Target::Ui(label) => {
                 // underscores stand for spaces ("ui:Su_iç"), and the other way round
                 let norm = |s: &str| s.replace(' ', "_");
@@ -470,13 +564,17 @@ impl Pilot {
     }
 
     /// The nearest node of a kind that is on screen and still has something in it.
-    fn nearest_node(&self, k: NodeKind, v: &View) -> Option<u32> {
+    fn nearest_node(&self, k: Option<NodeKind>, v: &View) -> Option<u32> {
         let me = v.world.agents.iter().find(|a| a.id == v.me)?;
         let (r, w, h) = (60, v.win.0 as f32, v.win.1 as f32);
         let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
         let mut cands: Vec<(i64, u32, (f32, f32))> = Vec::new();
         for n in v.world.nodes_in(tx - r, ty - r, tx + r, ty + r) {
-            if n.kind != k || n.amount == 0 {
+            let wanted = match k {
+                Some(k) => n.kind == k,
+                None => is_seed_tuft(v.world, n),
+            };
+            if !wanted || n.amount == 0 {
                 continue;
             }
             let Some(id) = v.world.node_at(n.tx, n.ty) else { continue };
@@ -507,8 +605,34 @@ impl Pilot {
             let at = self.resolve(&Target::NodeId(id.0), v).map_or("off".to_string(), |(x, y)| format!("{x:.0},{y:.0}"));
             all.push((d, format!("  {:?} x{} at {:.0} m, screen {at}", n.kind, n.amount, (d as f64).sqrt() / 1000.0)));
         }
+        // what the tall grass around would give when picked (mirrors the sim's rule; cotton tufts not counted)
+        let (mut seed_n, mut flax_n, mut lentil_n, mut far_seed) = (0, 0, 0, None::<i64>);
+        for n in v.world.nodes_in(tx - 200, ty - 200, tx + 200, ty + 200) {
+            if n.kind != NodeKind::FiberPlant {
+                continue;
+            }
+            let (warm, wet) = alaz_sim::climate(v.world.seed, n.tx, n.ty);
+            let (cx, cy) = n.center_mm();
+            if wet > 550 {
+                flax_n += 1;
+            } else if warm > 580 && wet < 480 {
+                lentil_n += 1;
+            } else {
+                seed_n += 1;
+                let d = alaz_sim::world::dist2(me.x, me.y, cx, cy);
+                far_seed = Some(far_seed.map_or(d, |b| b.min(d)));
+            }
+        }
+        all.push((-1, format!("  FIBRE TUFTS within 200 tiles give: seed {seed_n}, flax {flax_n}, lentil {lentil_n}; nearest seed tuft {}", far_seed.map_or("none".to_string(), |d| format!("{:.0} m", (d as f64).sqrt() / 1000.0)))));
+        for w in &v.world.wild {
+            let d = alaz_sim::world::dist2(me.x, me.y, w.x, w.y);
+            if d < 600_000i64 * 600_000 {
+                let at = self.resolve(&Target::Wild(0), v).map_or("?".to_string(), |(x, y)| format!("{x:.0},{y:.0}"));
+                all.push((d, format!("  WILD {:?} trust {} at {:.0} m (nearest wild on screen at {at})", w.species, w.trust, (d as f64).sqrt() / 1000.0)));
+            }
+        }
         all.sort();
-        all.into_iter().take(14).map(|a| a.1).collect()
+        all.into_iter().take(16).map(|a| a.1).collect()
     }
 
     /// Advances the pilot's clock by game time and returns the inputs for this frame.
@@ -531,11 +655,76 @@ impl Pilot {
                         break;
                     }
                 }
+                Step::TryBegin => self.in_try = true,
+                Step::TryEnd => self.in_try = false,
                 Step::Speed(n) => {
                     if n > 0 {
                         self.speed = n;
                     }
                     self.speed_req = Some(n);
+                }
+                Step::Walk { goal: wgoal, stop_mm, until, max_ms, mut held } => {
+                    let until = until.unwrap_or(now + max_ms);
+                    let me = v.world.agents.iter().find(|a| a.id == v.me);
+                    let goal = me.and_then(|me| match wgoal {
+                        WalkGoal::Node(kind) => {
+                            let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
+                            v.world.nodes_in(tx - 70, ty - 70, tx + 70, ty + 70).filter(|n| n.kind == kind && n.amount > 0).map(|n| n.center_mm()).min_by_key(|c| alaz_sim::world::dist2(me.x, me.y, c.0, c.1)).map(|c| (me, c))
+                        }
+                        WalkGoal::Seed => {
+                            let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
+                            v.world.nodes_in(tx - 250, ty - 250, tx + 250, ty + 250).filter(|n| n.amount > 0 && is_seed_tuft(v.world, n)).filter(|n| {
+                                // a tuft near enough to click but hidden behind a canopy is no goal
+                                let Some(id) = v.world.node_at(n.tx, n.ty) else { return false };
+                                let (cx, cy) = n.center_mm();
+                                if alaz_sim::world::dist2(me.x, me.y, cx, cy) > 8_000i64 * 8_000 {
+                                    return true;
+                                }
+                                self.resolve(&Target::NodeId(id.0), v).is_some_and(|p| (v.pick)(p.0, p.1) == Some(id.0))
+                            }).map(|n| n.center_mm()).min_by_key(|c| alaz_sim::world::dist2(me.x, me.y, c.0, c.1)).map(|c| (me, c))
+                        }
+                        WalkGoal::Wild(k) => v
+                            .world
+                            .wild
+                            .iter()
+                            .filter(|w| match k {
+                                1 => w.species.tamed().is_some(),
+                                2 => w.species.huntable(),
+                                _ => true,
+                            })
+                            .map(|w| (w.x, w.y))
+                            .min_by_key(|c| alaz_sim::world::dist2(me.x, me.y, c.0, c.1))
+                            .map(|c| (me, c)),
+                    });
+                    let mut want = [false; 4];
+                    let mut done = now >= until;
+                    if let Some((me, (gx, gy))) = goal {
+                        let (tx, tz) = ((gx - me.x) as f32, (gy - me.y) as f32);
+                        let dist = (tx * tx + tz * tz).sqrt();
+                        if dist as i64 <= stop_mm {
+                            done = true;
+                        } else {
+                            let (s, c) = v.cam.yaw_deg.to_radians().sin_cos();
+                            let (wr, wf) = ((tx * c - tz * s) / dist, (-tx * s - tz * c) / dist);
+                            want = [wf > 0.38, wr < -0.38, wf < -0.38, wr > 0.38];
+                        }
+                    } else {
+                        self.say(v.sim_s, format!("? walk: no {wgoal:?} within reach"));
+                        done = true;
+                    }
+                    if done {
+                        want = [false; 4];
+                    }
+                    for (i, code) in [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD].into_iter().enumerate() {
+                        if want[i] != held[i] {
+                            out.push(Input::Key(code, want[i]));
+                            held[i] = want[i];
+                        }
+                    }
+                    if !done || held.iter().any(|h| *h) {
+                        self.steps.push_front(Step::Walk { goal: wgoal, stop_mm, until: Some(until), max_ms, held });
+                        break;
+                    }
                 }
                 Step::SpeedLow => {
                     self.saved_speed = self.speed;
@@ -628,6 +817,15 @@ impl Pilot {
                         Some(r) => r,
                         None => {
                             let Some(to) = self.resolve(&target, v) else {
+                                if self.in_try {
+                                    while let Some(s) = self.steps.pop_front() {
+                                        if matches!(s, Step::TryEnd) {
+                                            break;
+                                        }
+                                    }
+                                    self.in_try = false;
+                                    break;
+                                }
                                 self.say(v.sim_s, format!("? move target {target:?} not in sight: skipping to the end of the batch"));
                                 // drop the plain steps; reports and speed changes still run, so a batch always ends in its pause
                                 self.steps.retain(|s| matches!(s, Step::Want(_) | Step::Speed(_) | Step::Say(_)));

@@ -85,7 +85,7 @@ fn new_world_with(seed: u64, hardcore: bool, size: i32, settings: alaz_sim::worl
     // (its continents are kilometres across: a small world would sit inside one, so small worlds keep the second)
     // (the third's continents are kilometres across: below 32 km a world would sit inside one, mostly sea or
     // mostly plain without rock, so smaller worlds keep the second)
-    let tagged = if size > 4096 { alaz_sim::map::tag_seed_v3(seed) } else { alaz_sim::map::tag_seed_v2(seed) };
+    let tagged = alaz_sim::map::tag_seed_natural(seed, size);
     let mut w = World::with_size(tagged, size, size);
     w.settings = settings;
     let (sx, sy) = w.spawn_mm;
@@ -1128,7 +1128,13 @@ impl App {
             // a paused game still lets the pilot work, in real time
             let scale = self.sim_scale().max(1) as f64;
             let sim_s = self.world.tick as f64 / TICKS_PER_SECOND as f64;
-            let pick = |x: f32, y: f32| self.node_under((x, y));
+            let ctx = g.renderer.egui_context().clone();
+            let ppp_now = ctx.pixels_per_point();
+            // a point under a HUD panel or window cannot be clicked in the world
+            let pick = |x: f32, y: f32| {
+                let covered = ctx.layer_id_at(alaz_render::egui::pos2(x / ppp_now, y / ppp_now)).is_some_and(|l| l.order != alaz_render::egui::Order::Background);
+                if covered { None } else { self.node_under((x, y)) }
+            };
             let view = pilot::View { signal: pilot::read_signal(g.renderer.egui_context()), craft: self.world.craft_view(self.me), pick: &pick, world: &self.world, me: self.me, cam: self.cam, win: g.renderer.size(), ppp: g.renderer.egui_context().pixels_per_point(), marks: pilot::marks(g.renderer.egui_context()), sim_s };
             let inputs = pilot.tick(raw_dt.min(0.25) as f64 * 1000.0 * scale, raw_dt, &view);
             let wants: Vec<pilot::Want> = std::mem::take(&mut pilot.wants);
@@ -1238,8 +1244,9 @@ impl App {
         let w = &self.world;
         let pack: Vec<String> = alaz_sim::ItemKind::ALL.iter().filter(|k| a.inventory.get(**k) > 0).map(|k| format!("{} {}", alaz_sim::debug::snake(&format!("{k:?}")), a.inventory.get(*k))).collect();
         let day = w.tick / alaz_sim::time::TICKS_PER_DAY as u64;
+        let craft = self.world.craft_view(self.me).map(|c| format!(" | CRAFT {:?} step {}/{} done {} pos {} center {} half {} span {} power {}+-{} t({},{}) stack {}", c.kind, c.step, c.steps, c.done, c.pos, c.center, c.half, c.span, c.power, c.power_half, c.tx, c.ty, c.stack_n)).unwrap_or_default();
         format!(
-            "STATE day {day} | {} | perception {} ({}) | at ({:.0},{:.0}) m | hp {} food {} water {} warm {} stam {} | task {:?} | tab {:?} | selected {} | pack: {}",
+            "STATE day {day}{craft} | {} | perception {} ({}) | at ({:.0},{:.0}) m | hp {} food {} water {} warm {} stam {} | task {:?} | tab {:?} | selected {} | pack: {}",
             hud::era_name(w),
             w.perception_permille(),
             w.perception_level(),
