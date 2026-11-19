@@ -239,10 +239,12 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         for _ in 0..4 {
             let mut acts = Vec::new();
             let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
-            let out = sh.ctx.run_ui(input, |ui| {
+            let mut out = sh.ctx.run_ui(input, |ui| {
                 crate::hud::draw(ui.ctx(), &w, &ui_ctx, &mut knap, &mut acts);
             });
             apply_textures(&mut sh.tex, &out.textures_delta);
+            // epaint 0.37 panics when a TexturesDelta is dropped without being marked handled
+            out.textures_delta.clear();
             last = Some(out);
         }
         let out = last.expect("four frames ran");
@@ -294,7 +296,7 @@ pub(crate) fn shoot_machines(dir: &Path, level: u8) -> std::io::Result<PathBuf> 
     let mut last = None;
     for _ in 0..3 {
         let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
-        let out = ctx.run_ui(input, |ui| {
+        let mut out = ctx.run_ui(input, |ui| {
             let p = ui.painter().clone();
             p.rect_filled(screen, 0.0, pal.base);
             for (i, (fam, label, st)) in tiles.iter().enumerate() {
@@ -307,6 +309,7 @@ pub(crate) fn shoot_machines(dir: &Path, level: u8) -> std::io::Result<PathBuf> 
             }
         });
         apply_textures(&mut tex, &out.textures_delta);
+        out.textures_delta.clear();
         last = Some(out);
     }
     let out = last.expect("frames ran");

@@ -1,5 +1,5 @@
 use alaz_render::egui::{self, Align2, Color32, Rect, RichText, Stroke};
-use alaz_sim::rules::{rules, ItemCount};
+use alaz_sim::rules::rules;
 use alaz_sim::time::{minute_of_day, TICKS_PER_SECOND};
 use alaz_sim::world::MAX_STAT;
 use alaz_sim::{
@@ -586,24 +586,6 @@ pub(crate) fn has_needs(needs: &[ItemKind], inv: &alaz_sim::world::Inventory) ->
     needs.iter().all(|&k| inv.get(k) > 0)
 }
 
-/// Things that must be carried but are kept, after the materials: an icon each, marked "elde" (in hand).
-pub(crate) fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::world::Inventory) {
-    if needs.is_empty() {
-        return;
-    }
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Elde olmalı:").small().weak());
-        for &k in needs {
-            let ok = inv.get(k) > 0;
-            let col = if ok { Color32::from_rgb(130, 215, 130) } else { Color32::from_rgb(235, 110, 110) };
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
-            crate::icons::draw_slot(ui.painter(), rect, k, w.has_seen(k));
-            ui.label(RichText::new(if ok { "var" } else { "yok" }).color(col).small());
-            resp.on_hover_text(format!("{} (harcanmaz)", crate::lang::item_word(w, k)));
-        }
-    });
-}
-
 /// What a machine of the industrial age does, in a sentence (the build list and the machine's panel show it).
 pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
     Some(match kind {
@@ -686,21 +668,6 @@ pub(crate) fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'stat
         R::Blast => "Hava yok: 3 m içinde çalışan bir körük gerek (1000 °C'yi geçmez).",
         R::StrongBlast => "Güçlü hava yok: 3 m içinde, su çarkı/rüzgâr/buhar ya da motorla çalışan bir körük gerek; elle üflenen yetmez.",
     }
-}
-
-pub(crate) fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
-    ui.horizontal_wrapped(|ui| {
-        for it in items {
-            let have = inv.get(it.item);
-            let ok = have >= it.n;
-            let col = if ok { Color32::from_rgb(130, 215, 130) } else { Color32::from_rgb(235, 110, 110) };
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-            crate::icons::draw_slot(ui.painter(), rect, it.item, w.has_seen(it.item));
-            ui.label(RichText::new(format!("{}/{}", have, it.n)).color(col));
-            ui.add_space(4.0);
-            resp.on_hover_text(crate::lang::item_word(w, it.item));
-        }
-    });
 }
 
 /// A small value kept per thread with an atomic-like face: the interface runs on one thread, and tests that build
@@ -3627,3 +3594,4 @@ mod evo_tests {
         }
     }
 }
+
