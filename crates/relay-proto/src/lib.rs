@@ -10,8 +10,21 @@ pub const MAX_RELAY_FRAME: usize = 4096;
 /// A-Z without I and O, plus 2-9: no symbol can be mistaken for 0 or 1.
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+/// Deserialization validates every byte: a peer must not smuggle a non-alphabet `Code` past `read_msg`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(try_from = "[u8; 8]")]
 pub struct Code([u8; 8]);
+
+impl TryFrom<[u8; 8]> for Code {
+    type Error = &'static str;
+    fn try_from(raw: [u8; 8]) -> Result<Self, Self::Error> {
+        if raw.iter().all(|b| ALPHABET.contains(b)) {
+            Ok(Code(raw))
+        } else {
+            Err("code symbol outside the alphabet")
+        }
+    }
+}
 
 impl Code {
     pub fn generate() -> Code {
@@ -149,6 +162,36 @@ mod tests {
         buf.extend(vec![0u8; MAX_RELAY_FRAME + 1]);
         let err = read_msg::<ToRelay, _>(&mut buf.as_slice()).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn read_msg_rejects_join_with_foreign_code_bytes() {
+        let good = ToRelay::Join { protocol: RELAY_PROTOCOL, code: Code::parse("K7Q4-XM2P").unwrap() };
+        for bad in [0xFFu8, b'0', b'a'] {
+            let mut body = postcard::to_allocvec(&good).unwrap();
+            *body.last_mut().unwrap() = bad;
+            let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+            frame.extend(body);
+            let err = read_msg::<ToRelay, _>(&mut frame.as_slice()).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[test]
+    fn read_msg_reports_truncated_body() {
+        let mut frame = 10u32.to_le_bytes().to_vec();
+        frame.extend([1, 2, 3]);
+        let err = read_msg::<ToRelay, _>(&mut frame.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_msg_accepts_frame_of_exactly_max_size() {
+        let mut body = postcard::to_allocvec(&ToRelay::NewCode).unwrap();
+        body.resize(MAX_RELAY_FRAME, 0);
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.extend(body);
+        assert_eq!(read_msg::<ToRelay, _>(&mut frame.as_slice()).unwrap(), ToRelay::NewCode);
     }
 
     fn rt<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(m: T) {
