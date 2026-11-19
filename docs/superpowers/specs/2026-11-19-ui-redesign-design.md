@@ -106,6 +106,12 @@ Any window-building not listed falls back to Bench. The family list lives in one
 - Book: separate window; J toggles it; it can be open with or without the inventory window; docked left of the
   inventory window when both are open, otherwise centred. It replaces the Journal tab panel.
 
+## Drawing language (user's decision)
+- **Pixel art**, like the current HUD: every frame, slot, machine drawing and glyph is drawn on the UI pixel grid
+  (`pxui::unit()`, `pxui::snap_rect`), hard corners, curves as stepped pixels, flat colour bands instead of smooth
+  gradients. The mockups' smooth curves were only illustrative. "Rounded pit slots" means stepped-corner slots.
+- The new `style` painters build on `pxui`/`pxpanel` helpers instead of free vector shapes.
+
 ## Builder-check answers (my calls unless marked)
 - **Icons:** every glyph (flames, hourglasses, arrows, tab icons, "?", family icons) is painter-drawn: extend
   `ui_art::Glyph`; item chips reuse `icons::draw_item`. No emoji or font glyphs (the mockups' emoji were stand-ins).
