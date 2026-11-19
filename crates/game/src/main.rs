@@ -590,6 +590,17 @@ fn connect_in_background(addr: String) -> Pending {
     rx
 }
 
+/// A join through the relay also waits for the host to pair, which the relay allows 10 s.
+const CODE_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(16);
+
+fn connect_code_in_background(code: String) -> Pending {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(Client::connect_code(&code, CODE_JOIN_TIMEOUT));
+    });
+    rx
+}
+
 /// "192.168.1.5" → "192.168.1.5:7777"; an address with a port stays as it is.
 fn normalize_addr(s: &str) -> String {
     let s = s.trim();
@@ -1183,6 +1194,39 @@ impl App {
                 self.net = Net::Host(host);
                 self.say(format!("Sunucu açık: {}:{port}", lan_ip_text()));
             }
+            M::HostOnline { slot, port, new } => {
+                let started = !matches!(self.net, Net::Host(_));
+                if started {
+                    self.menu_action(M::Host { slot, port, new });
+                }
+                if let Net::Host(h) = &mut self.net {
+                    if let Err(e) = h.open_relay(&alaz_net::relay_address()) {
+                        self.say(format!("Ağ açılamadı: {e}"));
+                    } else if started {
+                        // the code shows in the pause card; a fresh host would otherwise play on without seeing it
+                        self.menu = Some(menu::Menu::new(true));
+                    }
+                }
+            }
+            M::CloseOnline => {
+                if let Net::Host(h) = &mut self.net {
+                    h.relay_close();
+                }
+            }
+            M::NewCode => {
+                if let Net::Host(h) = &mut self.net {
+                    h.relay_new_code();
+                }
+            }
+            M::JoinCode(text) => {
+                if self.connecting.is_none() {
+                    self.connecting = Some(("çevrimiçi oyun".into(), connect_code_in_background(text)));
+                    if let Some(m) = self.menu.as_mut() {
+                        m.connecting = true;
+                        m.mp_error = None;
+                    }
+                }
+            }
             M::Join(text) => {
                 if self.connecting.is_none() {
                     let addr = normalize_addr(&text);
@@ -1300,6 +1344,11 @@ impl App {
                 Some(format!("Sunucu açık: {}:{port} · {} oyuncu", lan_ip_text(), h.players()))
             }
             _ => None,
+        };
+        m.hosting = matches!(self.net, Net::Host(_));
+        (m.relay, m.relay_players) = match &self.net {
+            Net::Host(h) => (Some(h.relay_status()), h.players()),
+            _ => (None, 0),
         };
     }
 

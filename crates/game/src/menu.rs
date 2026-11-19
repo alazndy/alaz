@@ -23,6 +23,12 @@ pub enum MenuAction {
     Host { slot: u8, port: u16, new: Option<NewWorld> },
     /// Raw text: "192.168.1.5" or "192.168.1.5:7777".
     Join(String),
+    /// Open the hosted world to the internet. Carries the host settings because the world may not be hosted yet.
+    HostOnline { slot: u8, port: u16, new: Option<NewWorld> },
+    /// Raw text of the code field; `Client::connect_code` normalizes it.
+    JoinCode(String),
+    CloseOnline,
+    NewCode,
     Delete(u8),
     Resume,
     SaveQuit,
@@ -57,8 +63,14 @@ pub struct Menu {
     pub found: Vec<Found>,
     /// The multiplayer screen is open; the app runs LAN discovery only while it is.
     pub mp_screen: bool,
+    /// This game hosts a world right now.
+    pub hosting: bool,
+    /// The relay link of the hosted world, if it ever was opened.
+    pub relay: Option<alaz_net::RelayStatus>,
+    pub relay_players: usize,
     port_text: String,
     addr_text: String,
+    code_text: String,
     /// When the screen first drew, for the intro animation.
     born: Option<f64>,
 }
@@ -118,8 +130,12 @@ impl Menu {
             net_line: None,
             found: Vec::new(),
             mp_screen: std::env::var_os("ALAZ_DEMO_MPSCREEN").is_some(),
+            hosting: false,
+            relay: None,
+            relay_players: 0,
             port_text: "7777".to_string(),
             addr_text: String::new(),
+            code_text: String::new(),
             born: None,
         };
         m.refresh();
@@ -529,7 +545,62 @@ fn painted_field(ui: &mut Ui, caption: &str, hint: &str, text: &mut String) {
     });
 }
 
+/// Same red as the other multiplayer errors.
+const ERR_RED: Color32 = Color32::from_rgb(240, 110, 110);
+
 impl Menu {
+    /// The internet part of hosting: open button, then the code and its controls once the relay answers.
+    fn online_panel(&mut self, ui: &mut Ui, note: Color32) -> Option<MenuAction> {
+        use alaz_net::RelayStatus as R;
+        let mut act = None;
+        let open = |menu: &Menu| {
+            let port = menu.port_text.parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(7777);
+            let full = menu.slots[menu.slot as usize - 1].is_some();
+            let new = if full || menu.hosting { None } else { Some(menu.new_world()) };
+            MenuAction::HostOnline { slot: menu.slot, port, new }
+        };
+        match self.relay.clone() {
+            None | Some(R::Closed) => {
+                if button(ui, "Ağa aç", vec2(ui.available_width(), 38.0), Look::Primary).clicked() {
+                    act = Some(open(self));
+                }
+                ui.label(egui::RichText::new("Bir kod alırsın; arkadaşın kodla katılır. Port açmak gerekmez.").small().color(note));
+            }
+            Some(R::Connecting) => {
+                ui.label(egui::RichText::new("Bağlanıyor…").color(GOLD));
+                if button(ui, "Ağı kapat", vec2(ui.available_width(), 34.0), Look::Plain).clicked() {
+                    act = Some(MenuAction::CloseOnline);
+                }
+            }
+            Some(R::Failed(why)) => {
+                ui.colored_label(ERR_RED, format!("Ağ açılamadı: {why}"));
+                if button(ui, "Ağa aç", vec2(ui.available_width(), 38.0), Look::Primary).clicked() {
+                    act = Some(open(self));
+                }
+            }
+            Some(R::Open(code)) => {
+                let text = code.to_string();
+                // selectable, so a failed clipboard still lets the player copy it by hand
+                ui.add(egui::Label::new(egui::RichText::new(&text).size(40.0).strong().color(GOLD).monospace()).selectable(true));
+                ui.label(egui::RichText::new(format!("{} oyuncu bağlı", self.relay_players)).color(note));
+                ui.horizontal(|ui| {
+                    let w = (ui.available_width() - 24.0) / 3.0;
+                    if button(ui, "Kopyala", vec2(w, 32.0), Look::Plain).clicked() {
+                        ui.ctx().copy_text(text.clone());
+                    }
+                    if button(ui, "Yeni kod", vec2(w, 32.0), Look::Plain).clicked() {
+                        act = Some(MenuAction::NewCode);
+                    }
+                    if button(ui, "Ağı kapat", vec2(w, 32.0), Look::Danger).clicked() {
+                        act = Some(MenuAction::CloseOnline);
+                    }
+                });
+                ui.label(egui::RichText::new("Kod, ağ açık kaldıkça geçerlidir.").small().color(note));
+            }
+        }
+        act
+    }
+
     fn intro(&mut self, ctx: &egui::Context) -> f32 {
         let now = ctx.input(|i| i.time);
         let born = *self.born.get_or_insert(now);
@@ -599,57 +670,78 @@ impl Menu {
         let mut act = None;
         egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
             ui.set_opacity(e);
-            card(ui, 470.0, |ui| {
-                ui.label(egui::RichText::new("Çok oyunculu").size(33.0).strong().color(GOLD));
-                ui.add_space(6.0);
-                section(ui, "Sunucu kur");
-                let full = self.slots[self.slot as usize - 1].is_some();
-                let what = if full { "kayıtlı dünya açılır" } else { "yeni dünya kurulur (menüdeki ayarlarla)" };
-                ui.label(egui::RichText::new(format!("Yuva {}: {what}", self.slot)).color(note));
-                ui.add_space(4.0);
-                painted_field(ui, "PORT", "7777", &mut self.port_text);
-                self.port_text.retain(|c| c.is_ascii_digit());
-                self.port_text.truncate(5);
-                ui.add_space(4.0);
-                if button(ui, "Sunucu kur", vec2(ui.available_width(), 42.0), Look::Primary).clicked() {
-                    let port = self.port_text.parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(7777);
-                    let new = if full { None } else { Some(self.new_world()) };
-                    act = Some(MenuAction::Host { slot: self.slot, port, new });
-                }
-                ui.add_space(8.0);
-                section(ui, "Ağdaki oyunlar");
-                if self.found.is_empty() {
-                    ui.label(egui::RichText::new("Aranıyor… Aynı ağda sunucu yoksa adresi elle yaz.").color(note));
-                }
-                for f in &self.found {
-                    ui.horizontal(|ui| {
-                        let bw = 90.0;
-                        let text = format!("{} · {} oyuncu · {}", f.label, f.players, f.addr.ip());
-                        ui.add_sized(vec2((ui.available_width() - bw - 8.0).max(60.0), 28.0), egui::Label::new(egui::RichText::new(text).color(INK)).truncate());
-                        if button(ui, "Katıl", vec2(bw, 28.0), Look::Plain).clicked() && !self.connecting {
-                            act = Some(MenuAction::Join(f.addr.to_string()));
-                        }
-                    });
-                }
-                ui.add_space(8.0);
-                section(ui, "Adresle katıl");
-                painted_field(ui, "ADRES", "192.168.1.5", &mut self.addr_text);
-                ui.add_space(4.0);
-                if button(ui, "Katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.addr_text.trim().is_empty() {
-                    act = Some(MenuAction::Join(self.addr_text.trim().to_string()));
-                }
-                if self.connecting {
-                    ui.label(egui::RichText::new("Bağlanıyor…").color(GOLD));
-                }
-                if let Some(err) = &self.mp_error {
-                    ui.colored_label(Color32::from_rgb(240, 110, 110), err);
-                }
-                ui.add_space(10.0);
-                if button(ui, "Geri", vec2(110.0, 34.0), Look::Plain).clicked() {
-                    self.mp_screen = false;
-                    self.mp_error = None;
-                }
-            });
+            let max_h = (screen.height() - 40.0).max(200.0);
+            let mut body = |ui: &mut Ui| {
+                card(ui, 470.0, |ui| {
+                    ui.label(egui::RichText::new("Çok oyunculu").size(33.0).strong().color(GOLD));
+                    ui.add_space(6.0);
+                    section(ui, "Sunucu kur");
+                    let full = self.slots[self.slot as usize - 1].is_some();
+                    let what = if full { "kayıtlı dünya açılır" } else { "yeni dünya kurulur (menüdeki ayarlarla)" };
+                    ui.label(egui::RichText::new(format!("Yuva {}: {what}", self.slot)).color(note));
+                    ui.add_space(4.0);
+                    painted_field(ui, "PORT", "7777", &mut self.port_text);
+                    self.port_text.retain(|c| c.is_ascii_digit());
+                    self.port_text.truncate(5);
+                    ui.add_space(4.0);
+                    if button(ui, "Sunucu kur", vec2(ui.available_width(), 42.0), Look::Primary).clicked() {
+                        let port = self.port_text.parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(7777);
+                        let new = if full { None } else { Some(self.new_world()) };
+                        act = Some(MenuAction::Host { slot: self.slot, port, new });
+                    }
+                    ui.add_space(8.0);
+                    section(ui, "İnternetten");
+                    if let Some(a) = self.online_panel(ui, note) {
+                        act = Some(a);
+                    }
+                    ui.add_space(4.0);
+                    painted_field(ui, "KOD", "K7Q4-XM2P", &mut self.code_text);
+                    self.code_text.truncate(24);
+                    ui.add_space(4.0);
+                    if button(ui, "Kodla katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.code_text.trim().is_empty() {
+                        act = Some(MenuAction::JoinCode(self.code_text.clone()));
+                    }
+                    ui.add_space(8.0);
+                    section(ui, "Ağdaki oyunlar");
+                    if self.found.is_empty() {
+                        ui.label(egui::RichText::new("Aranıyor… Aynı ağda sunucu yoksa adresi elle yaz.").color(note));
+                    }
+                    for f in &self.found {
+                        ui.horizontal(|ui| {
+                            let bw = 90.0;
+                            let text = format!("{} · {} oyuncu · {}", f.label, f.players, f.addr.ip());
+                            ui.add_sized(vec2((ui.available_width() - bw - 8.0).max(60.0), 28.0), egui::Label::new(egui::RichText::new(text).color(INK)).truncate());
+                            if button(ui, "Katıl", vec2(bw, 28.0), Look::Plain).clicked() && !self.connecting {
+                                act = Some(MenuAction::Join(f.addr.to_string()));
+                            }
+                        });
+                    }
+                    ui.add_space(8.0);
+                    section(ui, "Adresle katıl");
+                    painted_field(ui, "ADRES", "192.168.1.5", &mut self.addr_text);
+                    ui.add_space(4.0);
+                    if button(ui, "Katıl", vec2(ui.available_width(), 38.0), Look::Primary).clicked() && !self.connecting && !self.addr_text.trim().is_empty() {
+                        act = Some(MenuAction::Join(self.addr_text.trim().to_string()));
+                    }
+                    if self.connecting {
+                        ui.label(egui::RichText::new("Bağlanıyor…").color(GOLD));
+                    }
+                    if let Some(err) = &self.mp_error {
+                        ui.colored_label(Color32::from_rgb(240, 110, 110), err);
+                    }
+                    ui.add_space(10.0);
+                    if button(ui, "Geri", vec2(110.0, 34.0), Look::Plain).clicked() {
+                        self.mp_screen = false;
+                        self.mp_error = None;
+                    }
+                });
+            };
+            // the card grew with the internet section: scroll it on short windows, as the main menu does
+            if screen.height() < 800.0 {
+                egui::ScrollArea::vertical().max_height(max_h).auto_shrink([true, true]).show(ui, body);
+            } else {
+                body(ui);
+            }
         });
         act
     }
@@ -735,6 +827,11 @@ impl Menu {
                         ui.label(egui::RichText::new("Duraklatıldı").color(Color32::from_rgb(190, 176, 150)));
                         if let Some(line) = &self.net_line {
                             ui.label(egui::RichText::new(line).color(GOLD));
+                        }
+                        if self.hosting
+                            && let Some(a) = self.online_panel(ui, Color32::from_rgb(190, 176, 150))
+                        {
+                            act = Some(a);
                         }
                         ui.add_space(8.0);
                     }
@@ -965,6 +1062,104 @@ mod tests {
         h.get_by_label("Katıl").click();
         h.run();
         assert!(matches!(&h.state().got, Some(MenuAction::Join(a)) if a == "10.0.0.7"));
+    }
+
+    fn open_mp(menu: Menu) -> egui_kittest::Harness<'static, S> {
+        let mut h = harness(menu);
+        h.run();
+        h.get_by_label_contains("Çok oyunculu").click();
+        h.run();
+        h
+    }
+
+    #[test]
+    fn online_button_emits_host_online() {
+        let mut h = open_mp(Menu::new(false));
+        h.get_by_label("Ağa aç").click();
+        h.run();
+        assert!(matches!(h.state().got, Some(MenuAction::HostOnline { port: 7777, .. })));
+    }
+
+    #[test]
+    fn code_field_emits_join_code_with_typed_text() {
+        let mut h = open_mp(Menu::new(false));
+        let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+        fields[fields.len() - 2].click();
+        h.run();
+        let fields: Vec<_> = h.query_all_by_role(egui::accesskit::Role::TextInput).collect();
+        fields[fields.len() - 2].type_text("k7q4 xm2p");
+        h.run();
+        h.get_by_label("Kodla katıl").click();
+        h.run();
+        assert!(matches!(&h.state().got, Some(MenuAction::JoinCode(c)) if c == "k7q4 xm2p"));
+    }
+
+    #[test]
+    fn opened_state_shows_code_and_player_count() {
+        let mut menu = Menu::new(false);
+        menu.hosting = true;
+        menu.relay = Some(alaz_net::RelayStatus::Open(alaz_net::Code::parse("k7q4xm2p").unwrap()));
+        menu.relay_players = 3;
+        let mut h = open_mp(menu);
+        h.get_by_label("K7Q4-XM2P");
+        h.get_by_label_contains("3 oyuncu");
+        h.get_by_label("Kopyala");
+        h.get_by_label("Yeni kod").click();
+        h.run();
+        assert!(matches!(h.state().got, Some(MenuAction::NewCode)));
+        h.get_by_label("Ağı kapat").click();
+        h.run();
+        assert!(matches!(h.state().got, Some(MenuAction::CloseOnline)));
+    }
+
+    #[test]
+    fn copy_button_does_not_panic_without_a_clipboard() {
+        let mut menu = Menu::new(false);
+        menu.hosting = true;
+        menu.relay = Some(alaz_net::RelayStatus::Open(alaz_net::Code::parse("k7q4xm2p").unwrap()));
+        let mut h = open_mp(menu);
+        h.get_by_label("Kopyala").click();
+        h.run();
+        h.get_by_label("K7Q4-XM2P");
+    }
+
+    #[test]
+    fn connecting_state_shows_progress() {
+        let mut menu = Menu::new(false);
+        menu.hosting = true;
+        menu.relay = Some(alaz_net::RelayStatus::Connecting);
+        let h = open_mp(menu);
+        h.get_by_label_contains("Bağlanıyor");
+    }
+
+    #[test]
+    fn failed_state_shows_red_message_and_allows_retry() {
+        let mut menu = Menu::new(false);
+        menu.hosting = true;
+        menu.relay = Some(alaz_net::RelayStatus::Failed("röleye ulaşılamadı".into()));
+        let mut h = open_mp(menu);
+        h.get_by_label_contains("röleye ulaşılamadı");
+        h.get_by_label("Ağa aç").click();
+        h.run();
+        assert!(matches!(h.state().got, Some(MenuAction::HostOnline { .. })), "Failed is terminal: the button opens again");
+    }
+
+    #[test]
+    fn paused_menu_without_multiplayer_still_hidden() {
+        let mut h = harness(Menu::new(true));
+        h.run();
+        assert!(h.query_by_label_contains("Çok oyunculu").is_none());
+        assert!(h.query_by_label("Ağa aç").is_none(), "not hosting: no online controls in the pause card");
+    }
+
+    #[test]
+    fn paused_menu_while_hosting_shows_the_code() {
+        let mut menu = Menu::new(true);
+        menu.hosting = true;
+        menu.relay = Some(alaz_net::RelayStatus::Open(alaz_net::Code::parse("k7q4xm2p").unwrap()));
+        let mut h = harness(menu);
+        h.run();
+        h.get_by_label("K7Q4-XM2P");
     }
 
     #[test]
