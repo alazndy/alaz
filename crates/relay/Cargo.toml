@@ -1,0 +1,8 @@
+[package]
+name = "alaz-relay"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+alaz-relay-proto = { path = "../relay-proto" }
+getrandom = "0.3"
