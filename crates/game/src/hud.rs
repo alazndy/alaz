@@ -1,9 +1,9 @@
 use alaz_render::egui::{self, Align2, Color32, Rect, RichText, Stroke};
 use alaz_sim::rules::{rules, ItemCount};
 use alaz_sim::time::{minute_of_day, TICKS_PER_SECOND};
-use alaz_sim::world::{FIRE_FUEL_MAX, MAX_STAT};
+use alaz_sim::world::MAX_STAT;
 use alaz_sim::{
-    AgentId, AgentKind, BuildingKind, CommandKind, Discovery, Event, ItemKind, Milestone, RecipeId, Reject, RouteStep,
+    AgentId, AgentKind, BuildingKind, CommandKind, Discovery, Event, ItemKind, Milestone, Reject, RouteStep,
     Terrain,
     World,
 };
@@ -79,6 +79,8 @@ pub enum UiAction {
     NewCycle,
     /// Pick a building up to set it down elsewhere.
     MoveBuilding(usize),
+    /// Close the inventory window: its tab and the machine shown in it.
+    CloseWindow,
 }
 
 pub fn item_name(k: ItemKind) -> &'static str {
@@ -578,32 +580,14 @@ pub fn nearest_water(w: &World, x_mm: i64, y_mm: i64) -> Option<(i32, i32)> {
     best.map(|(_, p)| p)
 }
 
-fn slot_cell(ui: &mut egui::Ui, w: &World, k: ItemKind, n: u16) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(72.0, 78.0), egui::Sense::click());
-    let p = ui.painter();
-    let icon = egui::Rect::from_min_size(rect.min, egui::vec2(72.0, 56.0));
-    crate::icons::draw_slot(p, icon, k, w.has_seen(k));
-    p.text(icon.right_bottom() - egui::vec2(5.0, 3.0), Align2::RIGHT_BOTTOM, n.to_string(), egui::FontId::proportional(22.0), Color32::WHITE);
-    let name = crate::lang::item_word(w, k);
-    p.text(egui::pos2(rect.center().x, rect.bottom() - 9.0), Align2::CENTER_CENTER, &name, egui::FontId::proportional(11.0), Color32::from_gray(205));
-    // dev aid for screenshots: ALAZ_DEMO_TIP keeps the cloak's tooltip open
-    if k == ItemKind::HideCloak && std::env::var_os("ALAZ_DEMO_TIP").is_some() {
-        let tip = item_tip(w, k);
-        egui::Area::new(egui::Id::NULL.with("demo_tip")).order(egui::Order::Tooltip).fixed_pos(resp.rect.right_top()).show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(tip));
-        });
-    }
-    resp.on_hover_text(item_tip(w, k))
-}
-
 /// Each ingredient as its icon with "have/need", green when the bag has enough and red when it does not.
 /// Whether everything that must be carried (and is not used up) is in the pack.
-fn has_needs(needs: &[ItemKind], inv: &alaz_sim::world::Inventory) -> bool {
+pub(crate) fn has_needs(needs: &[ItemKind], inv: &alaz_sim::world::Inventory) -> bool {
     needs.iter().all(|&k| inv.get(k) > 0)
 }
 
 /// Things that must be carried but are kept, after the materials: an icon each, marked "elde" (in hand).
-fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::world::Inventory) {
+pub(crate) fn needs_row(ui: &mut egui::Ui, w: &World, needs: &[ItemKind], inv: &alaz_sim::world::Inventory) {
     if needs.is_empty() {
         return;
     }
@@ -681,7 +665,7 @@ pub fn machine_note(kind: BuildingKind) -> Option<&'static str> {
 }
 
 /// What a machine needs around it, in a few words (the build list).
-fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
+pub(crate) fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç ister (su çarkı, yel değirmeni, buhar, motor ya da manej).",
@@ -704,7 +688,7 @@ fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
     }
 }
 
-fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
+pub(crate) fn need_row(ui: &mut egui::Ui, w: &World, items: &[ItemCount], inv: &alaz_sim::world::Inventory) {
     ui.horizontal_wrapped(|ui| {
         for it in items {
             let have = inv.get(it.item);
@@ -1036,7 +1020,7 @@ fn gear_lines(g: &alaz_sim::rules::Gear) -> Vec<String> {
 }
 
 /// The hover text of a bag item: its name, and for clothes what they do.
-fn item_tip(w: &World, k: ItemKind) -> String {
+pub(crate) fn item_tip(w: &World, k: ItemKind) -> String {
     let name = crate::lang::item_word(w, k);
     if k.garment().is_none() {
         return name;
@@ -1420,255 +1404,11 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
     });
 }
 
-fn tab_bag(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, acts: &mut Vec<UiAction>) {
-    let inv = &me.inventory;
-    crate::ui_art::stat_bar(
-        ui,
-        crate::ui_art::Glyph::Bag,
-        &format!("{}/{} yer dolu (aletler sayılmaz)", inv.load(), me.capacity()),
-        inv.load() as f32 / me.capacity().max(1) as f32,
-        Color32::from_rgb(150, 120, 70),
-        200.0,
-    );
-    ui.add_space(4.0);
-    // what the eye cannot yet tell apart lies in one heap, under the name of what it passes for
-    let mut items: Vec<(ItemKind, u16)> = Vec::new();
-    for &k in ItemKind::ALL.iter() {
-        let n = inv.get(k);
-        if n == 0 {
-            continue;
-        }
-        let seen = crate::lang::looks_like(w, k);
-        match items.iter_mut().find(|(s, _)| *s == seen) {
-            Some(e) => e.1 += n,
-            None => items.push((seen, n)),
-        }
-    }
-    if items.is_empty() {
-        ui.label("Çanta boş. Etraftan taş, odun ve yemiş topla: bir şeye sağ tıkla.");
-        return;
-    }
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-        for (k, n) in items {
-            // right click (or a plain click) on a slot: put it down
-            slot_cell(ui, w, k, n).context_menu(|ui| {
-                // from a mixed heap, whichever comes to hand (the biggest share)
-                let real = crate::lang::hidden_in(w, inv, k).into_iter().max_by_key(|(_, c)| *c).map_or(k, |(r, _)| r);
-                if ui.button("1 tane bırak").clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Drop { item: real, n: 1 }));
-                    ui.close();
-                }
-                let m = inv.get(real);
-                if m > 1 && ui.button(format!("{} tane bırak", m.min(10))).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Drop { item: real, n: m.min(10) }));
-                    ui.close();
-                }
-            });
-        }
-    });
-    ui.label(RichText::new("Bırakmak için eşyaya sağ tıkla. Yerdekini toplamak için üstüne sağ tıkla.").small().weak());
-    // tools wear with use; a blunt one still works, three times slower, until it is mended
-    let worn: Vec<_> = w.rules().tools.iter().filter(|t| t.durability > 0 && me.inventory.get(t.item) > 0).collect();
-    if !worn.is_empty() {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Aletler").strong());
-        for t in worn {
-            let life = alaz_sim::world::tool_life(t, &w.settings).max(1);
-            let used = me.wear_of(t.item);
-            let left = life.saturating_sub(used);
-            ui.horizontal(|ui| {
-                let label = if left == 0 { format!("{}: kör", item_name(t.item)) } else { format!("{}: {left}/{life}", item_name(t.item)) };
-                let col = if left == 0 { Color32::from_rgb(220, 90, 70) } else { Color32::from_rgb(140, 190, 140) };
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Hammer, &label, left as f32 / life as f32, col, 220.0);
-                if let Some(mat) = t.repair.filter(|_| used > 0) {
-                    let ok = me.inventory.get(mat) > 0;
-                    if ui.add_enabled(ok, egui::Button::new(format!("Onar (1 {})", item_name(mat).to_lowercase()))).clicked() {
-                        acts.push(UiAction::Cmd(CommandKind::Repair { item: t.item }));
-                    }
-                }
-            });
-        }
-    }
-}
-
-fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &mut [u8; 4], acts: &mut Vec<UiAction>) {
-    let defs = rules();
-    // hands: put things together and see what comes of it
-    let held = |k: ItemKind, hands: &[u8; 4]| hands.iter().filter(|&&i| i == k as u8).count() as u16;
-    // the bag can change under the hands (eaten, built with, dropped in a depot): let go of what is no longer there,
-    // or "Dene" would try a mix the player cannot see they no longer have
-    let mut taken = [0u16; ItemKind::COUNT];
-    for slot in hands.iter_mut() {
-        if let Some(&k) = ItemKind::ALL.get(*slot as usize) {
-            taken[k as usize] += 1;
-            if taken[k as usize] > me.inventory.get(k) {
-                *slot = 255;
-            }
-        }
-    }
-    ui.label(RichText::new("Ellerin").strong());
-    ui.horizontal(|ui| {
-        for slot in 0..4 {
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(60.0, 60.0), egui::Sense::click());
-            match ItemKind::ALL.get(hands[slot] as usize) {
-                Some(&k) => crate::icons::draw_slot(ui.painter(), rect, crate::lang::looks_like(w, k), w.has_seen(k)),
-                None => {
-                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(26, 21, 17));
-                    ui.painter().rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), Color32::from_rgb(70, 56, 40)), egui::StrokeKind::Inside);
-                }
-            }
-            let held_name = ItemKind::ALL.get(hands[slot] as usize).map(|&k| crate::lang::item_word(w, crate::lang::looks_like(w, k))).unwrap_or_else(|| "boş el".to_string());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("El {}: {held_name}", slot + 1)));
-            if resp.clicked() {
-                hands[slot] = 255;
-            }
-        }
-        let any = hands.iter().any(|&i| i != 255);
-        if ui.add_enabled(any, egui::Button::new("Dene").min_size(egui::vec2(70.0, 60.0))).clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Combine { items: *hands }));
-            *hands = [255; 4];
-        }
-    });
-    let mut want = [0u16; ItemKind::COUNT];
-    for &i in hands.iter() {
-        if let Some(k) = ItemKind::ALL.get(i as usize) {
-            want[*k as usize] += 1;
-        }
-    }
-    let known_match = defs.recipes.iter().find(|r| {
-        r.station.is_none() && r.ticks == 0 && w.knows(r.discovery) && {
-            let mut need = [0u16; ItemKind::COUNT];
-            for i in &r.inputs {
-                need[i.item as usize] += i.n;
-            }
-            need == want
-        }
-    });
-    ui.label(RichText::new(match known_match {
-        Some(r) => format!("Bunu biliyorsun: {}", r.name),
-        None if hands.iter().all(|&i| i == 255) => "Çantandan bir şey seç, elinde birleştir.".to_string(),
-        None => "Ne olacağını bilmiyorsun. Dene.".to_string(),
-    }).small().weak());
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        for &k in ItemKind::ALL.iter() {
-            // a heap of lookalikes shows once, under the thing it passes for
-            if crate::lang::looks_like(w, k) != k {
-                continue;
-            }
-            let members = crate::lang::hidden_in(w, &me.inventory, k);
-            let free_of = |r: ItemKind| me.inventory.get(r).saturating_sub(held(r, hands));
-            let free: u16 = members.iter().map(|(r, _)| free_of(*r)).sum::<u16>().max(if members.is_empty() { free_of(k) } else { 0 });
-            if free == 0 {
-                continue;
-            }
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(46.0, 46.0), egui::Sense::click());
-            crate::icons::draw_slot(ui.painter(), rect, k, w.has_seen(k));
-            ui.painter().text(rect.right_bottom() - egui::vec2(3.0, 2.0), Align2::RIGHT_BOTTOM, free.to_string(), egui::FontId::proportional(22.0), Color32::WHITE);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Çantadan al: {}", crate::lang::item_word(w, k))));
-            if resp.on_hover_text(item_tip(w, k)).clicked() {
-                if let Some(s) = hands.iter().position(|&i| i == 255) {
-                    // the hand closes on one of the heap at random: the eye cannot choose what it cannot see
-                    let pool: Vec<ItemKind> = members.iter().flat_map(|(r, _)| std::iter::repeat_n(*r, free_of(*r) as usize)).collect();
-                    let pick = if pool.is_empty() { k } else { pool[(w.tick as usize).wrapping_mul(2_654_435_761) % pool.len()] };
-                    hands[s] = pick as u8;
-                }
-            }
-        }
-    });
-    ui.separator();
-    ui.label(RichText::new("Defter (bildiklerin)").strong());
-    let hand: Vec<(usize, &_)> = defs.recipes.iter().enumerate().filter(|(_, r)| r.station.is_none() && w.knows(r.discovery)).collect();
-    if hand.is_empty() {
-        ui.label("Defterin boş. Elinde bir şeyler dene, yaparak öğrenirsin.");
-    }
-    // Clues: everything a hand recipe needs has been seen but the recipe is not known yet. No name, no steps:
-    // just a nudge to try those things together in the hands.
-    // a farming tool only makes sense once there is something to farm: those clues wait until seed or grain has been seen
-    let era_ready = |d: Discovery| match d {
-        Discovery::Farming => w.has_seen(ItemKind::Seed),
-        Discovery::Milling => w.has_seen(ItemKind::Grain),
-        _ => true,
-    };
-    let clues: Vec<&_> = defs.recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))).collect();
-    for r in clues {
-        egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                for c in &r.inputs {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                    crate::icons::draw_slot(ui.painter(), rect, c.item, true);
-                }
-                let line = "Bunlar bir arada işe yarar gibi. Elinde dene.";
-                ui.label(RichText::new(line).small().weak());
-            });
-        });
-    }
-    // the book as a wall of cards: what it makes, big; what it takes underneath; click a lit card to make it
-    let card_w = 112.0;
-    let cols = ((ui.available_width() + 6.0) / (card_w + 6.0)).floor().max(1.0) as usize;
-    let mut sorted = hand;
-    // what can be made right now first
-    sorted.sort_by_key(|(_, r)| !(me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory)));
-    egui::Grid::new("craft_cards").spacing([6.0, 6.0]).show(ui, |ui| {
-        for (n, (i, r)) in sorted.into_iter().enumerate() {
-            let can = me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory);
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 124.0), egui::Sense::click());
-            let p = ui.painter();
-            let hover = resp.hovered() && can;
-            p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
-            let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
-            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit() * if hover { 2.0 } else { 1.0 }, edge), egui::StrokeKind::Inside);
-            // the product
-            if let Some(o) = r.outputs.first() {
-                let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 28.0), egui::vec2(44.0, 44.0));
-                crate::icons::draw_slot(p, icon, o.item, true);
-                if o.n > 1 {
-                    p.text(icon.right_bottom() - egui::vec2(2.0, 1.0), Align2::RIGHT_BOTTOM, format!("x{}", o.n), egui::FontId::proportional(22.0), Color32::WHITE);
-                }
-            }
-            let name_col = if can { Color32::from_rgb(244, 220, 160) } else { Color32::from_rgb(150, 136, 112) };
-            let galley = p.layout(r.name.clone(), egui::FontId::proportional(22.0), name_col, card_w - 10.0);
-            p.galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 54.0), galley, name_col);
-            // what it takes: small icons, red when short
-            let k = r.inputs.len().max(1) as f32;
-            let iw = 22.0;
-            let mut x = rect.center().x - (k * (iw + 4.0) - 4.0) / 2.0;
-            for c in &r.inputs {
-                let ir = egui::Rect::from_min_size(egui::pos2(x, rect.bottom() - 28.0), egui::vec2(iw, iw));
-                crate::icons::draw_slot(p, ir, c.item, w.has_seen(c.item));
-                let short = me.inventory.get(c.item) < c.n;
-                p.text(ir.right_bottom() + egui::vec2(1.0, 3.0), Align2::RIGHT_BOTTOM, c.n.to_string(), egui::FontId::proportional(11.0), if short { Color32::from_rgb(240, 90, 70) } else { Color32::WHITE });
-                x += iw + 4.0;
-            }
-            let mut tip = format!("{}\n", r.name);
-            for c in &r.inputs {
-                tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
-            }
-            for k in &r.needs {
-                tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
-            }
-            if !r.steps.is_empty() {
-                let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
-                tip += &format!("Adımlar: {}", names.join(" → "));
-            }
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, format!("Yap: {}", r.name)));
-            if resp.on_hover_text(tip).clicked() && can {
-                acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
-            }
-            if (n + 1) % cols == 0 {
-                ui.end_row();
-            }
-        }
-    });
-}
-
 /// The groups of the build list, in the order they are shown.
-const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
+pub(crate) const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
 
 /// Which group of the build list a building stands in.
-fn build_group(kind: BuildingKind) -> usize {
+pub(crate) fn build_group(kind: BuildingKind) -> usize {
     use BuildingKind as B;
     match kind {
         B::Campfire | B::CharcoalKiln | B::Furnace | B::PitKiln | B::Bloomery | B::BlastFurnace | B::CokeOven | B::LimeKiln | B::CementKiln | B::BrickKiln | B::PuddlingFurnace | B::Bessemer | B::Cupola | B::GlassFurnace | B::Smokehouse | B::ArcFurnace | B::CrystalPuller | B::Still => 0,
@@ -1678,76 +1418,6 @@ fn build_group(kind: BuildingKind) -> usize {
         B::TripHammer | B::Lathe | B::DrillMill | B::Press | B::Sawmill | B::PowerLoom | B::SteamHammer | B::RollingLine | B::RollingMill | B::ForgeHammer | B::CottonGin | B::SpinningJenny | B::Conveyor | B::Crane | B::Railway | B::Refinery | B::Electrolysis | B::Welder | B::Reactor | B::Compressor | B::CncMachine | B::AssemblyRobot => 4,
         B::Dynamo | B::Pole | B::ElectricMotor | B::ElectricLamp | B::Computer | B::Transformer | B::Accumulator | B::Telegraph | B::Radio | B::VacuumPump | B::Photolith => 5,
         B::Shelter | B::Depot | B::Cellar | B::MineShaft | B::Pump | B::Ruin => 6,
-    }
-}
-
-fn tab_build(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, acts: &mut Vec<UiAction>) {
-    let defs = rules();
-    let known: Vec<_> = defs.buildings.iter().filter(|b| w.knows(b.discovery)).collect();
-    if known.is_empty() {
-        ui.label("Henüz bir şey inşa etmeyi bilmiyorsun.");
-    }
-    let card = |ui: &mut egui::Ui, b: &alaz_sim::rules::BuildingDef, acts: &mut Vec<UiAction>| {
-        egui::Frame::new().fill(Color32::from_black_alpha(90)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(b.name.as_str()).strong());
-                    need_row(ui, w, &b.cost, &me.inventory);
-                    if !b.alt_cost.is_empty() {
-                        ui.label(RichText::new("ya da").small().weak());
-                        need_row(ui, w, &b.alt_cost, &me.inventory);
-                    }
-                    if !b.alt_cost2.is_empty() {
-                        ui.label(RichText::new("ya da").small().weak());
-                        need_row(ui, w, &b.alt_cost2, &me.inventory);
-                    }
-                    needs_row(ui, w, &b.needs, &me.inventory);
-                    if let Some(note) = machine_note(b.kind) {
-                        ui.label(RichText::new(note).small().weak());
-                    }
-                    if b.heavy() && w.knows(Discovery::Hoisting) {
-                        ui.label(RichText::new("Büyük yapı: vinç yakınında dörtte bir ucuz.").small().weak());
-                    }
-                    if let Some(req) = b.kind.requirement() {
-                        if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
-                            ui.label(RichText::new(requirement_note(req)).small().color(Color32::from_rgb(220, 180, 110)));
-                        }
-                    }
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let on = ui_ctx.build_mode == Some(b.kind);
-                    if ui.add_enabled(b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory), egui::Button::new("Yerleştir").selected(on).min_size(egui::vec2(80.0, 28.0))).clicked() {
-                        acts.push(UiAction::BeginBuild(b.kind));
-                    }
-                });
-            });
-        });
-    };
-    // grouped by what the building is for; a group opens by itself while there is something in it to build now
-    for (gi, name) in BUILD_GROUPS.iter().enumerate() {
-        let group: Vec<_> = known.iter().copied().filter(|b| build_group(b.kind) == gi).collect();
-        if group.is_empty() {
-            continue;
-        }
-        let ready = group.iter().filter(|b| b.cost_for(|c| me.inventory.has(c)).is_some() && has_needs(&b.needs, &me.inventory)).count();
-        let title = if ready > 0 { format!("{name} ({} / {} hazır)", ready, group.len()) } else { format!("{name} ({})", group.len()) };
-        // early on, with a handful of buildings known, everything is open; later the groups fold up to a line each
-        // (ALAZ_DEMO_GROUP=<n> keeps group n open for screenshots)
-        let open = known.len() <= 8 || std::env::var("ALAZ_DEMO_GROUP").ok().and_then(|v| v.parse::<usize>().ok()) == Some(gi);
-        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(("build_group", gi)).default_open(open).show(ui, |ui| {
-            for b in group {
-                card(ui, b, acts);
-            }
-        });
-    }
-    ui.add_space(4.0);
-    let snap = if ui_ctx.grid_snap { "açık" } else { "kapalı" };
-    if ui.small_button(format!("Izgaraya oturt: {snap} [{}]", ui_ctx.binds.short(Action::Grid))).clicked() {
-        acts.push(UiAction::ToggleGrid);
-    }
-    if let Some(kind) = ui_ctx.build_mode {
-        ui.colored_label(Color32::from_rgb(140, 220, 140), format!("{}: sol tık yerleştirir, {} döndürür, sağ tık iptal eder", defs.building(kind).name, ui_ctx.binds.short(Action::Routes)));
     }
 }
 
@@ -2036,8 +1706,11 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         draw_hints(ctx, w, ui_ctx, ui_ctx.tab.is_some());
     }
     draw_action_bar(ctx, w, me, ui_ctx, acts);
+    crate::inv::draw_window(ctx, &mut crate::inv::Cx { w, me, ui_ctx, hands: &mut knap.hands, acts });
     // while a workpiece is on the bench the bench panel steps aside instead of lying under it
-    if let Some(tab) = ui_ctx.tab.filter(|_| w.craft_view(ui_ctx.me).is_none()) {
+    // (the bag, craft and build tabs live in the inventory window)
+    let side_tab = ui_ctx.tab.filter(|t| !matches!(t, Tab::Bag | Tab::Craft | Tab::Build));
+    if let Some(tab) = side_tab.filter(|_| w.craft_view(ui_ctx.me).is_none()) {
         egui::Area::new(egui::Id::NULL.with("tab")).anchor(Align2::CENTER_BOTTOM, [0.0, -70.0]).show(ctx, |ui| {
             panel(ui, 6.0, |ui| {
                 ui.set_width(600.0_f32.min(ctx.content_rect().width() - 40.0));
@@ -2073,9 +1746,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| match tab {
-                    Tab::Bag => tab_bag(ui, w, me, acts),
-                    Tab::Craft => tab_craft(ui, w, me, &mut knap.hands, acts),
-                    Tab::Build => tab_build(ui, w, me, ui_ctx, acts),
+                    Tab::Bag | Tab::Craft | Tab::Build => {}
                     Tab::Goals => tab_goals(ui, w),
                     Tab::Journal => crate::journal_ui::tab_journal(ui, w, &mut knap.journal),
                     Tab::Routes => tab_routes(ui, w, ui_ctx, acts),
@@ -2114,8 +1785,9 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
     let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave { None } else { ui_ctx.selection };
     match selection {
         Some(Selection::Building(i)) => {
-            if let Some(b) = w.buildings.get(i) {
-                draw_building(ctx, w, i, b, me, acts);
+            // machines show in the inventory window instead
+            if let Some(b) = w.buildings.get(i).filter(|b| !crate::inv::machine::opens_window(w, b.kind)) {
+                draw_building(ctx, w, i, b, acts);
             }
         }
         Some(Selection::Agent(i)) => {
@@ -2848,12 +2520,10 @@ fn draw_building(
     w: &World,
     i: usize,
     b: &alaz_sim::Building,
-    me: &alaz_sim::world::Agent,
     acts: &mut Vec<UiAction>,
 ) {
     let defs = rules();
     let def = defs.building(b.kind);
-    let inv = &me.inventory;
     egui::Area::new(egui::Id::NULL.with("building")).anchor(Align2::RIGHT_TOP, [-12.0, 12.0]).show(ctx, |ui| {
         panel(ui, 6.0, |ui| {
             ui.set_min_width(280.0);
@@ -2890,288 +2560,201 @@ fn draw_building(
                 });
             }
             ui.separator();
-            if b.kind.burns() {
-                let frac = b.fuel as f32 / FIRE_FUEL_MAX as f32;
-                let secs = b.fuel as u64 / TICKS_PER_SECOND;
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &format!("Yakıt {}:{:02}", secs / 60, secs % 60), frac, Color32::from_rgb(232, 118, 44), 270.0);
-                if ui.add_enabled(inv.get(ItemKind::Wood) > 0, egui::Button::new("Odun at (+1 odun)")).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Refuel { building: i as u32 }));
-                }
-            }
-            if def.heat_max > 0 {
-                // the eye reads heat as colour first; only a learned tribe puts a number on it
-                let t = b.temp;
-                let label = if w.perception_level() >= 3 { format!("Sıcaklık {t} °C · {}", heat_word(t)) } else { format!("Sıcaklık: {}", heat_word(t)) };
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &label, t as f32 / def.heat_max as f32, heat_colour(t), 270.0);
-                if let Some(job) = &b.job {
-                    let need = defs.recipes[job.recipe as usize].heat;
-                    if b.temp < need {
-                        let goal = if w.perception_level() >= 3 { format!("{need} °C") } else { heat_word(need).to_string() };
-                        ui.label(RichText::new(format!("Isınıyor: iş {goal} olunca başlar.")).small().color(Color32::from_rgb(240, 190, 110)));
-                    }
-                }
-            }
-            if let Some(note) = machine_note(b.kind) {
-                ui.label(RichText::new(note).small().weak());
-            }
-            if let Some(req) = b.kind.requirement() {
-                if !w.requirement_met(i) {
-                    ui.label(RichText::new(requirement_missing(req)).small().color(Color32::from_rgb(235, 140, 90)));
-                } else if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
-                    ui.label(RichText::new("Çalışmaya hazır.").small().color(Color32::from_rgb(130, 200, 130)));
-                }
-            }
-            if b.kind == BuildingKind::Shelter {
-                ui.label("Yakınında durunca gece soğuğundan korunursun.");
-            }
-            if b.kind == BuildingKind::Ruin {
-                // what the eye makes of it depends on how much the tribe understands
-                let was = BuildingKind::ALL.get(b.fuel as usize).map(|k| rules().building(*k).name.clone()).unwrap_or_default();
-                ui.label(if w.perception_level() >= 3 { format!("Önceki bir dünyadan kalma: {was}.") } else { "Yıkılmış taşlar. Birileri bir şey yapmış.".to_string() });
-            }
-            if b.kind == BuildingKind::Computer {
-                let live = w.electric_live().get(i).copied().unwrap_or(false);
-                if !live {
-                    ui.label(RichText::new("Kapalı: bir dinamo ağına (12 m içinde direk) bağla.").small().color(Color32::from_rgb(235, 140, 90)));
-                } else {
-                    design_table(ui, w, acts);
-                }
-            }
-            if b.kind == BuildingKind::DryingRack {
-                let wet = !matches!(w.weather(), alaz_sim::time::Weather::Clear);
-                ui.label(RichText::new(if wet { "Yağmur ya da kar var: kurutma yarı hızda gidiyor." } else { "Hava açık: tam hızda kuruyor." }).small().color(if wet { Color32::from_rgb(235, 140, 90) } else { Color32::from_rgb(130, 200, 130) }));
-            }
-            if b.kind == BuildingKind::Smokehouse {
-                ui.label(RichText::new(if b.temp >= 70 { "Duman yeterince ılık: et tütsüleniyor." } else { "Odun yükle ve bir iş başlat: hafif ısı 70 °C'ye varınca tütsü başlar." }).small().weak());
-            }
-            if b.kind == BuildingKind::Crane {
-                ui.label(RichText::new("10 m içine kurulan büyük yapılar (12 kalem ve üstü) dörtte bir ucuz: Yapılar sekmesinde 'Büyük yapı' yazanlar.").small().weak());
-            }
-            if b.kind == BuildingKind::WaterMill {
-                ui.label(RichText::new("Akarsu çarkı döndürür: başında kimse durmasa da öğütür.").small().weak());
-            }
-            if b.kind == BuildingKind::Boiler {
-                ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor, 6 m içindeki buhar makineleri de buhar alıyor." } else { "Kömür, kok, katran ya da petrol ve iki dolu çömlek yükle: kazan 120 °C'yi geçince çalışır." }).small().weak());
-            }
-            if b.kind == BuildingKind::SteamEngine {
-                ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor." } else { "Kömür (kok ya da katran) ve dolu bir çömlek yükle, buhar kaldır: kazan 120 °C'yi geçince çalışır. 6 m içinde çalışan bir kazan varsa yakıt gerekmez." }).small().weak());
-            }
-            if b.kind == BuildingKind::Transformer {
-                let live = w.electric_live().get(i).copied().unwrap_or(false);
-                ui.label(RichText::new(if live { "Şebeke canlı: 36 m içindeki şebeke binalarına bağlı." } else { "Şebeke canlı değil: bir işe yaramıyor." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
-            }
-            if b.kind == BuildingKind::Accumulator {
-                let frac = b.fuel as f32 / alaz_sim::world::ACCUMULATOR_CAP as f32;
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &format!("Şarj %{}", (frac * 100.0).round() as u32), frac, Color32::from_rgb(120, 200, 255), 270.0);
-                let (live, fed) = w.electric_state();
-                ui.label(RichText::new(if fed.get(i).copied().unwrap_or(false) { "Dinamo besliyor: şarj oluyor." } else if live.get(i).copied().unwrap_or(false) { "Dinamo yok: şebekeyi şarjıyla ayakta tutuyor." } else if b.fuel == 0 { "Şarj bitti. Dönen bir dinamoya bağla." } else { "Şebekeye bağlı değil." }).small().weak());
-            }
-            if b.kind == BuildingKind::Railway {
-                let powered = w.powered_at(b.x, b.y);
-                match w.rail_partner(i) {
-                    Some(j) => {
-                        let o = &w.buildings[j];
-                        let metres = (((o.x - b.x).pow(2) + (o.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
-                        ui.label(RichText::new(format!("Hat: {metres:.0} m ötedeki ray durağına gidiyor.")).small().weak());
-                    }
-                    None => {
-                        ui.label(RichText::new("160 m içinde başka bir ray durağı yok: vagon gidecek yer bulamıyor.").small().color(Color32::from_rgb(235, 140, 90)));
-                    }
-                }
-                ui.label(RichText::new(if powered { format!("Vagonda: {}", fmt_counts(&b.output)) } else { "Güç yok: vagon durağan (8 m içinde su çarkı, yel değirmeni, buhar ya da elektrik motoru gerek).".to_string() }).small().color(if powered { Color32::from_rgb(180, 200, 180) } else { Color32::from_rgb(235, 140, 90) }));
-            }
-            if matches!(b.kind, BuildingKind::Telegraph | BuildingKind::Radio) {
-                let live = w.electric_live().get(i).copied().unwrap_or(false);
-                if !live {
-                    ui.label(RichText::new("Sessiz: şebeke canlı değil.").small().color(Color32::from_rgb(235, 140, 90)));
-                } else {
-                    let report = w.remote_depots(i);
-                    if report.is_empty() {
-                        ui.label(RichText::new(if b.kind == BuildingKind::Radio { "Menzilde (400 m) başka radyo ya da onun ambarı yok." } else { "Hatta başka telgraf noktası ya da onun ambarı yok." }).small().weak());
-                    }
-                    for (j, total) in report {
-                        let d = &w.buildings[j];
-                        let metres = (((d.x - b.x).pow(2) + (d.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
-                        let name = defs.building(d.kind).name.as_str();
-                        let mood = if total == 0 { "boş" } else if total > 400 { "dolu" } else { "var" };
-                        ui.label(RichText::new(format!("{name}, {metres:.0} m: {total} parça ({mood}). {}", fmt_counts(&d.output))).small());
-                    }
-                    if b.kind == BuildingKind::Radio {
-                        let names = w.forecast().map(|s| match s {
-                            alaz_sim::time::Weather::Clear => "açık",
-                            alaz_sim::time::Weather::Rain => "yağmur",
-                            alaz_sim::time::Weather::Snow => "kar",
-                        });
-                        ui.label(RichText::new(format!("Hava (4 saatlik bloklar): {}", names.join(" → "))).small().color(Color32::from_rgb(170, 200, 235)));
-                    }
-                }
-            }
-            if b.kind == BuildingKind::Cooler {
-                let live = w.electric_live().get(i).copied().unwrap_or(false);
-                ui.label(RichText::new(if live { "Çalışıyor: içindeki yiyecek kilerden 3 kat yavaş bozulur." } else { "Elektrik yok: soğutmuyor, sıradan bir kutu." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
-                ui.label(format!("İçindekiler: {}", fmt_counts(&b.output)));
-                if ui.button("Hepsini yükle (araçlar hariç)").clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-                }
-                ui.horizontal_wrapped(|ui| {
-                    for k in ItemKind::ALL {
-                        let n = b.output[k as usize];
-                        if n > 0 && ui.small_button(format!("Al: {} ({})", item_name(k), n)).clicked() {
-                            acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: Some(k) }));
-                        }
-                    }
-                });
-            }
-            if b.kind == BuildingKind::AssemblyRobot {
-                let live = w.electric_live().get(i).copied().unwrap_or(false);
-                let what = b.auto.map(|a| defs.recipes[a as usize].name.as_str());
-                ui.label(RichText::new(match (live, what) {
-                    (false, _) => "Şebeke yok: robot duruyor.".to_string(),
-                    (true, Some(n)) => format!("Zinciri yürütüyor: {n}. Yanındaki makinelerden malzemeyi kendi alır."),
-                    (true, None) => "Boşta: yanında kendi tarifine yetecek malzeme bekliyor (ya da bir tarifi otomatiğe ayarla).".to_string(),
-                }).small().weak());
-            }
-            if b.kind == BuildingKind::Pump {
-                ui.label(RichText::new("Güç varken 15 m içindeki mağaranın en dip odasını kuru tutar.").small().weak());
-            }
-            if b.kind == BuildingKind::Conveyor {
-                ui.label(RichText::new("Güç varken (8 m içinde su çarkı ya da yel değirmeni, 6 m içinde manej) 3 m içindeki istasyonların ürününü 12 m içindeki en yakın ambara taşır.").small().weak());
-            }
-            if b.kind == BuildingKind::Bloomery || b.kind == BuildingKind::BlastFurnace {
-                ui.label(RichText::new("Demir için 1150 °C gerek: 3 m içinde çalışan bir körük olmazsa 1000 °C'yi geçmez. Körüğü başında durarak, manejle ya da su çarkıyla çalıştır.").small().weak());
-            }
-            if b.kind == BuildingKind::TripHammer {
-                ui.label(RichText::new("8 m içindeki bir su çarkı (ya da manejde bir hayvan) çekici kaldırır: süngerimsi demiri kendi döver.").small().weak());
-            }
-            if b.kind == BuildingKind::HandMill {
-                ui.label(RichText::new("Başında biri durunca ya da 6 m içindeki bir manejde öküz veya at dönünce öğütür; hayvan üç kat hızlı.").small().weak());
-            }
-            if b.kind == BuildingKind::AnimalGin {
-                ui.label(RichText::new("Bir öküz ya da atı buraya getir (işçi panelinde ağıla götürür gibi): 6 m içindeki değirmeni çevirir.").small().weak());
-            }
-            if b.kind == BuildingKind::Field {
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Food, &format!("Toprak verimi %{}", b.fertility / 10), b.fertility as f32 / 1000.0, Color32::from_rgb(140, 110, 60), 270.0);
-                if w.season() == 3 {
-                    ui.label(RichText::new("Kış: ekin büyümez.").small().color(Color32::from_rgb(170, 200, 240)));
-                }
-                ui.label(RichText::new("Her hasat toprağı yorar; boş kalan tarla dinlenir, ağıldan gübre koymak verimi artırır.").small().weak());
-            }
-            if b.kind == BuildingKind::Pen {
-                let r2 = alaz_sim::world::PEN_RADIUS_MM * alaz_sim::world::PEN_RADIUS_MM;
-                let inside: Vec<String> = [AgentKind::Ox, AgentKind::Horse, AgentKind::Dog]
-                    .into_iter()
-                    .map(|k| (k, w.agents.iter().filter(|a| a.kind == k && (a.x - b.x).pow(2) + (a.y - b.y).pow(2) <= r2).count()))
-                    .filter(|(_, n)| *n > 0)
-                    .map(|(k, n)| format!("{n} {}", kind_name(k).to_lowercase()))
-                    .collect();
-                ui.label(if inside.is_empty() { "Ağıl boş.".to_string() } else { format!("İçeride: {}", inside.join(", ")) });
-                ui.label(RichText::new("Aynı türden iki hayvan içerideyken yem verirsen yavru olur.").small().weak());
-            }
-            if b.kind == BuildingKind::Depot {
-                ui.label(format!("İçindekiler: {}", fmt_counts(&b.output)));
-                ui.label(RichText::new("Aç kalan işçiler buradaki yemiş/kömürden kendi kendine yer.").small().weak());
-                let jars = b.output[ItemKind::LargePot as usize].min(4);
-                ui.label(RichText::new(if jars > 0 {
-                    format!("{jars} büyük çömlek: buradaki yiyecek {} kat yavaş bozulur.", 1 + jars)
-                } else {
-                    "Buraya konan büyük çömlekler yiyeceğin bozulmasını yavaşlatır.".to_string()
-                }).small().weak());
-                if ui.button("Hepsini yükle (araçlar hariç)").clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-                }
-                ui.horizontal_wrapped(|ui| {
-                    for k in ItemKind::ALL {
-                        let n = b.output[k as usize];
-                        if n > 0 && ui.small_button(format!("Al: {} ({})", item_name(k), n)).clicked() {
-                            acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: Some(k) }));
-                        }
-                    }
-                });
-            }
-            let recipes: Vec<(usize, &_)> =
-                defs.recipes.iter().enumerate().filter(|(_, r)| r.station == Some(b.kind) && r.discovery != Discovery::Retired).collect();
-            // alloying: the share of the loaded ores against the range that makes good metal
-            if let Some(al) = recipes.iter().find_map(|(_, r)| r.alloy) {
-                let (base, add) = (b.input[al.base as usize] as u32, b.input[al.add as usize] as u32);
-                let realistic = w.settings.difficulty == alaz_sim::world::Difficulty::Realistic;
-                let (lo, hi) = if realistic { (al.lo_realistic, al.hi_realistic) } else { (al.lo, al.hi) };
-                if base + add > 0 {
-                    let share = base * 100 / (base + add);
-                    let good = (lo as u32..=hi as u32).contains(&share);
-                    let col = if good { Color32::from_rgb(130, 215, 130) } else { Color32::from_rgb(235, 140, 90) };
-                    let label = if w.perception_level() >= 3 { format!("{}: %{share} (iyi: %{lo}–{hi})", item_name(al.base)) } else if good { "Karışım iyi görünüyor".to_string() } else { "Karışım tutmuyor".to_string() };
-                    crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &label, share as f32 / 100.0, col, 270.0);
-                    ui.label(RichText::new(format!("{} taş yüklü: {} külçe çıkar (4 taş bir külçe).", base + add, (base + add) / al.ores_per_ingot.max(1))).small().weak());
-                } else {
-                    ui.label(RichText::new(format!("Bakır ve kalay taşı yükle: {}–{} bakır ölçüsünde bronz olur.", lo, hi)).small().weak());
-                }
-            }
-            if !recipes.is_empty() {
-                ui.label(format!("Girdi deposu: {}", fmt_counts(&b.input)));
-                if ui.button("Girdileri yükle").clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Deposit { building: i as u32 }));
-                }
-                if let Some(job) = &b.job {
-                    let r = &defs.recipes[job.recipe as usize];
-                    let done = 1.0 - job.remaining as f32 / r.ticks as f32;
-                    let left = job.remaining as u64 / TICKS_PER_SECOND;
-                    crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Hammer, &format!("{} · {} sn kaldı", r.name, left), done, Color32::from_rgb(120, 190, 120), 270.0);
-                }
-                for (ri, r) in recipes {
-                    if !w.knows(r.discovery) {
-                        ui.add_enabled(false, egui::Button::new(format!("{} (henüz bilinmiyor)", r.name)));
-                        continue;
-                    }
-                    let label = format!("{} ({} sn)", r.name, r.ticks as u64 / TICKS_PER_SECOND);
-                    egui::Frame::new()
-                        .fill(Color32::from_rgba_unmultiplied(0, 0, 0, 60))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(70, 56, 40)))
-                        .corner_radius(0)
-                        .inner_margin(6)
-                        .show(ui, |ui| {
-                            ui.set_width(258.0);
-                            need_row(ui, w, &r.inputs, inv);
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("->").strong().color(Color32::from_rgb(240, 200, 100)));
-                                match r.spawns {
-                                    Some(k) => {
-                                        ui.label(kind_name(k));
-                                    }
-                                    None => {
-                                        for it in &r.outputs {
-                                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                                            crate::icons::draw_slot(ui.painter(), rect, it.item, w.has_seen(it.item));
-                                            resp.on_hover_text(crate::lang::item_word(w, it.item));
-                                            ui.label(format!("x{}", it.n));
-                                        }
-                                    }
-                                }
-                            });
-                    ui.horizontal(|ui| {
-                        let can_start = b.job.is_none() && inv.has(&r.inputs);
-                        if ui.add_enabled(can_start, egui::Button::new(label)).clicked() {
-                            acts.push(UiAction::Cmd(CommandKind::StartJob {
-                                building: i as u32,
-                                recipe: RecipeId(ri as u16),
-                            }));
-                        }
-                        let auto_on = b.auto == Some(ri as u16);
-                        if ui.selectable_label(auto_on, "Otomatik").clicked() {
-                            acts.push(UiAction::Cmd(CommandKind::SetAuto {
-                                building: i as u32,
-                                recipe: if auto_on { None } else { Some(RecipeId(ri as u16)) },
-                            }));
-                        }
-                    });
-                        });
-                }
-                if b.output_total() > 0 && ui.button(format!("Topla: {}", fmt_counts(&b.output))).clicked() {
-                    acts.push(UiAction::Cmd(CommandKind::Collect { building: i as u32, item: None }));
-                }
-            }
+            building_notes(ui, w, i, b, acts);
             ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
         });
     });
+}
+
+/// What is said about one building besides its slots: heat, notes, warnings, requirement lines. The building panel
+/// and the machine tab both show it.
+pub(crate) fn building_notes(ui: &mut egui::Ui, w: &World, i: usize, b: &alaz_sim::Building, acts: &mut Vec<UiAction>) {
+    let defs = rules();
+    let def = defs.building(b.kind);
+    if def.heat_max > 0 {
+        // the eye reads heat as colour first; only a learned tribe puts a number on it
+        let t = b.temp;
+        let label = if w.perception_level() >= 3 { format!("Sıcaklık {t} °C · {}", heat_word(t)) } else { format!("Sıcaklık: {}", heat_word(t)) };
+        crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &label, t as f32 / def.heat_max as f32, heat_colour(t), 270.0);
+        if let Some(job) = &b.job {
+            let need = defs.recipes[job.recipe as usize].heat;
+            if b.temp < need {
+                let goal = if w.perception_level() >= 3 { format!("{need} °C") } else { heat_word(need).to_string() };
+                ui.label(RichText::new(format!("Isınıyor: iş {goal} olunca başlar.")).small().color(Color32::from_rgb(240, 190, 110)));
+            }
+        }
+    }
+    if let Some(note) = machine_note(b.kind) {
+        ui.label(RichText::new(note).small().weak());
+    }
+    if let Some(req) = b.kind.requirement() {
+        if !w.requirement_met(i) {
+            ui.label(RichText::new(requirement_missing(req)).small().color(Color32::from_rgb(235, 140, 90)));
+        } else if !matches!(req, alaz_sim::buildings::Requirement::Blast) {
+            ui.label(RichText::new("Çalışmaya hazır.").small().color(Color32::from_rgb(130, 200, 130)));
+        }
+    }
+    if b.kind == BuildingKind::Shelter {
+        ui.label("Yakınında durunca gece soğuğundan korunursun.");
+    }
+    if b.kind == BuildingKind::Ruin {
+        // what the eye makes of it depends on how much the tribe understands
+        let was = BuildingKind::ALL.get(b.fuel as usize).map(|k| rules().building(*k).name.clone()).unwrap_or_default();
+        ui.label(if w.perception_level() >= 3 { format!("Önceki bir dünyadan kalma: {was}.") } else { "Yıkılmış taşlar. Birileri bir şey yapmış.".to_string() });
+    }
+    if b.kind == BuildingKind::Computer {
+        let live = w.electric_live().get(i).copied().unwrap_or(false);
+        if !live {
+            ui.label(RichText::new("Kapalı: bir dinamo ağına (12 m içinde direk) bağla.").small().color(Color32::from_rgb(235, 140, 90)));
+        } else {
+            design_table(ui, w, acts);
+        }
+    }
+    if b.kind == BuildingKind::DryingRack {
+        let wet = !matches!(w.weather(), alaz_sim::time::Weather::Clear);
+        ui.label(RichText::new(if wet { "Yağmur ya da kar var: kurutma yarı hızda gidiyor." } else { "Hava açık: tam hızda kuruyor." }).small().color(if wet { Color32::from_rgb(235, 140, 90) } else { Color32::from_rgb(130, 200, 130) }));
+    }
+    if b.kind == BuildingKind::Smokehouse {
+        ui.label(RichText::new(if b.temp >= 70 { "Duman yeterince ılık: et tütsüleniyor." } else { "Odun yükle ve bir iş başlat: hafif ısı 70 °C'ye varınca tütsü başlar." }).small().weak());
+    }
+    if b.kind == BuildingKind::Crane {
+        ui.label(RichText::new("10 m içine kurulan büyük yapılar (12 kalem ve üstü) dörtte bir ucuz: Yapılar sekmesinde 'Büyük yapı' yazanlar.").small().weak());
+    }
+    if b.kind == BuildingKind::WaterMill {
+        ui.label(RichText::new("Akarsu çarkı döndürür: başında kimse durmasa da öğütür.").small().weak());
+    }
+    if b.kind == BuildingKind::Boiler {
+        ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor, 6 m içindeki buhar makineleri de buhar alıyor." } else { "Kömür, kok, katran ya da petrol ve iki dolu çömlek yükle: kazan 120 °C'yi geçince çalışır." }).small().weak());
+    }
+    if b.kind == BuildingKind::SteamEngine {
+        ui.label(RichText::new(if b.steaming() { "Buhar var: 8 m içindeki makineleri çeviriyor." } else { "Kömür (kok ya da katran) ve dolu bir çömlek yükle, buhar kaldır: kazan 120 °C'yi geçince çalışır. 6 m içinde çalışan bir kazan varsa yakıt gerekmez." }).small().weak());
+    }
+    if b.kind == BuildingKind::Transformer {
+        let live = w.electric_live().get(i).copied().unwrap_or(false);
+        ui.label(RichText::new(if live { "Şebeke canlı: 36 m içindeki şebeke binalarına bağlı." } else { "Şebeke canlı değil: bir işe yaramıyor." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
+    }
+    if b.kind == BuildingKind::Accumulator {
+        let frac = b.fuel as f32 / alaz_sim::world::ACCUMULATOR_CAP as f32;
+        crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &format!("Şarj %{}", (frac * 100.0).round() as u32), frac, Color32::from_rgb(120, 200, 255), 270.0);
+        let (live, fed) = w.electric_state();
+        ui.label(RichText::new(if fed.get(i).copied().unwrap_or(false) { "Dinamo besliyor: şarj oluyor." } else if live.get(i).copied().unwrap_or(false) { "Dinamo yok: şebekeyi şarjıyla ayakta tutuyor." } else if b.fuel == 0 { "Şarj bitti. Dönen bir dinamoya bağla." } else { "Şebekeye bağlı değil." }).small().weak());
+    }
+    if b.kind == BuildingKind::Railway {
+        let powered = w.powered_at(b.x, b.y);
+        match w.rail_partner(i) {
+            Some(j) => {
+                let o = &w.buildings[j];
+                let metres = (((o.x - b.x).pow(2) + (o.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
+                ui.label(RichText::new(format!("Hat: {metres:.0} m ötedeki ray durağına gidiyor.")).small().weak());
+            }
+            None => {
+                ui.label(RichText::new("160 m içinde başka bir ray durağı yok: vagon gidecek yer bulamıyor.").small().color(Color32::from_rgb(235, 140, 90)));
+            }
+        }
+        ui.label(RichText::new(if powered { format!("Vagonda: {}", fmt_counts(&b.output)) } else { "Güç yok: vagon durağan (8 m içinde su çarkı, yel değirmeni, buhar ya da elektrik motoru gerek).".to_string() }).small().color(if powered { Color32::from_rgb(180, 200, 180) } else { Color32::from_rgb(235, 140, 90) }));
+    }
+    if matches!(b.kind, BuildingKind::Telegraph | BuildingKind::Radio) {
+        let live = w.electric_live().get(i).copied().unwrap_or(false);
+        if !live {
+            ui.label(RichText::new("Sessiz: şebeke canlı değil.").small().color(Color32::from_rgb(235, 140, 90)));
+        } else {
+            let report = w.remote_depots(i);
+            if report.is_empty() {
+                ui.label(RichText::new(if b.kind == BuildingKind::Radio { "Menzilde (400 m) başka radyo ya da onun ambarı yok." } else { "Hatta başka telgraf noktası ya da onun ambarı yok." }).small().weak());
+            }
+            for (j, total) in report {
+                let d = &w.buildings[j];
+                let metres = (((d.x - b.x).pow(2) + (d.y - b.y).pow(2)) as f64).sqrt() / 1000.0;
+                let name = defs.building(d.kind).name.as_str();
+                let mood = if total == 0 { "boş" } else if total > 400 { "dolu" } else { "var" };
+                ui.label(RichText::new(format!("{name}, {metres:.0} m: {total} parça ({mood}). {}", fmt_counts(&d.output))).small());
+            }
+            if b.kind == BuildingKind::Radio {
+                let names = w.forecast().map(|s| match s {
+                    alaz_sim::time::Weather::Clear => "açık",
+                    alaz_sim::time::Weather::Rain => "yağmur",
+                    alaz_sim::time::Weather::Snow => "kar",
+                });
+                ui.label(RichText::new(format!("Hava (4 saatlik bloklar): {}", names.join(" → "))).small().color(Color32::from_rgb(170, 200, 235)));
+            }
+        }
+    }
+    if b.kind == BuildingKind::Cooler {
+        let live = w.electric_live().get(i).copied().unwrap_or(false);
+        ui.label(RichText::new(if live { "Çalışıyor: içindeki yiyecek kilerden 3 kat yavaş bozulur." } else { "Elektrik yok: soğutmuyor, sıradan bir kutu." }).small().color(if live { Color32::from_rgb(130, 200, 130) } else { Color32::from_rgb(235, 140, 90) }));
+    }
+    if b.kind == BuildingKind::AssemblyRobot {
+        let live = w.electric_live().get(i).copied().unwrap_or(false);
+        let what = b.auto.map(|a| defs.recipes[a as usize].name.as_str());
+        ui.label(RichText::new(match (live, what) {
+            (false, _) => "Şebeke yok: robot duruyor.".to_string(),
+            (true, Some(n)) => format!("Zinciri yürütüyor: {n}. Yanındaki makinelerden malzemeyi kendi alır."),
+            (true, None) => "Boşta: yanında kendi tarifine yetecek malzeme bekliyor (ya da bir tarifi otomatiğe ayarla).".to_string(),
+        }).small().weak());
+    }
+    if b.kind == BuildingKind::Pump {
+        ui.label(RichText::new("Güç varken 15 m içindeki mağaranın en dip odasını kuru tutar.").small().weak());
+    }
+    if b.kind == BuildingKind::Conveyor {
+        ui.label(RichText::new("Güç varken (8 m içinde su çarkı ya da yel değirmeni, 6 m içinde manej) 3 m içindeki istasyonların ürününü 12 m içindeki en yakın ambara taşır.").small().weak());
+    }
+    if b.kind == BuildingKind::Bloomery || b.kind == BuildingKind::BlastFurnace {
+        ui.label(RichText::new("Demir için 1150 °C gerek: 3 m içinde çalışan bir körük olmazsa 1000 °C'yi geçmez. Körüğü başında durarak, manejle ya da su çarkıyla çalıştır.").small().weak());
+    }
+    if b.kind == BuildingKind::TripHammer {
+        ui.label(RichText::new("8 m içindeki bir su çarkı (ya da manejde bir hayvan) çekici kaldırır: süngerimsi demiri kendi döver.").small().weak());
+    }
+    if b.kind == BuildingKind::HandMill {
+        ui.label(RichText::new("Başında biri durunca ya da 6 m içindeki bir manejde öküz veya at dönünce öğütür; hayvan üç kat hızlı.").small().weak());
+    }
+    if b.kind == BuildingKind::AnimalGin {
+        ui.label(RichText::new("Bir öküz ya da atı buraya getir (işçi panelinde ağıla götürür gibi): 6 m içindeki değirmeni çevirir.").small().weak());
+    }
+    if b.kind == BuildingKind::Field {
+        crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Food, &format!("Toprak verimi %{}", b.fertility / 10), b.fertility as f32 / 1000.0, Color32::from_rgb(140, 110, 60), 270.0);
+        if w.season() == 3 {
+            ui.label(RichText::new("Kış: ekin büyümez.").small().color(Color32::from_rgb(170, 200, 240)));
+        }
+        ui.label(RichText::new("Her hasat toprağı yorar; boş kalan tarla dinlenir, ağıldan gübre koymak verimi artırır.").small().weak());
+    }
+    if b.kind == BuildingKind::Pen {
+        let r2 = alaz_sim::world::PEN_RADIUS_MM * alaz_sim::world::PEN_RADIUS_MM;
+        let inside: Vec<String> = [AgentKind::Ox, AgentKind::Horse, AgentKind::Dog]
+            .into_iter()
+            .map(|k| (k, w.agents.iter().filter(|a| a.kind == k && (a.x - b.x).pow(2) + (a.y - b.y).pow(2) <= r2).count()))
+            .filter(|(_, n)| *n > 0)
+            .map(|(k, n)| format!("{n} {}", kind_name(k).to_lowercase()))
+            .collect();
+        ui.label(if inside.is_empty() { "Ağıl boş.".to_string() } else { format!("İçeride: {}", inside.join(", ")) });
+        ui.label(RichText::new("Aynı türden iki hayvan içerideyken yem verirsen yavru olur.").small().weak());
+    }
+    if b.kind == BuildingKind::Depot {
+        ui.label(RichText::new("Aç kalan işçiler buradaki yemiş/kömürden kendi kendine yer.").small().weak());
+        let jars = b.output[ItemKind::LargePot as usize].min(4);
+        ui.label(RichText::new(if jars > 0 {
+            format!("{jars} büyük çömlek: buradaki yiyecek {} kat yavaş bozulur.", 1 + jars)
+        } else {
+            "Buraya konan büyük çömlekler yiyeceğin bozulmasını yavaşlatır.".to_string()
+        }).small().weak());
+    }
+    let recipes: Vec<(usize, &_)> =
+        defs.recipes.iter().enumerate().filter(|(_, r)| r.station == Some(b.kind) && r.discovery != Discovery::Retired).collect();
+    // alloying: the share of the loaded ores against the range that makes good metal
+    if let Some(al) = recipes.iter().find_map(|(_, r)| r.alloy) {
+        let (base, add) = (b.input[al.base as usize] as u32, b.input[al.add as usize] as u32);
+        let realistic = w.settings.difficulty == alaz_sim::world::Difficulty::Realistic;
+        let (lo, hi) = if realistic { (al.lo_realistic, al.hi_realistic) } else { (al.lo, al.hi) };
+        if base + add > 0 {
+            let share = base * 100 / (base + add);
+            let good = (lo as u32..=hi as u32).contains(&share);
+            let col = if good { Color32::from_rgb(130, 215, 130) } else { Color32::from_rgb(235, 140, 90) };
+            let label = if w.perception_level() >= 3 { format!("{}: %{share} (iyi: %{lo}–{hi})", item_name(al.base)) } else if good { "Karışım iyi görünüyor".to_string() } else { "Karışım tutmuyor".to_string() };
+            crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Flame, &label, share as f32 / 100.0, col, 270.0);
+            ui.label(RichText::new(format!("{} taş yüklü: {} külçe çıkar (4 taş bir külçe).", base + add, (base + add) / al.ores_per_ingot.max(1))).small().weak());
+        } else {
+            ui.label(RichText::new(format!("Bakır ve kalay taşı yükle: {}–{} bakır ölçüsünde bronz olur.", lo, hi)).small().weak());
+        }
+    }
 }
 
 /// What the design table is being set to (kept in the UI's memory between frames).
@@ -3527,6 +3110,7 @@ mod ui_tests {
         w.forget_everything();
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
@@ -3535,9 +3119,9 @@ mod ui_tests {
         pump(&mut h);
         assert_eq!(h.state().tab, Some(Tab::Craft), "the Yap button opens the craft tab");
         // pick the stone twice, then Dene
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
         assert!(h.state().knap.hands.iter().filter(|&&i| i == ItemKind::Stone as u8).count() == 2, "two stones in hands");
         h.get_by_label("Dene").click();
@@ -3559,10 +3143,11 @@ mod ui_tests {
         w.spawn_agent(sx, sy);
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: Some(Tab::Craft), binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
         h.get_by_label_contains("El 1: ").click();
         h.run();

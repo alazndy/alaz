@@ -45,6 +45,7 @@ pub(crate) fn cave_refuses(k: &CommandKind) -> bool {
             | CommandKind::Build { .. }
             | CommandKind::StartJob { .. }
             | CommandKind::Deposit { .. }
+            | CommandKind::Load { .. }
             | CommandKind::Collect { .. }
             | CommandKind::SetAuto { .. }
             | CommandKind::Tame { .. }

@@ -109,6 +109,8 @@ pub enum CommandKind {
     Camp,
     /// At camp: choose the goal for the next day (from `World::camp_goals`), or drop it.
     SetGoal { goal: Option<crate::journal::Goal> },
+    /// Put up to `n` of one item into a building (same rules as Deposit, one item only).
+    Load { building: u32, item: ItemKind, n: u16 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

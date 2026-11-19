@@ -109,6 +109,7 @@ Fare ile:
 - **Sol tık:** yürü, bina ya da işçi aç.
 - **Sağ tık:** topla, devrik gövdeyi parçala, yerdekini al.
 - **İmleç etiketi:** İmlecin altındaki şeyin adını ve sağ tıkın ne yapacağını gösterir.
+- **Envanter penceresi:** I/C/B ya da bir makineye tıkla. Eşyayı çantadan sürükleyip makineye ya da ellere bırak; tık = 1, Shift+tık = hepsi; pencerenin dışına sürükle = yere bırak.
 
 ## Oynanış
 

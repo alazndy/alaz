@@ -13,6 +13,7 @@ mod audio;
 mod export;
 mod hud;
 mod icons;
+mod inv;
 mod journal_ui;
 mod keys;
 mod lang;
@@ -691,6 +692,8 @@ struct App {
     turn_after: Option<(i64, i64, u8)>,
     grid_snap: bool,
     selected: Option<Selection>,
+    /// The selected machine the player stood within reach of last frame; walking out of reach closes its window.
+    machine_near: Option<usize>,
     recording: bool,
     recorded: Vec<RouteStep>,
     wild_hinted: bool,
@@ -830,6 +833,7 @@ impl App {
             build_mode: None,
             grid_snap: false,
             selected: None,
+            machine_near: None,
             recording: false,
             recorded: Vec::new(),
             wild_hinted: false,
@@ -963,6 +967,27 @@ impl App {
         let (x, y) = self.me_agent().map_or(self.world.spawn_mm, |a| (a.x, a.y));
         self.cam.target.x = x as f32 / 1000.0;
         self.cam.target.z = y as f32 / 1000.0;
+    }
+
+    /// Closes the machine window once the player walks from within reach of the selected machine to beyond it. A
+    /// machine picked from afar stays open (its slots are disabled) until the player has been near it once.
+    fn follow_machine(&mut self) {
+        let near = match self.selected {
+            Some(Selection::Building(i)) => self
+                .world
+                .buildings
+                .get(i)
+                .filter(|b| inv::machine::opens_window(&self.world, b.kind))
+                .zip(self.me_agent())
+                .is_some_and(|(b, me)| inv::machine::within_reach(me, b))
+                .then_some(i),
+            _ => None,
+        };
+        let walked_off = self.machine_near.is_some_and(|was| near != Some(was) && self.selected == Some(Selection::Building(was)));
+        if walked_off {
+            self.selected = None;
+        }
+        self.machine_near = near;
     }
 
     fn me_agent(&self) -> Option<&alaz_sim::world::Agent> {
@@ -1735,6 +1760,7 @@ impl App {
         }
         self.prev_hp = hp;
         self.hurt_flash = (self.hurt_flash - dt * 1.8).max(0.0);
+        self.follow_machine();
         // the ambience follows the player around a few times a second
         self.scene_t -= dt;
         if self.scene_t <= 0.0 {
@@ -1908,6 +1934,10 @@ impl App {
                     }
                 }
                 UiAction::Deselect => self.selected = None,
+                UiAction::CloseWindow => {
+                    self.tab = None;
+                    self.selected = None;
+                }
                 UiAction::ToggleRecording => {
                     if !self.recording {
                         self.recorded.clear();
