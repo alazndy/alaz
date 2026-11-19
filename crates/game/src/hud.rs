@@ -3,7 +3,7 @@ use alaz_sim::rules::{rules, ItemCount};
 use alaz_sim::time::{minute_of_day, TICKS_PER_SECOND};
 use alaz_sim::world::MAX_STAT;
 use alaz_sim::{
-    AgentId, AgentKind, BuildingKind, CommandKind, Discovery, Event, ItemKind, Milestone, RecipeId, Reject, RouteStep,
+    AgentId, AgentKind, BuildingKind, CommandKind, Discovery, Event, ItemKind, Milestone, Reject, RouteStep,
     Terrain,
     World,
 };

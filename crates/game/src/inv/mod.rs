@@ -14,7 +14,6 @@ pub(crate) mod machine;
 
 /// What is being dragged, and where it was picked up.
 // Output and Hand are picked up by the machine and Yap tabs, which are built on this module.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Carry {
     Bag(ItemKind),
@@ -24,7 +23,6 @@ pub(crate) enum Carry {
 
 /// How a slot is drawn and whether it reacts to the pointer.
 // Target is shown by the machine and Yap drop zones, which are built on this module.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SlotLook {
     Normal,
