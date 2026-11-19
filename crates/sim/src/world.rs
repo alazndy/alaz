@@ -1286,6 +1286,13 @@ pub struct World {
     pub caves: std::collections::BTreeMap<u32, crate::caves::Cave>,
 }
 
+/// Whether picking tall grass on this tile can drop grain seed: not where the tufts are flax (wet) or lentil
+/// (warm and dry). Cotton tufts, a rarer pick, are not told apart here.
+pub(crate) fn grass_gives_seed(seed: u64, tx: i32, ty: i32) -> bool {
+    let (warm, wet) = crate::map::climate(seed, tx, ty);
+    wet <= 550 && !(warm > 580 && wet < 480)
+}
+
 impl World {
     pub fn new(seed: u64) -> Self {
         Self::with_size(seed, MAP_W, MAP_H)
@@ -1452,7 +1459,13 @@ impl World {
                 }
             }
             let has = |k: NodeKind, m: u32| n[k as usize] >= m;
-            has(NodeKind::Tree, 4) && has(NodeKind::StoneOutcrop, 3) && has(NodeKind::BerryBush, 1) && has(NodeKind::Deadwood, 1) && has(NodeKind::FiberPlant, 2)
+            // farming starts from seed picked off tall grass, and only dry-enough grass drops it (flax and lentil
+            // grow elsewhere): without a handful of such tufts near, the first harvest takes a long walk
+            let seed_tufts = (-30..=30).flat_map(|dy| (-30..=30).map(move |dx| (dx, dy))).filter(|&(dx, dy)| {
+                self.map.node_for(seed, tx + dx, ty + dy) == Some(NodeKind::FiberPlant) && grass_gives_seed(seed, tx + dx, ty + dy)
+            });
+            seed_tufts.take(8).count() >= 8
+                && has(NodeKind::Tree, 4) && has(NodeKind::StoneOutcrop, 3) && has(NodeKind::BerryBush, 1) && has(NodeKind::Deadwood, 1) && has(NodeKind::FiberPlant, 2)
                 && (-30..=30).step_by(3).any(|dy| (-30..=30).step_by(3).any(|dx| self.map.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
         };
         // clay for the first pots within 150 m, and (newer worlds, whose rock can lie farther off) copper, the first

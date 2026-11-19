@@ -108,6 +108,24 @@ fn spawn_on_land_and_nodes_exist() {
     assert!(w.nodes.len() > 500);
 }
 
+/// Farming starts from seed picked off dry-ground tall grass, so a new world has some of it close to the start.
+#[test]
+fn start_has_seed_grass_nearby() {
+    let mut tested = 0;
+    for plain in [7u64, 11, 23] {
+        let seed = crate::map::tag_seed_natural(plain, 2048);
+        let w = World::with_size(seed, 2048, 2048);
+        tested += 1;
+        let (sx, sy) = ((w.spawn_mm.0 / crate::map::TILE_MM) as i32, (w.spawn_mm.1 / crate::map::TILE_MM) as i32);
+        let n = (-30..=30)
+            .flat_map(|dy| (-30..=30).map(move |dx| (sx + dx, sy + dy)))
+            .filter(|&(x, y)| w.map.node_for(seed, x, y) == Some(NodeKind::FiberPlant) && crate::world::grass_gives_seed(seed, x, y))
+            .count();
+        assert!(n >= 8, "seed {seed}: only {n} seed tufts within 30 tiles of the start");
+    }
+    assert!(tested > 0, "no seed uses the newer generators");
+}
+
 #[test]
 fn gather_fills_inventory_and_depletes_node() {
     let mut w = World::new(1);
