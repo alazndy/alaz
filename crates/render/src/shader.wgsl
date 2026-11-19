@@ -16,6 +16,7 @@ struct Globals {
     occ: vec4<f32>,     // x: how many of `fires` burn
     sun_vp_static: mat4x4<f32>, // the static shadow map's own box (trees and rocks; the shadow map starts as a copy of a window of it)
     cave: vec4<f32>,    // x: 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
+    look: vec4<f32>,    // xyz: a small resource the pointer is on, w: 1 if there is one
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
@@ -939,6 +940,19 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
             let dither = (bayer[c.y * 4u + c.x] + 0.5) / 16.0;
             if (dither < 0.85 * k) { discard; }
+        }
+    }
+    // the same opening over the plant the pointer is on, so a click through a crown is a click on what shows
+    if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && v.glow < 0.5 && globals.look.w > 0.5) {
+        let d = v.world - globals.look.xyz;
+        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
+        let ahead = dot(d, to_eye);
+        let r = length(vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz) * 0.8));
+        if (ahead > 0.6 && r < 1.8) {
+            let k = 1.0 - smoothstep(0.8, 1.8, r);
+            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
+            let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+            if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.85 * k) { discard; }
         }
     }
     let cave_on = globals.cave.x > 0.5;

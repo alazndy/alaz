@@ -6,6 +6,9 @@ pub(crate) const WAVE_SLOTS: [usize; 6] = [22, 23, 26, 27, 63, 67];
 /// Globals slot of the underground flag (`globals.cave.x`): 0 on the surface, else 1 + the torch's strength.
 /// It must not share a slot with anything written on the surface, or models are shaded as if underground.
 pub(crate) const CAVE_SLOT: usize = 120;
+/// Globals slot of the small resource under the pointer (xyz, w = 1 if there is one): crowns open up around it.
+pub(crate) const LOOK_SLOT: usize = 124;
+
 
 const TRACK_SPACING_M: f32 = 0.8;
 const TRACK_LIFETIME_TICKS: u64 = 12 * alaz_sim::time::TICKS_PER_SECOND;
@@ -342,6 +345,13 @@ impl Renderer {
                 None => (a.x as f32 / 1000.0, a.y as f32 / 1000.0),
             };
             g[56..60].copy_from_slice(&[px, gh(px, pz) + 0.9, pz, 1.0]);
+        }
+        // a plant the pointer is on, under a big crown, shows through it
+        if let Some((tx, ty)) = self.hover_node {
+            if let Some(n) = world.node_at(tx, ty).map(|id| &world.nodes[id.0 as usize]).filter(|n| n.kind != alaz_sim::NodeKind::Tree) {
+                let (x, z) = (n.tx as f32 + 0.5, n.ty as f32 + 0.5);
+                g[LOOK_SLOT..LOOK_SLOT + 4].copy_from_slice(&[x, gh(x, z) + 0.4, z, 1.0]);
+            }
         }
         // underground: the cave slot is 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
         if let Some(c) = cave {
@@ -1149,7 +1159,7 @@ impl Renderer {
 
 #[cfg(test)]
 mod globals_slots {
-    use super::{CAVE_SLOT, WAVE_SLOTS};
+    use super::{CAVE_SLOT, LOOK_SLOT, WAVE_SLOTS};
 
     /// The cave flag once shared slot 63 with a wave phase, so on the surface the shader often thought the player was
     /// underground and drew every model nearly black.
@@ -1158,12 +1168,21 @@ mod globals_slots {
         assert!(!WAVE_SLOTS.contains(&CAVE_SLOT), "cave flag shares a slot with a wave phase");
         // `cave` follows `sun_vp_static` (slots 104..120) in the shader's Globals and fits the 656-byte buffer
         assert_eq!(CAVE_SLOT, 120);
-        assert!(CAVE_SLOT + 4 <= 656 / 4);
+        assert!(LOOK_SLOT == CAVE_SLOT + 4 && LOOK_SLOT + 4 <= 656 / 4);
         let shader = include_str!("../shader.wgsl");
         let globals = &shader[shader.find("struct Globals").unwrap()..];
         let globals = &globals[..globals.find("};").unwrap()];
         let tail: Vec<&str> = globals.lines().map(str::trim).filter(|l| !l.is_empty()).rev().take(2).collect();
-        assert!(tail[0].starts_with("cave: vec4<f32>") && tail[1].starts_with("sun_vp_static: mat4x4<f32>"), "{tail:?}");
+        assert!(tail[0].starts_with("look: vec4<f32>") && tail[1].starts_with("cave: vec4<f32>"), "{tail:?}");
         assert!(!shader.contains("globals.cam_r.w > 0.5") && !shader.contains("globals.cam_r.w - 1.0"), "shader still reads the cave flag from cam_r.w");
+    }
+
+    #[test]
+    fn natural_cave_shader_validates() {
+        use wgpu::naga::valid::{Capabilities, ValidationFlags, Validator};
+
+        let source = crate::quality::scene_source(include_str!("../shader.wgsl"), crate::quality::Quality::default());
+        let shader = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&shader).unwrap();
     }
 }

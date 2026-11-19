@@ -2521,6 +2521,20 @@ impl App {
 
     /// Find the closest resource model before the ray reaches the ground.
     fn pick_node(&self, ray: PointerRay, ground: Vec3) -> Option<alaz_sim::NodeId> {
+        let (id, via_crown) = self.pick_node_with(ray, ground, true)?;
+        if !via_crown {
+            return Some(id);
+        }
+        // only a crown is in the way: a small resource showing through it (the crown opens up around it) is what the
+        // pointer is on; the trunk and the crown itself still take the click when nothing else is there
+        match self.pick_node_with(ray, ground, false) {
+            Some((small, _)) if self.world.nodes[small.0 as usize].kind != alaz_sim::NodeKind::Tree => Some(small),
+            _ => Some(id),
+        }
+    }
+
+    /// The node under a ray and whether it was hit through a tree's crown; with `crowns` false a crown is no hit.
+    fn pick_node_with(&self, ray: PointerRay, ground: Vec3, crowns: bool) -> Option<(alaz_sim::NodeId, bool)> {
         let mut top = PointerRay::MAX_MODEL_Y;
         while top > ground.y {
             // Query the node index in short sections along the ray. Even the widest tree has a radius under 4 m.
@@ -2534,18 +2548,21 @@ impl App {
                     let (anchor, radius, height) = alaz_render::node_bounds(&self.world, n);
                     let at = Vec2::from_array(anchor);
                     let base = ray.model_base(self.world.seed, at, radius, bottom)?;
-                    let y = if n.kind == alaz_sim::NodeKind::Tree {
+                    let (y, crown_hit) = if n.kind == alaz_sim::NodeKind::Tree {
                         let crown = base + height * 0.45;
-                        ray.column_hit(at, radius, bottom.max(crown), top.min(base + height))
-                            .or_else(|| ray.column_hit(at, 0.32, bottom.max(base), top.min(crown)))
+                        let in_crown = if crowns { ray.column_hit(at, radius, bottom.max(crown), top.min(base + height)) } else { None };
+                        match in_crown {
+                            Some(y) => (y, true),
+                            None => (ray.column_hit(at, 0.32, bottom.max(base), top.min(crown))?, false),
+                        }
                     } else {
-                        ray.column_hit(at, radius, bottom.max(base), top.min(base + height))
-                    }?;
-                    Some((n, y))
+                        (ray.column_hit(at, radius, bottom.max(base), top.min(base + height))?, false)
+                    };
+                    Some((n, y, crown_hit))
                 })
                 .max_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((n, _)) = hit {
-                return self.world.node_at(n.tx, n.ty);
+            if let Some((n, _, via_crown)) = hit {
+                return self.world.node_at(n.tx, n.ty).map(|id| (id, via_crown));
             }
             top = bottom;
         }

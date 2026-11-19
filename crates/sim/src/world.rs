@@ -1464,7 +1464,10 @@ impl World {
             let seed_tufts = (-30..=30).flat_map(|dy| (-30..=30).map(move |dx| (dx, dy))).filter(|&(dx, dy)| {
                 self.map.node_for(seed, tx + dx, ty + dy) == Some(NodeKind::FiberPlant) && grass_gives_seed(seed, tx + dx, ty + dy)
             });
-            seed_tufts.take(8).count() >= 8
+            // and a temperate start, not a desert (cactus country) that merely happens to be dry
+            let (warm, wet) = crate::map::climate(seed, tx, ty);
+            wet >= 350 && warm <= 650
+                && seed_tufts.take(8).count() >= 8
                 && has(NodeKind::Tree, 4) && has(NodeKind::StoneOutcrop, 3) && has(NodeKind::BerryBush, 1) && has(NodeKind::Deadwood, 1) && has(NodeKind::FiberPlant, 2)
                 && (-30..=30).step_by(3).any(|dy| (-30..=30).step_by(3).any(|dx| self.map.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
         };
