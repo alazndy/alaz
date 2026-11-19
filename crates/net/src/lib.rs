@@ -189,6 +189,7 @@ impl Host {
     }
 
     /// Open this world to the internet through the relay. Returns at once; follow `relay_status`.
+    /// `relay` is a `host:port`. This does not read `ALAZ_RELAY`: callers pass `alaz_net::relay_address()`.
     pub fn open_relay(&mut self, relay: &str) -> Result<(), NetError> {
         self.open_relay_with(relay, relay_client::PING_EVERY)
     }
@@ -273,13 +274,15 @@ impl Host {
             }
         }
         self.waiting = still;
+        let known = world.agents.len() + self.joins_queued as usize;
         for p in &mut self.peers {
             for m in p.conn.recv::<ToHost>() {
                 match m {
                     // clients can never spawn players themselves
-                    ToHost::Cmds(cmds) => {
-                        self.queued.extend(cmds.into_iter().filter(|c| c.kind != CommandKind::Join))
-                    }
+                    // an agent id that names nobody can only be forged or stale, and the sim need not survive it
+                    ToHost::Cmds(cmds) => self
+                        .queued
+                        .extend(cmds.into_iter().filter(|c| c.kind != CommandKind::Join && (c.agent.0 as usize) < known)),
                     ToHost::Resync => p.resync = true,
                     ToHost::Hello { .. } => {}
                 }
@@ -340,6 +343,7 @@ impl Client {
             .next()
             .ok_or_else(|| NetError("adres çözülemedi".into()))?;
         let stream = TcpStream::connect_timeout(&sock, timeout).map_err(|e| err(&e))?;
+        stream::set_keepalive(&stream);
         Self::handshake(Stream::Plain(stream), timeout)
     }
 
@@ -705,6 +709,166 @@ mod tests {
         assert!(!online.lan_open());
         let lan = Host::bind(("0.0.0.0", 0)).unwrap();
         assert!(lan.lan_open());
+    }
+
+    fn keepalive_on(s: &TcpStream) -> bool {
+        let r = socket2::SockRef::from(s);
+        #[cfg(target_os = "linux")]
+        assert_eq!(r.keepalive_time().unwrap(), Duration::from_secs(30));
+        r.keepalive().unwrap()
+    }
+
+    #[test]
+    fn lan_client_socket_has_tcp_keepalive() {
+        let (_host, _hw, client, _cw) = setup();
+        assert!(keepalive_on(client.conn.stream.tcp()), "keepalive not set on the LAN client socket");
+    }
+
+    #[test]
+    fn forged_agent_ids_are_dropped_by_the_host() {
+        let (mut host, hw, mut client, _cw) = setup();
+        let me = client.agent;
+        client.send(vec![
+            Command { agent: AgentId(u32::MAX), kind: CommandKind::MoveTo { x: 0, y: 0 } },
+            Command { agent: AgentId(hw.agents.len() as u32 + 5), kind: CommandKind::Strike },
+            Command { agent: me, kind: CommandKind::Strike },
+        ]);
+        for _ in 0..100 {
+            host.poll(&hw);
+            if !host.queued.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(host.queued.len(), 1, "only the command naming a real agent survives: {:?}", host.queued);
+        assert_eq!(host.queued[0].agent, me);
+    }
+
+    /// Every command shape a peer could send, with extreme fields. A panic in release aborts the game.
+    fn hostile_commands() -> Vec<CommandKind> {
+        use alaz_sim::{BuildingKind, Goal, Milestone, RouteStep};
+        let items = [ItemKind::ALL[0], ItemKind::ALL[ItemKind::ALL.len() - 1]];
+        let b = [BuildingKind::ALL[0], BuildingKind::ALL[BuildingKind::ALL.len() - 1]];
+        let mut v = vec![
+            CommandKind::MoveTo { x: 1_000_000_000, y: -1_000_000_000 },
+            CommandKind::Walk { x: -1_000_000_000, y: 1_000_000_000 },
+            CommandKind::Gather { node: alaz_sim::NodeId(u32::MAX) },
+            CommandKind::Hunt { wild: u32::MAX },
+            CommandKind::Drink { tx: i32::MIN, ty: i32::MAX },
+            CommandKind::Drink { tx: -1, ty: -1 },
+            CommandKind::Craft { recipe: alaz_sim::RecipeId(u16::MAX) },
+            CommandKind::Combine { items: [255; 4] },
+            CommandKind::Combine { items: [0; 4] },
+            CommandKind::Strike,
+            CommandKind::StrikeAt { angle: u16::MAX, power: u8::MAX },
+            CommandKind::StrikeLoose { angle: u16::MAX, power: u8::MAX },
+            CommandKind::Rub { pace: u8::MAX, grip: true },
+            CommandKind::PlaceAt { x: i16::MIN, y: i16::MAX },
+            CommandKind::Tighten { power: u8::MAX },
+            CommandKind::SetClock { minute: u16::MAX },
+            CommandKind::SkipToWeather { sky: u8::MAX },
+            CommandKind::SkipSeason,
+            CommandKind::Tame { wild: u32::MAX },
+            CommandKind::Feed { target: AgentId(u32::MAX) },
+            CommandKind::SetRoute { worker: AgentId(u32::MAX), route: vec![] },
+            CommandKind::SetRoute {
+                worker: AgentId(0),
+                route: (0..2000)
+                    .map(|i| match i % 3 {
+                        0 => RouteStep::Harvest { kind: NodeKind::Tree, x: i64::MAX, y: i64::MIN, radius_mm: i64::MAX },
+                        1 => RouteStep::Wait { ticks: u32::MAX },
+                        _ => RouteStep::Collect { building: u32::MAX, item: None },
+                    })
+                    .collect(),
+            },
+            CommandKind::EnterCave { node: alaz_sim::NodeId(u32::MAX) },
+            CommandKind::CaveDig { tx: i32::MAX, ty: i32::MIN },
+            CommandKind::CaveLeave,
+            CommandKind::SetSprint { on: true },
+            CommandKind::Refuel { building: u32::MAX },
+            CommandKind::Jump,
+            CommandKind::Split { body: u32::MAX },
+            CommandKind::Pick { body: u32::MAX },
+            CommandKind::Prospect,
+            CommandKind::Fish { tx: i32::MIN, ty: i32::MIN },
+            CommandKind::Relocate { building: u32::MAX, x: i64::MAX, y: i64::MIN },
+            CommandKind::Turn { building: u32::MAX },
+            CommandKind::Camp,
+            CommandKind::SetGoal { goal: None },
+            CommandKind::SetGoal { goal: Some(Goal::Reach(Milestone::ALL[Milestone::ALL.len() - 1])) },
+            CommandKind::Design { inputs: vec![], output: (items[0], 0) },
+            CommandKind::Design { inputs: vec![(items[1], u16::MAX); 500], output: (items[1], u16::MAX) },
+        ];
+        for it in items {
+            v.extend([
+                CommandKind::Eat { item: it },
+                CommandKind::Give { item: it, n: u16::MAX },
+                CommandKind::Hitch { worker: AgentId(u32::MAX), item: it },
+                CommandKind::Repair { item: it },
+                CommandKind::Drop { item: it, n: u16::MAX },
+                CommandKind::Load { building: u32::MAX, item: it, n: u16::MAX },
+                CommandKind::Collect { building: u32::MAX, item: Some(it) },
+            ]);
+        }
+        for k in b {
+            v.extend([
+                CommandKind::Build { kind: k, x: i64::MAX, y: i64::MIN },
+                CommandKind::Build { kind: k, x: 0, y: 0 },
+            ]);
+        }
+        for id in [0u32, 1, u32::MAX] {
+            v.extend([
+                CommandKind::StartJob { building: id, recipe: alaz_sim::RecipeId(u16::MAX) },
+                CommandKind::Deposit { building: id },
+                CommandKind::Collect { building: id, item: None },
+                CommandKind::SetAuto { building: id, recipe: Some(alaz_sim::RecipeId(u16::MAX)) },
+                CommandKind::SetAuto { building: id, recipe: None },
+            ]);
+        }
+        v
+    }
+
+    /// Known: the sim overflows in nav.rs (115, 273, 274) on i64-extreme MoveTo/Walk targets from a real agent.
+    fn extreme_moves() -> Vec<CommandKind> {
+        vec![
+            CommandKind::MoveTo { x: i64::MAX, y: i64::MIN },
+            CommandKind::MoveTo { x: i64::MIN, y: i64::MAX },
+            CommandKind::Walk { x: i64::MAX, y: i64::MAX },
+            CommandKind::Walk { x: i64::MIN, y: i64::MIN },
+        ]
+    }
+
+    #[test]
+    #[ignore = "sim overflows on i64-extreme MoveTo/Walk (crates/sim/src/nav.rs); another session owns crates/sim"]
+    fn extreme_move_targets_do_not_panic_the_sim() {
+        assert_no_panics(extreme_moves());
+    }
+
+    #[test]
+    fn hostile_commands_do_not_panic_the_sim() {
+        assert_no_panics(hostile_commands());
+    }
+
+    fn assert_no_panics(kinds: Vec<CommandKind>) {
+        let base = host_world().to_bytes();
+        let mut panicked = Vec::new();
+        for agent in [0u32, 1, 7, u32::MAX] {
+            for kind in &kinds {
+                let cmd = Command { agent: AgentId(agent), kind: kind.clone() };
+                let mut w = World::from_bytes(&base).unwrap();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    w.step(std::slice::from_ref(&cmd));
+                    for _ in 0..3 {
+                        w.step(&[]);
+                    }
+                }));
+                if r.is_err() {
+                    let s = format!("{cmd:?}");
+                    panicked.push(s.chars().take(160).collect::<String>());
+                }
+            }
+        }
+        assert!(panicked.is_empty(), "{} commands panic the sim:\n{}", panicked.len(), panicked.join("\n"));
     }
 
     #[test]

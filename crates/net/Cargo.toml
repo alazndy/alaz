@@ -12,6 +12,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # the relay certificate is checked against these roots only, never the system store
 webpki-roots = "1"
+# TCP keepalive on client sockets; with_interval and with_retries sit behind the "all" feature
+socket2 = { version = "0.5", features = ["all"] }
 
 [dev-dependencies]
 alaz-relay = { path = "../relay" }

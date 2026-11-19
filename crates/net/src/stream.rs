@@ -4,6 +4,18 @@ use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::time::Instant;
 
+/// Detects a dead path (relay VM gone, NAT dropped the mapping) in about a minute instead of the OS default of
+/// hours. Probes only fire on an idle socket; a quiet but healthy host answers them, so no app-level timeout is needed.
+/// Failure to set it is not fatal: the connection just keeps the OS defaults.
+pub(crate) fn set_keepalive(sock: &TcpStream) {
+    let ka = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(30))
+        .with_interval(std::time::Duration::from_secs(10));
+    #[cfg(target_os = "linux")]
+    let ka = ka.with_retries(3);
+    let _ = socket2::SockRef::from(sock).set_tcp_keepalive(&ka);
+}
+
 pub(crate) enum Stream {
     Plain(TcpStream),
     Tls(Box<StreamOwned<ClientConnection, TcpStream>>),

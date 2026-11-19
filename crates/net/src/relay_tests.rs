@@ -77,6 +77,8 @@ fn connect_code_through_relay_reaches_same_hash() {
     let code = open(&mut host, &env);
     let (mut client, mut cw) = join(&mut host, &mut hw, &env, &code.to_string()).unwrap();
     assert_eq!(host.players(), 2);
+    let ka = socket2::SockRef::from(client.conn.stream.tcp());
+    assert!(ka.keepalive().unwrap(), "keepalive not set on the relay client socket");
     run(&mut host, &mut hw, &mut client, &mut cw, 300, |_, _, _, _, _| {});
     settle(&mut host, &mut hw, &mut client, &mut cw);
     assert_eq!(cw.tick, hw.tick);

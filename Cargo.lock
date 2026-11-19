@@ -90,6 +90,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "serde",
+ "socket2",
  "webpki-roots",
 ]
 

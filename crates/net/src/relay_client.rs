@@ -144,6 +144,7 @@ impl Target {
         }
         let sock = sock.ok_or_else(|| err("röleye bağlanılamadı"))?;
         let _ = sock.set_nodelay(true);
+        crate::stream::set_keepalive(&sock);
         let mut conn = ClientConnection::new(tls_config(), name).map_err(|_| err("güvenli bağlantı kurulamadı"))?;
         let mut plain = Stream::Plain(sock);
         while conn.is_handshaking() {
@@ -284,6 +285,10 @@ fn control(
     let target = Target::resolve(relay, until)?;
     let mut ctrl = target.dial(until)?;
     *shared.ctrl.lock().unwrap() = ctrl.tcp().try_clone().ok();
+    // closed while dialing: do not announce a room nobody owns
+    if shared.stop.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     send(&mut ctrl, until, &ToRelay::Open { protocol: RELAY_PROTOCOL })?;
     ctrl.tcp().set_read_timeout(Some(POLL)).map_err(io_err)?;
     ctrl.tcp().set_write_timeout(Some(STEP_WAIT)).map_err(io_err)?;
