@@ -87,6 +87,11 @@ kısa Türkçe bir cümle. Bağlantı koparsa oyun donmaz; mevcut "bağlantı ko
 Katılan oyuncuya tüm dünya tek mesajla gider (`Welcome.snapshot`). İnternette büyük bir dünya yavaş açılabilir.
 Builder ilk iş tipik bir dünyanın boyutunu ölçer; büyükse sıkıştırma ekler (protokol sürümü artırılır).
 
+**Ölçüm (2026-11-19):** `World::to_bytes()`, varsayılan harita 256x256, seed 5, 3 oyuncu, release derleme
+(`cargo test -p alaz-net --release --test snapshot_size -- --ignored --nocapture`; test süresi yaklaşık 3 sn):
+tick 0 = 7745 bayt, tick 1000 = 7912 bayt, tick 20000 = 7958 bayt (yaklaşık 8 KB).
+Eşik 2 MiB; ölçüm eşiğin yaklaşık 260 kat altında. **Sıkıştırma gerekmiyor**, `PROTOCOL` 2 kalır.
+
 ### Test
 - Aracı için yerel testler: eşleme, tünel aktarımı, yanlış kod, dolu oda, süre aşımı, hız ve bağlantı sınırları (kendinden imzalı sertifikayla).
 - Uçtan uca: host + client aracı üzerinden, mevcut `run` yardımcısıyla birkaç yüz tick, hash eşit.
