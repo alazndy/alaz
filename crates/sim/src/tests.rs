@@ -126,6 +126,18 @@ fn start_has_seed_grass_nearby() {
     assert!(tested > 0, "no seed uses the newer generators");
 }
 
+/// The first shelter needs a clear patch near the start, even where the wood is thick.
+#[test]
+fn start_has_room_for_a_shelter() {
+    for plain in [7u64, 11, 23] {
+        let seed = crate::map::tag_seed_natural(plain, 2048);
+        let w = World::with_size(seed, 2048, 2048);
+        let (sx, sy) = ((w.spawn_mm.0 / crate::map::TILE_MM) as i32, (w.spawn_mm.1 / crate::map::TILE_MM) as i32);
+        let clear = (-14..=14).any(|cy| (-14..=14).any(|cx| (-2..=2).all(|dy| (-2..=2).all(|dx| w.map.node_for(seed, sx + cx + dx, sy + cy + dy).is_none()))));
+        assert!(clear, "seed {plain}: no clear 5x5 patch within 14 tiles of the start");
+    }
+}
+
 #[test]
 fn gather_fills_inventory_and_depletes_node() {
     let mut w = World::new(1);

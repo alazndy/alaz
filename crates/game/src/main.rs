@@ -2017,7 +2017,12 @@ impl App {
             let me = self.me_agent()?;
             self.world.nodes.iter().filter(|n| n.kind == alaz_sim::NodeKind::Tree).min_by_key(|n| dist2(me.x, me.y, n.center_mm().0, n.center_mm().1)).map(|n| (n.tx, n.ty))
         });
-        let pointer_text = if pointer_active { self.pointer_text(surface, picked) } else { None };
+        let pointer_text = if pointer_active {
+            self.pointer_text(surface, picked)
+        } else {
+            // placing a building on a spot that will not do: say why, instead of only turning the ghost red
+            self.build_mode.zip(ghost_mm).filter(|&(kind, (x, y))| !self.placement_ok(kind, x, y)).and_then(|(kind, (x, y))| self.placement_why(kind, x, y))
+        };
         let Some(g) = self.gfx.as_mut() else { return };
         g.renderer.hover_node = hover;
         let (world, hints) = (&self.world, &self.hints);
@@ -2592,6 +2597,45 @@ impl App {
             && rules().building(kind).cost_for(|c| a.inventory.has(c)).is_some()
             && rules().building(kind).needs.iter().all(|&k| a.inventory.get(k) > 0)
             && self.world.knows(rules().building(kind).discovery)
+    }
+
+    /// Why a building cannot go at (x, y) mm, in the player's words (None when it can).
+    fn placement_why(&self, kind: BuildingKind, x: i64, y: i64) -> Option<String> {
+        let a = self.me_agent()?;
+        let def = rules().building(kind);
+        if !self.world.knows(def.discovery) {
+            return None;
+        }
+        if dist2(a.x, a.y, x, y) > BUILD_RADIUS_MM * BUILD_RADIUS_MM {
+            return Some("Çok uzak: önce yaklaş.".to_string());
+        }
+        match self.world.can_place(kind, x, y) {
+            Err(alaz_sim::world::Reject::NeedsWater) => return Some("Suya yakın olmalı.".to_string()),
+            Err(alaz_sim::world::Reject::WetGround) => return Some("Islak zemin: ateş tutmaz.".to_string()),
+            Err(_) => {
+                let r = def.radius_mm + 400;
+                let (tx, ty) = (x.div_euclid(alaz_sim::map::TILE_MM) as i32, y.div_euclid(alaz_sim::map::TILE_MM) as i32);
+                let near = self.world.nodes_in(tx - 4, ty - 4, tx + 5, ty + 5).filter(|n| {
+                    let (nx, ny) = n.center_mm();
+                    dist2(nx, ny, x, y) < r * r
+                }).min_by_key(|n| {
+                    let (nx, ny) = n.center_mm();
+                    dist2(nx, ny, x, y)
+                });
+                if let Some(n) = near {
+                    return Some(format!("Yer dar: yakında {} var. Önce onu kes ya da topla, ya da açıklığa geç.", hud::node_label(&self.world, n).to_lowercase()));
+                }
+                if self.world.buildings.iter().any(|b| dist2(b.x, b.y, x, y) < (def.radius_mm + rules().building(b.kind).radius_mm + 200).pow(2)) {
+                    return Some("Başka bir yapıya çok yakın.".to_string());
+                }
+                return Some("Zemin uygun değil (su, kaya ya da yarık).".to_string());
+            }
+            Ok(()) => {}
+        }
+        if def.cost_for(|c| a.inventory.has(c)).is_none() {
+            return Some("Malzeme eksik.".to_string());
+        }
+        None
     }
 
     /// Send a command as the player; while recording, harvest/deposit/collect also become route steps.

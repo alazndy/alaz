@@ -1470,6 +1470,12 @@ impl World {
                 && seed_tufts.take(8).count() >= 8
                 && has(NodeKind::Tree, 4) && has(NodeKind::StoneOutcrop, 3) && has(NodeKind::BerryBush, 1) && has(NodeKind::Deadwood, 1) && has(NodeKind::FiberPlant, 2)
                 && (-30..=30).step_by(3).any(|dy| (-30..=30).step_by(3).any(|dx| self.map.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
+                // room for the first shelter (1.6 m across, and nothing within 0.4 m of it) not far from the fire: a
+                // clear patch of land, so a thick wood does not leave the newcomer with nowhere to sleep
+                && (-12..=12).step_by(2).any(|cy| (-12..=12).step_by(2).any(|cx| {
+                    self.map.terrain(tx + cx, ty + cy) != Some(Terrain::Water)
+                        && (-2..=2).all(|dy| (-2..=2).all(|dx| self.map.node_for(seed, tx + cx + dx, ty + cy + dy).is_none() && self.map.terrain(tx + cx + dx, ty + cy + dy) != Some(Terrain::Water)))
+                }))
         };
         // clay for the first pots within 150 m, and (newer worlds, whose rock can lie farther off) copper, the first
         // metal, within 200 m: looked up in lists gathered once per searched cell, not by scanning round each spot

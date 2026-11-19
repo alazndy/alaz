@@ -1140,6 +1140,10 @@ pub fn guide_text(w: &World, me: &alaz_sim::world::Agent) -> String {
     if me.warmth < 3000 {
         return "Üşüyorsun: ateşe yaklaş.".into();
     }
+    // wolves come out of the woods at dusk: a bitten newcomer is told how to hit back
+    if me.health < 8500 && n(ItemKind::Spear) == 0 && w.knows(Discovery::Spear) && n(ItemKind::SharpStone) >= 1 && n(ItemKind::Branch) >= 1 && n(ItemKind::Fiber) >= 1 {
+        return "Kurt ısırıyor: ateşin yanında kal. Keskin taş, dal ve lifi ellerinde dene: mızrak olur.".into();
+    }
     let next = Milestone::ALL.iter().find(|m| !is_age(**m) && !w.milestone_done(**m));
     // the farming goals get spelled out step by step, like the road to the first fire
     let field = w.buildings.iter().find(|b| b.kind == alaz_sim::BuildingKind::Field);
