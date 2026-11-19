@@ -1,5 +1,5 @@
 use crate::{Limits, Relay, Transport};
-use alaz_relay_proto::{Code, FromRelay, Refusal, RELAY_PROTOCOL, ToRelay, read_msg, write_msg};
+use alaz_relay_proto::{Code, FromRelay, RELAY_PROTOCOL, Refusal, ToRelay, read_msg, write_msg};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
@@ -50,7 +50,11 @@ fn start(limits: Limits) -> (Arc<Relay>, SocketAddr) {
 }
 
 fn lenient() -> Limits {
-    Limits { fail_delay: Duration::ZERO, max_fails_per_window: 10_000, ..Limits::default() }
+    Limits {
+        fail_delay: Duration::ZERO,
+        max_fails_per_window: 10_000,
+        ..Limits::default()
+    }
 }
 
 fn dial(a: SocketAddr) -> TcpStream {
@@ -69,20 +73,32 @@ fn recv(s: &mut TcpStream) -> FromRelay {
 
 fn open(a: SocketAddr) -> (TcpStream, Code) {
     let mut c = dial(a);
-    send(&mut c, ToRelay::Open { protocol: RELAY_PROTOCOL });
-    let FromRelay::Opened { code } = recv(&mut c) else { panic!("not opened") };
+    send(
+        &mut c,
+        ToRelay::Open {
+            protocol: RELAY_PROTOCOL,
+        },
+    );
+    let FromRelay::Opened { code } = recv(&mut c) else {
+        panic!("not opened")
+    };
     (c, code)
 }
 
 fn join_msg(code: Code) -> ToRelay {
-    ToRelay::Join { protocol: RELAY_PROTOCOL, code }
+    ToRelay::Join {
+        protocol: RELAY_PROTOCOL,
+        code,
+    }
 }
 
 /// Returns (joiner side, host tunnel side), both past `Paired`.
 fn pair(a: SocketAddr, ctrl: &mut TcpStream, code: Code) -> (TcpStream, TcpStream) {
     let mut j = dial(a);
     send(&mut j, join_msg(code));
-    let FromRelay::Incoming { id } = recv(ctrl) else { panic!("no incoming") };
+    let FromRelay::Incoming { id } = recv(ctrl) else {
+        panic!("no incoming")
+    };
     let mut h = dial(a);
     send(&mut h, ToRelay::Accept { id });
     assert_eq!(recv(&mut h), FromRelay::Paired);
@@ -130,12 +146,19 @@ fn join_with_code_pairs_and_splices_bytes_both_ways() {
 #[test]
 fn unknown_code_is_refused_no_such_code() {
     let (_r, a) = start(lenient());
-    assert_eq!(join_reply(a, Code::generate()), FromRelay::Refused(Refusal::NoSuchCode));
+    assert_eq!(
+        join_reply(a, Code::generate()),
+        FromRelay::Refused(Refusal::NoSuchCode)
+    );
 }
 
 #[test]
 fn expired_and_unknown_codes_answer_alike() {
-    let (r, a) = start(Limits { fail_delay: Duration::from_millis(100), max_fails_per_window: 10_000, ..Limits::default() });
+    let (r, a) = start(Limits {
+        fail_delay: Duration::from_millis(100),
+        max_fails_per_window: 10_000,
+        ..Limits::default()
+    });
     let (ctrl, code) = open(a);
     drop(ctrl);
     wait_for(|| r.counters().rooms == 0);
@@ -148,7 +171,10 @@ fn expired_and_unknown_codes_answer_alike() {
     assert_eq!(expired, unknown);
     assert_eq!(expired, FromRelay::Refused(Refusal::NoSuchCode));
     assert!(t_expired >= Duration::from_millis(100) && t_unknown >= Duration::from_millis(100));
-    assert!(t_expired.abs_diff(t_unknown) < Duration::from_millis(80), "{t_expired:?} vs {t_unknown:?}");
+    assert!(
+        t_expired.abs_diff(t_unknown) < Duration::from_millis(80),
+        "{t_expired:?} vs {t_unknown:?}"
+    );
 }
 
 #[test]
@@ -168,7 +194,9 @@ fn new_code_invalidates_old_code_and_keeps_tunnels() {
     let (mut ctrl, old) = open(a);
     let (mut j, mut h) = pair(a, &mut ctrl, old);
     send(&mut ctrl, ToRelay::NewCode);
-    let FromRelay::Opened { code: new } = recv(&mut ctrl) else { panic!("no new code") };
+    let FromRelay::Opened { code: new } = recv(&mut ctrl) else {
+        panic!("no new code")
+    };
     assert_ne!(new, old);
     assert_eq!(join_reply(a, old), FromRelay::Refused(Refusal::NoSuchCode));
     echo_once(&mut j, &mut h, b"still here");
@@ -189,7 +217,10 @@ fn host_control_drop_closes_room_but_not_open_tunnels() {
 
 #[test]
 fn pairing_times_out_after_10s_when_host_never_accepts() {
-    let (_r, a) = start(Limits { pair_timeout: Duration::from_millis(200), ..lenient() });
+    let (_r, a) = start(Limits {
+        pair_timeout: Duration::from_millis(200),
+        ..lenient()
+    });
     let (mut ctrl, code) = open(a);
     let mut j = dial(a);
     send(&mut j, join_msg(code));
@@ -199,19 +230,35 @@ fn pairing_times_out_after_10s_when_host_never_accepts() {
 
 #[test]
 fn per_ip_failures_lock_out_that_ip() {
-    let (r, a) = start(Limits { max_fails_per_window: 3, fail_delay: Duration::ZERO, ..Limits::default() });
+    let (r, a) = start(Limits {
+        max_fails_per_window: 3,
+        fail_delay: Duration::ZERO,
+        ..Limits::default()
+    });
     let (_ctrl, code) = open(a);
     for _ in 0..3 {
-        assert_eq!(join_reply(a, Code::generate()), FromRelay::Refused(Refusal::NoSuchCode));
+        assert_eq!(
+            join_reply(a, Code::generate()),
+            FromRelay::Refused(Refusal::NoSuchCode)
+        );
     }
-    assert_eq!(join_reply(a, Code::generate()), FromRelay::Refused(Refusal::NoSuchCode));
-    assert_eq!(join_reply(a, code), FromRelay::Refused(Refusal::TooManyAttempts));
+    assert_eq!(
+        join_reply(a, Code::generate()),
+        FromRelay::Refused(Refusal::NoSuchCode)
+    );
+    assert_eq!(
+        join_reply(a, code),
+        FromRelay::Refused(Refusal::TooManyAttempts)
+    );
     assert_eq!(r.counters().lockouts, 1);
 }
 
 #[test]
 fn per_ip_connection_cap() {
-    let (_r, a) = start(Limits { max_conns_per_ip: 2, ..lenient() });
+    let (_r, a) = start(Limits {
+        max_conns_per_ip: 2,
+        ..lenient()
+    });
     let _c1 = dial(a);
     let _c2 = dial(a);
     let mut c3 = dial(a);
@@ -220,7 +267,11 @@ fn per_ip_connection_cap() {
 
 #[test]
 fn tunnel_throttles_but_does_not_cut_a_large_burst() {
-    let (r, a) = start(Limits { tunnel_rate: 1 << 20, tunnel_burst: 16 << 20, ..lenient() });
+    let (r, a) = start(Limits {
+        tunnel_rate: 1 << 20,
+        tunnel_burst: 16 << 20,
+        ..lenient()
+    });
     let (mut ctrl, code) = open(a);
     let (j, mut h) = pair(a, &mut ctrl, code);
     const N: usize = 8 << 20;
@@ -248,11 +299,19 @@ fn tunnel_throttles_but_does_not_cut_a_large_burst() {
 
 #[test]
 fn abuse_beyond_cut_is_closed_and_counted() {
-    let (r, a) = start(Limits { abuse_cut: 100_000, tunnel_rate: 100 << 20, tunnel_burst: 100 << 20, ..lenient() });
+    let (r, a) = start(Limits {
+        abuse_cut: 100_000,
+        tunnel_rate: 100 << 20,
+        tunnel_burst: 100 << 20,
+        ..lenient()
+    });
     let (mut ctrl, code) = open(a);
     let (mut j, mut h) = pair(a, &mut ctrl, code);
     let block = vec![7u8; 65536];
-    let _ = j.write_all(&block).and_then(|_| j.write_all(&block)).and_then(|_| j.write_all(&block));
+    let _ = j
+        .write_all(&block)
+        .and_then(|_| j.write_all(&block))
+        .and_then(|_| j.write_all(&block));
     let mut sink = Vec::new();
     let _ = h.read_to_end(&mut sink);
     wait_for(|| r.counters().abuse_cuts == 1);
@@ -262,10 +321,21 @@ fn abuse_beyond_cut_is_closed_and_counted() {
 fn bad_protocol_refused() {
     let (_r, a) = start(lenient());
     let mut c = dial(a);
-    send(&mut c, ToRelay::Open { protocol: RELAY_PROTOCOL + 1 });
+    send(
+        &mut c,
+        ToRelay::Open {
+            protocol: RELAY_PROTOCOL + 1,
+        },
+    );
     assert_eq!(recv(&mut c), FromRelay::Refused(Refusal::BadProtocol));
     let mut j = dial(a);
-    send(&mut j, ToRelay::Join { protocol: 0, code: Code::generate() });
+    send(
+        &mut j,
+        ToRelay::Join {
+            protocol: 0,
+            code: Code::generate(),
+        },
+    );
     assert_eq!(recv(&mut j), FromRelay::Refused(Refusal::BadProtocol));
 }
 
@@ -277,7 +347,13 @@ fn oversize_first_frame_closes_connection() {
     let mut rest = Vec::new();
     match c.read_to_end(&mut rest) {
         Ok(_) => {}
-        Err(e) => assert!(!matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut), "{e}"),
+        Err(e) => assert!(
+            !matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            "{e}"
+        ),
     }
     assert!(rest.is_empty());
 }
@@ -289,7 +365,14 @@ fn splice_never_parses_bytes() {
     let (mut j, mut h) = pair(a, &mut ctrl, code);
     let mut look_alike = Vec::new();
     write_msg(&mut look_alike, &ToRelay::NewCode).unwrap();
-    write_msg(&mut look_alike, &ToRelay::Join { protocol: 99, code: Code::generate() }).unwrap();
+    write_msg(
+        &mut look_alike,
+        &ToRelay::Join {
+            protocol: 99,
+            code: Code::generate(),
+        },
+    )
+    .unwrap();
     look_alike.extend_from_slice(&[0xFF; 16]);
     echo_once(&mut j, &mut h, &look_alike);
     echo_once(&mut h, &mut j, &look_alike);
@@ -297,7 +380,12 @@ fn splice_never_parses_bytes() {
 
 #[test]
 fn stuck_receiver_tunnel_is_reaped_and_slots_released() {
-    let (r, a) = start(Limits { write_stall: Duration::from_millis(300), tunnel_rate: 1 << 30, tunnel_burst: 1 << 30, ..lenient() });
+    let (r, a) = start(Limits {
+        write_stall: Duration::from_millis(300),
+        tunnel_rate: 1 << 30,
+        tunnel_burst: 1 << 30,
+        ..lenient()
+    });
     let (mut ctrl, code) = open(a);
     let (j, mut h) = pair(a, &mut ctrl, code);
     drop(ctrl);
@@ -306,7 +394,11 @@ fn stuck_receiver_tunnel_is_reaped_and_slots_released() {
         let block = vec![1u8; 65536];
         while h.write_all(&block).is_ok() {}
     });
-    wait_for(|| r.counters().tunnels == 0 && r.counters().rooms == 0 && r.ips.conns(Ipv4Addr::LOCALHOST.into()) == 0);
+    wait_for(|| {
+        r.counters().tunnels == 0
+            && r.counters().rooms == 0
+            && r.ips.conns(Ipv4Addr::LOCALHOST.into()) == 0
+    });
     flood.join().unwrap();
     assert_eq!(r.active_joins.load(std::sync::atomic::Ordering::Relaxed), 0);
     drop(j);
@@ -314,7 +406,10 @@ fn stuck_receiver_tunnel_is_reaped_and_slots_released() {
 
 #[test]
 fn silent_control_connection_is_dropped_and_pinging_one_is_kept() {
-    let (r, a) = start(Limits { control_idle: Duration::from_millis(300), ..lenient() });
+    let (r, a) = start(Limits {
+        control_idle: Duration::from_millis(300),
+        ..lenient()
+    });
     let (_silent, silent_code) = open(a);
     let (mut pinger, ping_code) = open(a);
     let end = Instant::now() + Duration::from_millis(900);
@@ -323,7 +418,10 @@ fn silent_control_connection_is_dropped_and_pinging_one_is_kept() {
         thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(r.counters().rooms, 1);
-    assert_eq!(join_reply(a, silent_code), FromRelay::Refused(Refusal::NoSuchCode));
+    assert_eq!(
+        join_reply(a, silent_code),
+        FromRelay::Refused(Refusal::NoSuchCode)
+    );
     let mut j = dial(a);
     send(&mut j, join_msg(ping_code));
     assert!(matches!(recv(&mut pinger), FromRelay::Incoming { .. }));
@@ -331,7 +429,10 @@ fn silent_control_connection_is_dropped_and_pinging_one_is_kept() {
 
 #[test]
 fn first_message_deadline_covers_the_whole_frame() {
-    let (_r, a) = start(Limits { control_idle: Duration::from_millis(300), ..lenient() });
+    let (_r, a) = start(Limits {
+        first_frame_timeout: Duration::from_millis(300),
+        ..lenient()
+    });
     let mut c = dial(a);
     let t = Instant::now();
     // one byte at a time: each read alone is well inside the limit
@@ -349,12 +450,19 @@ fn first_message_deadline_covers_the_whole_frame() {
 
 #[test]
 fn accept_is_exempt_from_lockout() {
-    let (_r, a) = start(Limits { max_fails_per_window: 1, fail_delay: Duration::ZERO, ..Limits::default() });
+    let (_r, a) = start(Limits {
+        max_fails_per_window: 1,
+        fail_delay: Duration::ZERO,
+        ..Limits::default()
+    });
     let (mut ctrl, code) = open(a);
     for _ in 0..3 {
         join_reply(a, Code::generate());
     }
-    assert_eq!(join_reply(a, code), FromRelay::Refused(Refusal::TooManyAttempts));
+    assert_eq!(
+        join_reply(a, code),
+        FromRelay::Refused(Refusal::TooManyAttempts)
+    );
     let mut h = dial(a);
     send(&mut h, ToRelay::Accept { id: 12345 });
     assert_eq!(recv(&mut h), FromRelay::Refused(Refusal::NoSuchCode));
@@ -365,7 +473,11 @@ fn accept_is_exempt_from_lockout() {
 
 #[test]
 fn small_burst_and_low_rate_actually_delay() {
-    let (_r, a) = start(Limits { tunnel_rate: 1 << 20, tunnel_burst: 64 << 10, ..lenient() });
+    let (_r, a) = start(Limits {
+        tunnel_rate: 1 << 20,
+        tunnel_burst: 64 << 10,
+        ..lenient()
+    });
     let (mut ctrl, code) = open(a);
     let (mut j, mut h) = pair(a, &mut ctrl, code);
     const N: usize = 512 << 10;
@@ -375,12 +487,20 @@ fn small_burst_and_low_rate_actually_delay() {
     h.read_exact(&mut got).unwrap();
     let _j = w.join().unwrap().unwrap();
     // (512 - 64) KiB at 1 MiB/s is about 440 ms; accept anything above half of that
-    assert!(t.elapsed() >= Duration::from_millis(200), "{:?}", t.elapsed());
+    assert!(
+        t.elapsed() >= Duration::from_millis(200),
+        "{:?}",
+        t.elapsed()
+    );
 }
 
 #[test]
 fn ipv6_addresses_in_one_slash_64_share_a_lockout_and_stale_entries_vanish() {
-    let lim = Limits { max_fails_per_window: 1, fail_window: Duration::from_millis(100), ..Limits::default() };
+    let lim = Limits {
+        max_fails_per_window: 1,
+        fail_window: Duration::from_millis(100),
+        ..Limits::default()
+    };
     let t = crate::room::IpTable::new(lim.fail_window);
     let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
     let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
@@ -396,7 +516,10 @@ fn ipv6_addresses_in_one_slash_64_share_a_lockout_and_stale_entries_vanish() {
     assert!(t.len() >= 2);
     // lockout lasts 300 s, so use a fresh table for the staleness check
     let t = crate::room::IpTable::new(lim.fail_window);
-    let big = Limits { max_fails_per_window: 1000, ..lim.clone() };
+    let big = Limits {
+        max_fails_per_window: 1000,
+        ..lim.clone()
+    };
     t.record_fail(c, &big);
     t.record_fail(other, &big);
     assert_eq!(t.len(), 2);

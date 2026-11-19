@@ -1,14 +1,17 @@
 //! Rendezvous relay: pairs a host's control connection with joiners by code, then splices bytes.
+//! The server binary is Linux-only (SIGHUP reload, systemd deployment); the CI for other platforms builds only `-p alaz`.
 mod limits;
 mod room;
 mod splice;
-pub mod tls;
 #[cfg(test)]
 mod tests;
+pub mod tls;
 
 pub use limits::Limits;
 
-use alaz_relay_proto::{Code, FromRelay, MAX_RELAY_FRAME, RELAY_PROTOCOL, Refusal, ToRelay, read_msg, write_msg};
+use alaz_relay_proto::{
+    Code, FromRelay, MAX_RELAY_FRAME, RELAY_PROTOCOL, Refusal, ToRelay, read_msg, write_msg,
+};
 use room::{ConnSlot, Handoff, JoinSlot, Pending, Room, State};
 use splice::splice;
 use std::io::{ErrorKind, Read, Write};
@@ -63,10 +66,18 @@ impl Relay {
         let ip = conn.peer_ip();
         let relay = self.clone();
         if !self.ips.try_add_conn(ip, self.limits.max_conns_per_ip) {
-            thread::spawn(move || relay.refuse(&mut { conn }, Refusal::Busy));
+            thread::spawn(move || {
+                // the reply write may have to finish a TLS handshake first, which blocks on a silent peer
+                conn.set_read_timeout(Some(relay.limits.first_frame_timeout));
+                conn.set_write_timeout(Some(relay.limits.first_frame_timeout));
+                relay.refuse(&mut { conn }, Refusal::Busy);
+            });
             return;
         }
-        let slot = ConnSlot { relay: self.clone(), ip };
+        let slot = ConnSlot {
+            relay: self.clone(),
+            ip,
+        };
         thread::spawn(move || relay.handle(conn, slot));
     }
 
@@ -91,7 +102,7 @@ impl Relay {
         // a stuck peer must not park this thread inside a write
         conn.set_write_timeout(Some(self.limits.control_idle));
         let mut frames = Frames::default();
-        let first = frames.read_until(&mut conn, Instant::now() + self.limits.control_idle);
+        let first = frames.read_until(&mut conn, Instant::now() + self.limits.first_frame_timeout);
         match first {
             Ok(ToRelay::Open { protocol }) => self.host_control(conn, protocol),
             Ok(ToRelay::Join { protocol, code }) => self.joiner(conn, protocol, code),
@@ -132,7 +143,10 @@ impl Relay {
             return self.refuse(&mut conn, Refusal::BadProtocol);
         }
         let (events, inbox) = mpsc::channel();
-        let room = Arc::new(Room { events, joiners: AtomicUsize::new(0) });
+        let room = Arc::new(Room {
+            events,
+            joiners: AtomicUsize::new(0),
+        });
         let mut code = {
             let mut st = self.state.lock().unwrap();
             if st.rooms.len() >= self.limits.max_rooms {
@@ -152,7 +166,13 @@ impl Relay {
         conn.shutdown();
     }
 
-    fn control_loop<T: Transport>(&self, conn: &mut T, room: &Arc<Room>, code: &mut Code, inbox: &mpsc::Receiver<u64>) {
+    fn control_loop<T: Transport>(
+        &self,
+        conn: &mut T,
+        room: &Arc<Room>,
+        code: &mut Code,
+        inbox: &mpsc::Receiver<u64>,
+    ) {
         if write_msg(conn, &FromRelay::Opened { code: *code }).is_err() {
             return;
         }
@@ -227,8 +247,17 @@ impl Relay {
             }
             room.joiners.fetch_add(1, Ordering::Relaxed);
             self.active_joins.fetch_add(1, Ordering::Relaxed);
-            let slot = JoinSlot { relay: self.clone(), room: room.clone() };
-            st.pending.insert(id, Pending { room: room.clone(), handoff: hand_tx });
+            let slot = JoinSlot {
+                relay: self.clone(),
+                room: room.clone(),
+            };
+            st.pending.insert(
+                id,
+                Pending {
+                    room: room.clone(),
+                    handoff: hand_tx,
+                },
+            );
             (room, slot)
         };
         if room.events.send(id).is_err() {
@@ -244,10 +273,14 @@ impl Relay {
                     Err(_) => return self.refuse(&mut conn, Refusal::Busy),
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => return self.refuse(&mut conn, Refusal::NoSuchCode),
+            Err(RecvTimeoutError::Disconnected) => {
+                return self.refuse(&mut conn, Refusal::NoSuchCode);
+            }
         };
         let mut host_conn = host.conn;
-        if write_msg(&mut host_conn, &FromRelay::Paired).is_err() || write_msg(&mut conn, &FromRelay::Paired).is_err() {
+        if write_msg(&mut host_conn, &FromRelay::Paired).is_err()
+            || write_msg(&mut conn, &FromRelay::Paired).is_err()
+        {
             host_conn.shutdown();
             conn.shutdown();
             return;
@@ -267,7 +300,10 @@ impl Relay {
         let Some(p) = pending else {
             return self.refuse(&mut conn, Refusal::NoSuchCode);
         };
-        if let Err(mpsc::SendError(mut h)) = p.handoff.send(Handoff { conn: Box::new(conn), _slot: slot }) {
+        if let Err(mpsc::SendError(mut h)) = p.handoff.send(Handoff {
+            conn: Box::new(conn),
+            _slot: slot,
+        }) {
             self.refuse(&mut h.conn, Refusal::NoSuchCode);
         }
     }
@@ -282,7 +318,11 @@ struct Frames {
 impl Frames {
     /// Ok(None) when no whole frame is buffered yet; Err on an oversize or undecodable frame.
     fn next(&mut self) -> Result<Option<ToRelay>, ()> {
-        let Some(len) = self.buf.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else {
+        let Some(len) = self
+            .buf
+            .get(..4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+        else {
             return Ok(None);
         };
         if len > MAX_RELAY_FRAME {
@@ -306,7 +346,14 @@ impl Frames {
                 self.buf.extend_from_slice(&tmp[..n]);
                 Ok(())
             }
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => Ok(()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(())
+            }
             Err(_) => Err(()),
         }
     }

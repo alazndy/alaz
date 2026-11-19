@@ -18,6 +18,9 @@ pub struct Limits {
     /// Whole-frame deadline for a connection's first message, and the longest a host control
     /// connection may send no frame at all (a `Ping` counts as a frame).
     pub control_idle: Duration,
+    /// Deadline for a connection's first whole frame, TLS handshake included, and for refusing an
+    /// over-limit connection: an idle socket must not hold a thread for the full control idle time.
+    pub first_frame_timeout: Duration,
     /// A tunnel write that makes no progress for this long means the receiver is stuck: the tunnel is closed.
     pub write_stall: Duration,
     pub pair_timeout: Duration,
@@ -43,6 +46,7 @@ impl Default for Limits {
             max_players: 8,
             max_tunnels: 4000,
             control_idle: Duration::from_secs(60),
+            first_frame_timeout: Duration::from_secs(10),
             write_stall: Duration::from_secs(30),
             pair_timeout: Duration::from_secs(10),
             fail_delay: Duration::from_millis(300),

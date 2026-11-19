@@ -64,7 +64,10 @@ pub struct IpTable {
 
 impl IpTable {
     pub fn new(window: Duration) -> IpTable {
-        IpTable { window, inner: Mutex::new((HashMap::new(), Instant::now())) }
+        IpTable {
+            window,
+            inner: Mutex::new((HashMap::new(), Instant::now())),
+        }
     }
 
     /// Drops entries that hold nothing live; runs at most once per window (or when the table is large).
@@ -78,7 +81,9 @@ impl IpTable {
         g.0.retain(|_, s| {
             s.conns > 0
                 || s.locked_until.is_some_and(|t| now < t)
-                || s.fails.back().is_some_and(|t| now.duration_since(*t) <= window)
+                || s.fails
+                    .back()
+                    .is_some_and(|t| now.duration_since(*t) <= window)
         });
     }
 
@@ -89,7 +94,12 @@ impl IpTable {
 
     #[cfg(test)]
     pub fn conns(&self, ip: IpAddr) -> usize {
-        self.inner.lock().unwrap().0.get(&key(ip)).map_or(0, |s| s.conns)
+        self.inner
+            .lock()
+            .unwrap()
+            .0
+            .get(&key(ip))
+            .map_or(0, |s| s.conns)
     }
 
     pub fn try_add_conn(&self, ip: IpAddr, max: usize) -> bool {
@@ -116,7 +126,9 @@ impl IpTable {
 
     pub fn is_locked(&self, ip: IpAddr) -> bool {
         let mut g = self.inner.lock().unwrap();
-        let Some(s) = g.0.get_mut(&key(ip)) else { return false };
+        let Some(s) = g.0.get_mut(&key(ip)) else {
+            return false;
+        };
         match s.locked_until {
             Some(t) if Instant::now() < t => true,
             Some(_) => {
@@ -133,7 +145,11 @@ impl IpTable {
         let now = Instant::now();
         let mut g = self.inner.lock().unwrap();
         let s = g.0.entry(key(ip)).or_default();
-        while s.fails.front().is_some_and(|t| now.duration_since(*t) > lim.fail_window) {
+        while s
+            .fails
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > lim.fail_window)
+        {
             s.fails.pop_front();
         }
         s.fails.push_back(now);

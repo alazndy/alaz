@@ -10,7 +10,9 @@ use std::thread;
 use std::time::Duration;
 
 const RELOAD_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
-const USAGE: &str = "usage: alaz-relay --listen ADDR:PORT --cert PEM --key PEM [--stats-addr 127.0.0.1:PORT]";
+const RELOAD_RETRY: Duration = Duration::from_secs(60);
+const USAGE: &str =
+    "usage: alaz-relay --listen ADDR:PORT --cert PEM --key PEM [--stats-addr 127.0.0.1:PORT]";
 
 struct Args {
     listen: SocketAddr,
@@ -25,11 +27,20 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
-            "--listen" => listen = Some(value.parse::<SocketAddr>().map_err(|e| format!("--listen: {e}"))?),
+            "--listen" => {
+                listen = Some(
+                    value
+                        .parse::<SocketAddr>()
+                        .map_err(|e| format!("--listen: {e}"))?,
+                )
+            }
             "--cert" => cert = Some(PathBuf::from(value)),
             "--key" => key = Some(PathBuf::from(value)),
             "--stats-addr" => {
-                let a = value.parse::<SocketAddr>().map_err(|e| format!("--stats-addr: {e}"))?;
+                let a = value
+                    .parse::<SocketAddr>()
+                    .map_err(|e| format!("--stats-addr: {e}"))?;
+                // an IPv4-mapped IPv6 address is not "loopback" to std; rejecting it is the safe reading
                 if !a.ip().is_loopback() {
                     return Err("--stats-addr must be a loopback address".into());
                 }
@@ -62,8 +73,10 @@ fn serve_stats(listener: TcpListener, relay: Arc<Relay>) {
 
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1)).map_err(|e| format!("{e}\n{USAGE}"))?;
-    let certs = Reloadable::new(&args.cert, &args.key).map_err(|e| format!("cannot load certificate: {e}"))?;
-    let listener = TcpListener::bind(args.listen).map_err(|e| format!("cannot listen on {}: {e}", args.listen))?;
+    let certs = Reloadable::new(&args.cert, &args.key)
+        .map_err(|e| format!("cannot load certificate: {e}"))?;
+    let listener = TcpListener::bind(args.listen)
+        .map_err(|e| format!("cannot listen on {}: {e}", args.listen))?;
     let relay = Relay::new(Limits::default());
 
     if let Some(addr) = args.stats {
@@ -73,16 +86,22 @@ fn run() -> Result<(), String> {
     }
 
     let (wake, woken) = mpsc::channel();
-    let mut signals = signal_hook::iterator::Signals::new([signal_hook::consts::SIGHUP]).map_err(|e| format!("signals: {e}"))?;
-    thread::spawn(move || {
-        for _ in signals.forever() {
-            if wake.send(()).is_err() {
-                return;
+    #[cfg(unix)]
+    {
+        let mut signals = signal_hook::iterator::Signals::new([signal_hook::consts::SIGHUP])
+            .map_err(|e| format!("signals: {e}"))?;
+        let wake = wake.clone();
+        thread::spawn(move || {
+            for _ in signals.forever() {
+                if wake.send(()).is_err() {
+                    return;
+                }
             }
-        }
-    });
+        });
+    }
     let watched = certs.clone();
-    thread::spawn(move || watched.watch(woken, RELOAD_EVERY));
+    // `wake` stays alive in this frame, which never returns while the accept loop runs
+    thread::spawn(move || watched.watch(woken, RELOAD_EVERY, RELOAD_RETRY));
 
     eprintln!("alaz-relay: listening on {}", args.listen);
     tls::accept_loop(listener, relay, certs);
@@ -96,5 +115,34 @@ fn main() -> ExitCode {
             eprintln!("alaz-relay: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_args;
+
+    fn parse(stats: &str) -> Result<super::Args, String> {
+        let a = [
+            "--listen",
+            "0.0.0.0:443",
+            "--cert",
+            "c",
+            "--key",
+            "k",
+            "--stats-addr",
+            stats,
+        ];
+        parse_args(a.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn stats_addr_accepts_loopback_only() {
+        assert!(parse("127.0.0.1:9100").is_ok());
+        assert!(parse("[::1]:9100").is_ok());
+        assert!(parse("0.0.0.0:9100").is_err());
+        assert!(parse("192.168.1.5:9100").is_err());
+        assert!(parse("[::]:9100").is_err());
+        assert!(parse("[::ffff:127.0.0.1]:9100").is_err());
     }
 }

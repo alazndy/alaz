@@ -11,6 +11,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pki-types = { version = "1", features = ["std"] }
 # std has no TCP keepalive API
 socket2 = "0.5"
+
+[target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
 
 [dev-dependencies]

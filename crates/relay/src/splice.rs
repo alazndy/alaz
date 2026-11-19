@@ -1,5 +1,5 @@
-use crate::limits::Limits;
 use crate::Transport;
+use crate::limits::Limits;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,13 +20,19 @@ struct Bucket {
 
 impl Bucket {
     fn new(rate: u64, burst: u64) -> Bucket {
-        Bucket { tokens: burst as f64, rate: rate.max(1) as f64, burst: burst as f64, last: Instant::now() }
+        Bucket {
+            tokens: burst as f64,
+            rate: rate.max(1) as f64,
+            burst: burst as f64,
+            last: Instant::now(),
+        }
     }
 
     /// How long to wait before `n` bytes may pass; zero when they may pass now (and are taken).
     fn take(&mut self, n: usize) -> Duration {
         let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate).min(self.burst);
+        self.tokens =
+            (self.tokens + now.duration_since(self.last).as_secs_f64() * self.rate).min(self.burst);
         self.last = now;
         let need = n as f64;
         if self.tokens >= need {
@@ -49,7 +55,10 @@ struct Pump {
 }
 
 fn is_retry(e: &io::Error) -> bool {
-    matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted)
+    matches!(
+        e.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+    )
 }
 
 /// Retries on timeout but never holds the lock across a wait, so teardown can always take it.
@@ -78,7 +87,9 @@ fn write_all(dst: &Shared, mut data: &[u8], done: &AtomicBool, stall: Duration) 
     loop {
         let r = dst.lock().unwrap().flush();
         match r {
-            Err(e) if is_retry(&e) && !done.load(Ordering::Relaxed) && progress.elapsed() <= stall => {
+            Err(e)
+                if is_retry(&e) && !done.load(Ordering::Relaxed) && progress.elapsed() <= stall =>
+            {
                 thread::sleep(Duration::from_millis(1));
             }
             other => return other,
@@ -140,7 +151,13 @@ pub fn splice(a: Box<dyn Transport>, b: Box<dyn Transport>, lim: &Limits) -> boo
     let done = Arc::new(AtomicBool::new(false));
     let moved = Arc::new(AtomicU64::new(0));
     let cut = Arc::new(AtomicBool::new(false));
-    let mk = || Pump { stall: lim.write_stall, done: done.clone(), moved: moved.clone(), cut: cut.clone(), abuse_cut: lim.abuse_cut };
+    let mk = || Pump {
+        stall: lim.write_stall,
+        done: done.clone(),
+        moved: moved.clone(),
+        cut: cut.clone(),
+        abuse_cut: lim.abuse_cut,
+    };
     let other = {
         let (a, b, p, lim) = (a.clone(), b.clone(), mk(), lim.clone());
         thread::spawn(move || pump(b, a, p, &lim))
