@@ -281,10 +281,21 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         knap.journal.book_open = true;
         knap.journal.section = 2;
     }
+    // filled hands, so the info panel has something to show
+    let instant = alaz_sim::rules().recipes.iter().find(|r| r.station.is_none() && r.ticks == 0 && w.knows(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().map(|c| c.n).sum::<u16>() <= 4);
+    if let (ShotTab::Craft, Some(r)) = (tab, instant) {
+        let items = r.inputs.iter().flat_map(|c| std::iter::repeat_n(c.item as u8, c.n as usize));
+        for (slot, item) in knap.hands.iter_mut().zip(items) {
+            *slot = item;
+        }
+    }
     crate::style::force_level(Some(level));
     let rgba = SHOOTER.with(|cell| {
         let mut cell = cell.borrow_mut();
         let sh = cell.get_or_insert_with(|| Shooter { ctx: egui::Context::default(), tex: HashMap::new() });
+        if tab == ShotTab::Build {
+            crate::inv::build::pick_for_shot(&sh.ctx, BuildingKind::Furnace);
+        }
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SHOT_W as f32, SHOT_H as f32));
         let mut last = None;
         // areas are sized on their first frame and shown from the next; fonts and zoom also settle in a frame or two

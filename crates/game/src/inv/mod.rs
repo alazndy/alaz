@@ -41,6 +41,15 @@ pub(crate) fn regions(ctx: &Context) -> Option<Regions> {
     ctx.data(|d| d.get_temp(regions_id()))
 }
 
+fn hover_id() -> egui::Id {
+    egui::Id::NULL.with("inv_hovered_item")
+}
+
+/// The item under the pointer in a slot this frame (the info panel describes it).
+pub(crate) fn hovered_item(ctx: &Context) -> Option<ItemKind> {
+    ctx.data(|d| d.get_temp(hover_id()))
+}
+
 /// The info panel's rect, for the tab drawing into it (empty when the window is not open).
 // the tabs that fill the info panel are built on this module after it
 #[allow(dead_code)]
@@ -161,6 +170,9 @@ pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look:
     let name = item.map_or_else(|| "boş".to_string(), |k| crate::lang::item_word(w, crate::lang::looks_like(w, k)));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, look != SlotLook::Disabled, &name));
     let Some(k) = item else { return resp };
+    if resp.hovered() && look != SlotLook::Disabled {
+        ui.ctx().data_mut(|d| d.insert_temp(hover_id(), k));
+    }
     // dev aid for screenshots: ALAZ_DEMO_TIP keeps the cloak's tooltip open
     if k == ItemKind::HideCloak && std::env::var_os("ALAZ_DEMO_TIP").is_some() {
         let tip = hud::item_tip(w, k);
@@ -256,7 +268,10 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
     let screen = ctx.content_rect();
     // an open book on a wide screen takes the left side and moves the window right by half of its own width
     let regs = layout(screen).shifted(crate::book::dock_shift(ctx, screen));
-    ctx.data_mut(|d| d.insert_temp(regions_id(), regs));
+    ctx.data_mut(|d| {
+        d.insert_temp(regions_id(), regs);
+        d.remove::<ItemKind>(hover_id());
+    });
     let fam = match top {
         Top::Machine(i) => Some(crate::style::family(cx.w.buildings[i].kind)),
         _ => None,
@@ -284,6 +299,12 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
             Top::Machine(i) => machine::click(cx, i, k, shift),
         };
         ui.scope_builder(egui::UiBuilder::new().max_rect(regs.bag.shrink(WELL_PAD)), |ui| bag_grid(ui, cx, top, era, &mut click));
+        // after the bag grid, so the hover of this frame is already known
+        ui.scope_builder(egui::UiBuilder::new().max_rect(regs.info.shrink(WELL_PAD + 6.0)), |ui| match top {
+            Top::Craft => craft::draw_info(ui, cx),
+            Top::Build => build::draw_info(ui, cx),
+            Top::Bag | Top::Machine(_) => {}
+        });
         // the whole bag area takes back what was carried out of it (machine output, a held item)
         let zone = ui.interact(regs.bag, egui::Id::NULL.with("inv_bag_zone"), egui::Sense::hover());
         if hovering(&zone).is_some_and(|c| !matches!(c, Carry::Bag(_))) {
