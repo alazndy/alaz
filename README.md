@@ -110,6 +110,7 @@ Fare ile:
 - **Sağ tık:** topla, devrik gövdeyi parçala, yerdekini al.
 - **İmleç etiketi:** İmlecin altındaki şeyin adını ve sağ tıkın ne yapacağını gösterir.
 - **Envanter penceresi:** I/C/B ya da bir makineye tıkla. Eşyayı çantadan sürükleyip makineye ya da ellere bırak; tık = 1, Shift+tık = hepsi; pencerenin dışına sürükle = yere bırak.
+- **Defter:** J ile ayrı açılır, envanterle birlikte açık kalabilir; geniş ekranda pencerenin soluna yanaşır.
 
 ## Oynanış
 
