@@ -21,10 +21,12 @@ pub(crate) enum ShotTab {
     Craft,
     Build,
     Machine,
+    /// The book open beside the Bag tab.
+    Book,
 }
 
 impl ShotTab {
-    pub(crate) const ALL: [ShotTab; 4] = [ShotTab::Bag, ShotTab::Craft, ShotTab::Build, ShotTab::Machine];
+    pub(crate) const ALL: [ShotTab; 5] = [ShotTab::Bag, ShotTab::Craft, ShotTab::Build, ShotTab::Machine, ShotTab::Book];
 
     fn name(self) -> &'static str {
         match self {
@@ -32,6 +34,7 @@ impl ShotTab {
             ShotTab::Craft => "craft",
             ShotTab::Build => "build",
             ShotTab::Machine => "machine",
+            ShotTab::Book => "book",
         }
     }
 }
@@ -248,7 +251,7 @@ thread_local! {
 pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<PathBuf> {
     let (w, furnace) = demo_world();
     let (ui_tab, selection) = match tab {
-        ShotTab::Bag => (Some(Tab::Bag), None),
+        ShotTab::Bag | ShotTab::Book => (Some(Tab::Bag), None),
         ShotTab::Craft => (Some(Tab::Craft), None),
         ShotTab::Build => (Some(Tab::Build), None),
         ShotTab::Machine => (None, Some(Selection::Building(furnace))),
@@ -274,6 +277,10 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         fade: 0.0,
     };
     let mut knap = KnapState::default();
+    if tab == ShotTab::Book {
+        knap.journal.book_open = true;
+        knap.journal.section = 2;
+    }
     crate::style::force_level(Some(level));
     let rgba = SHOOTER.with(|cell| {
         let mut cell = cell.borrow_mut();

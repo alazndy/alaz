@@ -25,6 +25,13 @@ pub(crate) struct Regions {
     pub bag: egui::Rect,
 }
 
+impl Regions {
+    fn shifted(self, dx: f32) -> Regions {
+        let by = |r: egui::Rect| r.translate(egui::vec2(dx, 0.0));
+        Regions { window: by(self.window), main: by(self.main), info: by(self.info), bag: by(self.bag) }
+    }
+}
+
 fn regions_id() -> egui::Id {
     egui::Id::NULL.with("inv_regions")
 }
@@ -192,11 +199,16 @@ pub(crate) fn top(cx: &Cx) -> Option<Top> {
 
 /// The selected building, if it is one the window opens for. In a cave nothing outside is selected.
 fn open_machine(cx: &Cx) -> Option<usize> {
-    if cx.me.cave.is_some() {
+    open_machine_of(cx.w, cx.me, cx.ui_ctx.selection)
+}
+
+/// The same for callers without a `Cx` (the book).
+pub(crate) fn open_machine_of(w: &World, me: &Agent, selection: Option<Selection>) -> Option<usize> {
+    if me.cave.is_some() {
         return None;
     }
-    match cx.ui_ctx.selection {
-        Some(Selection::Building(i)) => cx.w.buildings.get(i).filter(|b| machine::opens_window(cx.w, b.kind)).map(|_| i),
+    match selection {
+        Some(Selection::Building(i)) => w.buildings.get(i).filter(|b| machine::opens_window(w, b.kind)).map(|_| i),
         _ => None,
     }
 }
@@ -233,15 +245,17 @@ pub(crate) fn into_bag(cx: &mut Cx, c: Carry) {
     }
 }
 
-/// Decides Top, draws the tab row, the top tab and the bag grid.
-pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) {
+/// Decides Top, draws the tab row, the top tab and the bag grid. Returns the window's rect, or None when it is not shown.
+pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
     // while the hands are busy with a workpiece the window steps aside instead of lying over it
     if cx.w.craft_view(cx.ui_ctx.me).is_some() {
-        return;
+        return None;
     }
-    let Some(top) = top(cx) else { return };
+    let top = top(cx)?;
     let era = crate::style::current_era();
-    let regs = layout(ctx.content_rect());
+    let screen = ctx.content_rect();
+    // an open book on a wide screen takes the left side and moves the window right by half of its own width
+    let regs = layout(screen).shifted(crate::book::dock_shift(ctx, screen));
     ctx.data_mut(|d| d.insert_temp(regions_id(), regs));
     let fam = match top {
         Top::Machine(i) => Some(crate::style::family(cx.w.buildings[i].kind)),
@@ -291,6 +305,7 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) {
             _ => {}
         }
     }
+    Some(regs.window)
 }
 
 /// The item picture inside a slot rect; an item never seen is a "?".

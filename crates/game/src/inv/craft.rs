@@ -1,10 +1,9 @@
-//! Yap on top: four hand slots, "Dene", and the notebook of what the player knows. Items come from the bag grid
-//! below by click or drag.
+//! Yap on top: four hand slots and "Dene". Items come from the bag grid below by click or drag. What the player
+//! knows is in the book.
 
-use alaz_render::egui::{self, Align2, Color32, RichText, Stroke, Ui};
+use alaz_render::egui::{self, Color32, RichText, Stroke, Ui};
 use alaz_sim::rules::rules;
-use alaz_sim::world::Inventory;
-use alaz_sim::{CommandKind, Discovery, ItemKind, RecipeId};
+use alaz_sim::{CommandKind, ItemKind};
 
 use super::{slot, Carry, Cx, SlotLook};
 use crate::hud::UiAction;
@@ -17,10 +16,6 @@ fn held(hands: &[u8; 4], k: ItemKind) -> u16 {
 
 fn free_in_bag(cx: &Cx, k: ItemKind) -> u16 {
     cx.me.inventory.get(k).saturating_sub(held(cx.hands, k))
-}
-
-fn needs_met(needs: &[ItemKind], inv: &Inventory) -> bool {
-    needs.iter().all(|&k| inv.get(k) > 0)
 }
 
 pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
@@ -76,8 +71,6 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
         .small()
         .weak(),
     );
-    ui.separator();
-    notebook(ui, cx);
 }
 
 /// Painted, because the pixel font has no arrow glyph.
@@ -138,94 +131,6 @@ pub(crate) fn drop_on_hand(cx: &mut Cx, i: usize, c: Carry) {
         Carry::Hand(j) if j < cx.hands.len() => cx.hands.swap(i, j),
         Carry::Hand(_) | Carry::Output { .. } => {}
     }
-}
-
-fn notebook(ui: &mut Ui, cx: &mut Cx) {
-    let (w, me, defs) = (cx.w, cx.me, rules());
-    ui.label(RichText::new("Defter (bildiklerin)").strong());
-    let hand: Vec<(usize, &_)> = defs.recipes.iter().enumerate().filter(|(_, r)| r.station.is_none() && w.knows(r.discovery)).collect();
-    if hand.is_empty() {
-        ui.label("Defterin boş. Elinde bir şeyler dene, yaparak öğrenirsin.");
-    }
-    // Clues: everything a hand recipe needs has been seen but the recipe is not known yet. No name, no steps:
-    // just a nudge to try those things together in the hands.
-    // a farming tool only makes sense once there is something to farm: those clues wait until seed or grain has been seen
-    let era_ready = |d: Discovery| match d {
-        Discovery::Farming => w.has_seen(ItemKind::Seed),
-        Discovery::Milling => w.has_seen(ItemKind::Grain),
-        _ => true,
-    };
-    let clues: Vec<&_> = defs.recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))).collect();
-    for r in clues {
-        egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                for c in &r.inputs {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                    crate::icons::draw_slot(ui.painter(), rect, c.item, true);
-                }
-                let line = "Bunlar bir arada işe yarar gibi. Elinde dene.";
-                ui.label(RichText::new(line).small().weak());
-            });
-        });
-    }
-    // the book as a wall of cards: what it makes, big; what it takes underneath; click a lit card to make it
-    let card_w = 112.0;
-    let cols = ((ui.available_width() + 6.0) / (card_w + 6.0)).floor().max(1.0) as usize;
-    let mut sorted = hand;
-    // what can be made right now first
-    sorted.sort_by_key(|(_, r)| !(me.inventory.has(&r.inputs) && needs_met(&r.needs, &me.inventory)));
-    egui::Grid::new("craft_cards").spacing([6.0, 6.0]).show(ui, |ui| {
-        for (n, (i, r)) in sorted.into_iter().enumerate() {
-            let can = me.inventory.has(&r.inputs) && needs_met(&r.needs, &me.inventory);
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 124.0), egui::Sense::click());
-            let p = ui.painter();
-            let hover = resp.hovered() && can;
-            p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
-            let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
-            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit() * if hover { 2.0 } else { 1.0 }, edge), egui::StrokeKind::Inside);
-            // the product
-            if let Some(o) = r.outputs.first() {
-                let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 28.0), egui::vec2(44.0, 44.0));
-                crate::icons::draw_slot(p, icon, o.item, true);
-                if o.n > 1 {
-                    p.text(icon.right_bottom() - egui::vec2(2.0, 1.0), Align2::RIGHT_BOTTOM, format!("x{}", o.n), egui::FontId::proportional(22.0), Color32::WHITE);
-                }
-            }
-            let name_col = if can { Color32::from_rgb(244, 220, 160) } else { Color32::from_rgb(150, 136, 112) };
-            let galley = p.layout(r.name.clone(), egui::FontId::proportional(22.0), name_col, card_w - 10.0);
-            p.galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 54.0), galley, name_col);
-            // what it takes: small icons, red when short
-            let k = r.inputs.len().max(1) as f32;
-            let iw = 22.0;
-            let mut x = rect.center().x - (k * (iw + 4.0) - 4.0) / 2.0;
-            for c in &r.inputs {
-                let ir = egui::Rect::from_min_size(egui::pos2(x, rect.bottom() - 28.0), egui::vec2(iw, iw));
-                crate::icons::draw_slot(p, ir, c.item, w.has_seen(c.item));
-                let short = me.inventory.get(c.item) < c.n;
-                p.text(ir.right_bottom() + egui::vec2(1.0, 3.0), Align2::RIGHT_BOTTOM, c.n.to_string(), egui::FontId::proportional(11.0), if short { Color32::from_rgb(240, 90, 70) } else { Color32::WHITE });
-                x += iw + 4.0;
-            }
-            let mut tip = format!("{}\n", r.name);
-            for c in &r.inputs {
-                tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
-            }
-            for k in &r.needs {
-                tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
-            }
-            if !r.steps.is_empty() {
-                let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
-                tip += &format!("Adımlar: {}", names.join(" → "));
-            }
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, format!("Yap: {}", r.name)));
-            if resp.on_hover_text(tip).clicked() && can {
-                cx.acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
-            }
-            if (n + 1) % cols == 0 {
-                ui.end_row();
-            }
-        }
-    });
 }
 
 #[cfg(test)]
