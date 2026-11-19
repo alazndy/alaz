@@ -29,6 +29,32 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
+## 0.5.0'da yeni
+
+**Envanter penceresi:** Çanta, yapım, inşa ve makine artık tek pencerede. I, C, B ile ya da bir makineye tıklayarak açılır.
+- Eşyayı çantadan sürükleyip makineye ya da ellerine bırak. Tık 1 tane, Shift+tık hepsini taşır.
+- Pencerenin dışına sürüklersen eşya yere düşer.
+- **Makine sekmesi:** Makineyi doldur, ürünü topla, yakıt ekle. Makineden uzaklaşınca pencere kendiliğinden kapanır.
+- **Yap ve İnşa sekmeleri:** Tarifler ve binalar karo ızgarada; seçince sağda ayrıntısı çıkar.
+
+**Yeni arayüz görünümü:** Pencereler çağa göre değişen piksel çerçeveler, ikonlar ve renklerle çiziliyor.
+- 11 makine ailesinin her biri kendi piksel çizimiyle görünür: boşta, çalışırken ve tıkalıyken farklı.
+- Bilgi satırları algı seviyene göre değişir: ilerledikçe eşyalar ve makineler hakkında daha çok şey okursun.
+- **Defter (J):** Artık ayrı bir pencere. Envanterle birlikte açık kalabilir; geniş ekranda sola yanaşır. Günlük sayfaları ve tarif ipuçları burada.
+
+**Hareket ve hayvanlar:**
+- Yürüyüş daha akıcı. Düşük kare hızında bedenler artık ileri geri sıçramıyor; ayaklar yerde kaymıyor.
+- Avlanan hayvan yana devrilir, bir süre yatar, sonra kaybolur.
+- Hayvan izleri yerde sabit kalıyor.
+
+**Düzeltmeler:**
+- Eğimli zeminde tıklanan yer doğru seçiliyor.
+- Tab ile 2D ↔ 2.5D görünüm değişimi kaldırıldı.
+
+**Çok oyunculu:** Ağ sürümü değişti. Herkes 0.5.0 kullanmalı; 0.4.1 ile bağlanılamaz.
+
+**Kayıtlar:** 0.4.1 kayıtları olduğu gibi açılır.
+
 ## 0.4.1'de yeni
 
 **Menüden çok oyunculu (aynı ağ):** Ana menüde yeni **Çok oyunculu** ekranı.
