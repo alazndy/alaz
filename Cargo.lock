@@ -89,6 +89,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "alaz-relay-proto"
+version = "0.5.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "postcard",
+ "serde",
+]
+
+[[package]]
 name = "alaz-render"
 version = "0.5.0"
 dependencies = [
