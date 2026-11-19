@@ -104,11 +104,11 @@ bilmek gerekmez.
 **Görev taslağı (A seçilirse):**
 | # | İş | Model |
 |---|---|---|
-| 3.1 | `alaz-relay` crate: eşleme, aktarma, kod üretimi, sınırlar, TLS; yerel testler | Opus |
-| 3.2 | `alaz-net`: aracı üzerinden `Host`/`Client` (aynı akış arayüzü), testler | Opus |
+| 3.1 | `alaz-relay` crate: eşleme, aktarma, kod üretimi, sınırlar, TLS; yerel testler | Sonnet |
+| 3.2 | `alaz-net`: aracı üzerinden `Host`/`Client` (aynı akış arayüzü), testler | Sonnet |
 | 3.3 | Menü: "Ağa aç" (kod göster/kopyala), "Kodla katıl" alanı, hata mesajları | Sonnet |
 | 3.4 | Sunucu kurulumu: systemd birimi, güncelleme betiği, izleme | Sonnet (kurulumu sen onaylarsın) |
-| 3.5 | Güvenlik incelemesi (kod tahmini, DoS, kaynak tüketimi) | Opus |
+| 3.5 | Güvenlik incelemesi (kod tahmini, DoS, kaynak tüketimi) | Sonnet |
 | 3.6 | README, sürüm notu | Haiku |
 
 **Kararlar (Göktuğ, 2026-11-19):**
