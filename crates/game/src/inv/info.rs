@@ -111,11 +111,28 @@ fn per_min(r: &RecipeDef) -> Option<f32> {
     (r.ticks > 0).then(|| f32::from(first.n) * 60.0 / job_secs(r))
 }
 
+/// An alloy recipe lists only its fuel as inputs; the two ores and the ingot live in its alloy part.
+fn alloy_parts(r: &RecipeDef) -> Option<([ItemKind; 2], ItemKind)> {
+    r.alloy.as_ref().map(|a| ([a.base, a.add], a.output))
+}
+
 fn pictos_row(r: &RecipeDef) -> Vec<Picto> {
     let mut row: Vec<Picto> = r.inputs.iter().map(|c| Picto::Item(c.item)).collect();
+    if let Some((ores, _)) = alloy_parts(r) {
+        row.extend(ores.map(Picto::Item));
+    }
     row.push(Picto::Icon(Icon::Arrow));
     row.extend(r.outputs.iter().map(|c| Picto::Item(c.item)));
+    if let Some((_, out)) = alloy_parts(r) {
+        row.push(Picto::Item(out));
+    }
     row
+}
+
+/// "Bakır cevheri + Kalay cevheri → Bronz" for an alloy recipe: what the ratio of the ores makes is a matter of
+/// skill, so no counts.
+fn alloy_text(w: &World, r: &RecipeDef) -> Option<String> {
+    alloy_parts(r).map(|([a, b], out)| format!("{} + {} → {}", lang::item_word(w, a), lang::item_word(w, b), lang::item_word(w, out)))
 }
 
 fn recipe_lines(w: &World, r: &RecipeDef, level: u8) -> Vec<Line> {
@@ -135,6 +152,9 @@ fn recipe_lines(w: &World, r: &RecipeDef, level: u8) -> Vec<Line> {
             if !r.inputs.is_empty() {
                 lines.push(Line::Text(format!("gerek: {}", names(w, &r.inputs))));
             }
+            if let Some(t) = alloy_text(w, r) {
+                lines.push(Line::Text(t));
+            }
             if r.heat > 0 {
                 lines.push(Line::Chips(vec![Chip::HeatWord(hud::heat_word(r.heat))]));
             }
@@ -147,6 +167,9 @@ fn recipe_lines(w: &World, r: &RecipeDef, level: u8) -> Vec<Line> {
             let mut lines = vec![Line::Title(r.name.clone())];
             if !r.inputs.is_empty() {
                 lines.push(Line::Chips(r.inputs.iter().map(|c| Chip::Item(c.item, c.n)).collect()));
+            }
+            if let Some(t) = alloy_text(w, r) {
+                lines.push(Line::Text(t));
             }
             let mut figures = Vec::new();
             if r.heat > 0 {
@@ -173,13 +196,16 @@ fn recipe_lines(w: &World, r: &RecipeDef, level: u8) -> Vec<Line> {
 /// The level-4 data as terminal rows. Efficiency is not in the sim, so it has no row.
 fn data_block(r: &RecipeDef, machine: Option<&alaz_sim::Building>, progress: Option<u32>) -> Vec<String> {
     let id = r.id.to_uppercase();
-    let list = |items: &[alaz_sim::rules::ItemCount]| items.iter().map(|c| format!("{}x{}", hud::item_name(c.item), c.n)).collect::<Vec<_>>().join(" ");
+    let list = |items: &[alaz_sim::rules::ItemCount]| items.iter().map(|c| format!("{} x{}", hud::item_name(c.item), c.n)).collect::<Vec<_>>().join(", ");
     let mut rows = vec![id];
     if !r.inputs.is_empty() {
         rows.push(format!("IN {}", list(&r.inputs)));
     }
     if !r.outputs.is_empty() {
         rows.push(format!("OUT {}", list(&r.outputs)));
+    }
+    if let Some(([a, b], out)) = alloy_parts(r) {
+        rows.push(format!("ALLOY {} + {} > {}", hud::item_name(a), hud::item_name(b), hud::item_name(out)));
     }
     if r.heat > 0 {
         rows.push(match machine {

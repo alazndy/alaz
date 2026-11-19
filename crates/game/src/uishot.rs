@@ -72,6 +72,10 @@ pub(crate) fn demo_world() -> (World, usize) {
     furnace.input[ItemKind::Charcoal as usize] = 2;
     furnace.output[ItemKind::Bronze as usize] = 2;
     furnace.temp = 900;
+    // a job half done, so the shots show the progress bar and the working drawing
+    if let Some(&(r, _)) = crate::inv::info::station_recipes(&w, BuildingKind::Furnace).first() {
+        furnace.job = Some(alaz_sim::buildings::Job { recipe: r as u16, remaining: alaz_sim::rules().recipes[r].ticks / 2 });
+    }
     w.buildings.push(furnace);
     let i = w.buildings.len() - 1;
     let mut fire = Building::new(BuildingKind::Campfire, x - 1_500, y);
@@ -81,73 +85,6 @@ pub(crate) fn demo_world() -> (World, usize) {
     depot.output[ItemKind::Berries as usize] = 5;
     w.buildings.push(depot);
     (w, i)
-}
-
-/// Until the machine tab fills the info panel itself, the machine shots show what `draw_lines` makes of the
-/// furnace's bronze recipe in each era. Every number comes from the recipe and the building.
-fn sample_info(ctx: &egui::Context, w: &World, furnace: usize) {
-    use crate::style::lines::{draw_lines, Chip, Line, Picto};
-    use crate::style::Era;
-    let Some(regs) = crate::inv::regions(ctx) else { return };
-    let Some(r) = alaz_sim::rules().recipes.iter().find(|r| r.station == Some(BuildingKind::Furnace) && r.outputs.iter().any(|o| o.item == ItemKind::Bronze)) else { return };
-    let b = &w.buildings[furnace];
-    let era = crate::style::current_era();
-    let secs = (r.ticks as u64 / alaz_sim::time::TICKS_PER_SECOND).max(1) as u32;
-    let out_n: u16 = r.outputs.iter().map(|o| o.n).sum();
-    let item_chips = || r.inputs.iter().map(|i| Chip::Item(i.item, i.n)).collect::<Vec<_>>();
-    let lines = match era {
-        Era::Stone => {
-            let mut row: Vec<Picto> = r.inputs.iter().map(|i| Picto::Item(i.item)).collect();
-            row.push(Picto::Icon(crate::style::icons::Icon::Arrow));
-            row.extend(r.outputs.iter().map(|o| Picto::Item(o.item)));
-            vec![Line::Pictos(row), Line::Pictos(vec![Picto::Flames { lit: 3, of: 4 }]), Line::Pictos(vec![Picto::Glasses { lit: 2, of: 3 }])]
-        }
-        Era::Metal => {
-            let mut v = vec![Line::Title(r.name.clone()), Line::Label("gerek"), Line::Chips(item_chips()), Line::Label("ısı"), Line::Chips(vec![Chip::HeatWord(crate::hud::heat_word(r.heat))])];
-            if let Some(note) = crate::hud::machine_note(BuildingKind::Furnace) {
-                v.push(Line::Label("not"));
-                v.push(Line::Text(note.to_string()));
-            }
-            v
-        }
-        Era::Machine => {
-            let mut v = vec![
-            Line::Title(r.name.clone()),
-            Line::Label("girdi"),
-            Line::Chips(item_chips()),
-            Line::Label("koşul"),
-            Line::Chips(vec![Chip::HeatC { need: r.heat, now: Some(b.temp) }, Chip::Secs(secs)]),
-            Line::Label("hız"),
-            Line::Chips(vec![Chip::PerMin(out_n as f32 * 60.0 / secs as f32)]),
-            ];
-            if let Some(req) = b.kind.requirement() {
-                v.push(Line::Warn(crate::hud::requirement_note(req).to_string()));
-            }
-            v
-        }
-        Era::Computer => {
-            let ins: Vec<String> = r.inputs.iter().map(|i| format!("{:?}×{}", i.item, i.n).to_lowercase()).collect();
-            vec![
-                Line::Title(r.name.clone()),
-                Line::Mono(vec![
-                    r.id.to_uppercase(),
-                    format!("IN  {}", ins.join(" ")),
-                    format!("T   {}/{}°C", b.temp, r.heat),
-                    format!("t   {secs}s"),
-                    format!("OUT {:.1}/min", out_n as f32 * 60.0 / secs as f32),
-                    format!("> auto: {}", if b.auto.is_some() { "ON" } else { "OFF" }),
-                ]),
-            ]
-        }
-    };
-    // clear of the frame's rim and lacing
-    let inner = regs.info.shrink(22.0);
-    egui::Area::new(egui::Id::NULL.with("uishot_info")).order(egui::Order::Foreground).fade_in(false).fixed_pos(inner.min).show(ctx, |ui| {
-        ui.set_width(inner.width());
-        ui.set_max_width(inner.width());
-        crate::style::apply_visuals(ui.visuals_mut(), era);
-        draw_lines(ui, w, era, &lines);
-    });
 }
 
 /// Textures by id, kept across frames: egui sends the font atlas once and later only patches.
@@ -304,9 +241,6 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
             let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
             let out = sh.ctx.run_ui(input, |ui| {
                 crate::hud::draw(ui.ctx(), &w, &ui_ctx, &mut knap, &mut acts);
-                if tab == ShotTab::Machine {
-                    sample_info(ui.ctx(), &w, furnace);
-                }
             });
             apply_textures(&mut sh.tex, &out.textures_delta);
             last = Some(out);
