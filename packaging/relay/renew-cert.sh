@@ -2,9 +2,9 @@
 # Certificate renewal for relay.alazlab.com. Run as root, ON the server.
 # ACME client: certbot, HTTP-01 standalone (needs 80/tcp open while it runs).
 #
-#   renew-cert.sh issue    first certificate (once)
-#   renew-cert.sh renew    renew if due; on success the deploy hook runs (from cron)
-#   renew-cert.sh deploy   copy the current certificate and send SIGHUP (also the hook)
+#   renew-cert.sh issue    install the renewal hook, get the first certificate (once)
+#   renew-cert.sh renew    manual test: run "certbot renew"; the hook fires if it renewed
+#   renew-cert.sh deploy   copy the current certificate and send SIGHUP (what the hook calls)
 set -euo pipefail
 
 domain="relay.alazlab.com"
@@ -31,15 +31,28 @@ deploy() {
     fi
 }
 
+# The hook lives in certbot's own hooks directory, so the copy + SIGHUP happens
+# whichever scheduler renews (the distro certbot.timer, cron, or a manual run).
+install_hook() {
+    install -m 0755 "$self" /usr/local/sbin/alaz-relay-renew
+    install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+    cat >/etc/letsencrypt/renewal-hooks/deploy/alaz-relay <<'HOOK'
+#!/bin/sh
+exec /usr/local/sbin/alaz-relay-renew deploy
+HOOK
+    chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/alaz-relay
+}
+
 case "${1:-}" in
     issue)
+        install_hook
         certbot certonly --standalone --non-interactive --agree-tos \
             --preferred-challenges http -d "$domain" \
             --register-unsafely-without-email
         deploy
         ;;
     renew)
-        certbot renew --quiet --deploy-hook "$self deploy"
+        certbot renew --quiet
         ;;
     deploy)
         deploy

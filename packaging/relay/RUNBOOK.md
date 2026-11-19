@@ -19,7 +19,7 @@ Bu dosya yazıldı, **çalıştırılmadı**. Hiçbir adım Göktuğ onaylamadan
 
 | Yöntem | Artı | Eksi |
 |---|---|---|
-| HTTP-01 standalone (seçilen) | Sağlayıcıdan bağımsız. API anahtarı gerekmez. | Yenileme sırasında 80/tcp açık olmalı. |
+| HTTP-01 standalone (seçilen) | Sağlayıcıdan bağımsız. API anahtarı gerekmez. | 80/tcp sürekli açık kalmalı. |
 | DNS-01 | 80/tcp gerekmez. | DNS sağlayıcısının API anahtarı sunucuda durur. Sağlayıcıya bağlıdır. |
 
 Sağlayıcı belli olmadığı için HTTP-01 seçildi. DNS sağlayıcısı API verirse DNS-01'e geçmek mümkün.
@@ -40,10 +40,10 @@ Kullanıcı seçimi: `DynamicUser` yerine sabit `alaz-relay` kullanıcısı. Ser
 
 1. Bulut sağlayıcıda küçük bir Linux VM aç (Oracle ücretsiz VM, Ubuntu veya Debian).
 2. VM'e **sabit (reserved) bir genel IPv4 adresi** ver. IP değişirse DNS bozulur.
-3. DNS sağlayıcısında bir **A kaydı** oluştur: ad `relay` (yani `relay.alazlab.com`), değer VM'in IPv4 adresi. IPv6 varsa aynı şekilde bir AAAA kaydı.
+3. DNS sağlayıcısında bir **A kaydı** oluştur: ad `relay` (yani `relay.alazlab.com`), değer VM'in IPv4 adresi. **AAAA kaydı açma.** Relay şimdilik sadece IPv4'te dinler (`0.0.0.0:443`). IPv6 istemci AAAA görürse bağlanamaz.
 4. Bulut ağ kurallarında (güvenlik listesi, security group) **gelen** trafiğe şunları aç:
    - 443/tcp: herkese. Relay burada dinler.
-   - 80/tcp: sadece sertifika alırken ve yenilerken (HTTP-01).
+   - 80/tcp: herkese, **sürekli açık**. Yenileme düzenli çalışır. Certbot 80'i sadece yenilerken tutar, diğer zamanlarda orada hiçbir şey dinlemez.
    - 22/tcp: yönetim için, mümkünse sadece senin IP'ne.
    - Başka her şey kapalı. 9100 (istatistik) **hiç açılmaz**; sadece loopback'te dinler.
 5. VM'in kendi güvenlik duvarı da aynı kurallara uymalı. Oracle'ın Ubuntu imajında `iptables` kuralları varsayılan olarak 22 dışını keser. Örnek (ufw):
@@ -64,6 +64,7 @@ Derleme ayrı bir makinede veya VM'de yapılabilir.
 
 ```
 cargo build --release -p alaz-relay
+ssh USER@relay.alazlab.com 'mkdir -p /tmp/relay'
 scp target/release/alaz-relay packaging/relay/{alaz-relay.service,deploy.sh,renew-cert.sh} USER@relay.alazlab.com:/tmp/relay/
 ```
 
@@ -79,18 +80,15 @@ sudo ./renew-cert.sh issue           # sertifikayı alır, kopyalar
 sudo systemctl restart alaz-relay
 ```
 
-`renew-cert.sh issue` sırasında 80/tcp boş ve açık olmalı. Başka bir web sunucusu 80'i tutuyorsa dur.
+`renew-cert.sh issue` yenileme kancasını da kurar (aşağıya bak). Sertifika yokken servis kendiliğinden başlamaz (`ConditionPathExists`), yani yeniden başlatma döngüsüne girmez. İlk sertifikadan sonra `restart` onu başlatır. Sırasında 80/tcp boş ve açık olmalı. Başka bir web sunucusu 80'i tutuyorsa dur.
 
 ## Adım 4: Otomatik yenileme
 
-Sertifika 90 gün geçerli. Haftada iki kez yenileme denenir. Yenileme yalnızca süre azaldığında olur.
+Sertifika 90 gün geçerli. Debian ve Ubuntu'daki certbot paketi günde iki kez `certbot renew` çalıştırır ve süre 30 günün altına inince yeniler. Ayrı bir zamanlayıcı kurmana gerek yok.
 
-```
-sudo install -m 0755 /tmp/relay/renew-cert.sh /usr/local/sbin/alaz-relay-renew
-echo '17 3 * * 1,4 root /usr/local/sbin/alaz-relay-renew renew' | sudo tee /etc/cron.d/alaz-relay-renew
-```
+`renew-cert.sh issue` bir **deploy hook** kurar: `/etc/letsencrypt/renewal-hooks/deploy/alaz-relay`. Certbot her yenilemeden sonra bunu çalıştırır. Hook yeni sertifikayı `/etc/alaz-relay/tls` içine kopyalar ve relay'e SIGHUP gönderir. Yenilemeyi hangi zamanlayıcı yaparsa yapsın bu çalışır.
 
-Debian ve Ubuntu'daki certbot paketi kendi zamanlayıcısını da kurar. Zararsızdır, ama relay'e SIGHUP göndermez. Relay ayrıca her 12 saatte bir sertifikayı kendisi yeniden okur. Yani en kötü durumda yeni sertifika 12 saat içinde devreye girer.
+Relay'in 12 saatlik yeniden okuması sadece bir yedektir. Kopya güncellenmediyse yeni sertifikayı getirmez.
 
 ## Güncelleme
 
@@ -128,3 +126,6 @@ nc 127.0.0.1 9100
 - [ ] Oyundan katılma testi: `ALAZ_RELAY` ortam değişkeni **tanımlı olmadan** oyunu aç. Bir oyuncu "Ağa aç" ile kod alsın. İkinci oyuncu "Kodla katıl" ile o kodu girsin. İkisi aynı dünyada görünmeli.
 - [ ] Sertifika yenileme testi (sunucuda): `sudo /usr/local/sbin/alaz-relay-renew renew`, hata vermemeli. Ardından `sudo journalctl -u alaz-relay -n 20` ile servisin düşmediğini gör.
 - [ ] Yeniden başlatma testi: `sudo systemctl restart alaz-relay` sonrası servis kendiliğinden ayağa kalkar. VM'i yeniden başlatınca da kalkmalı (`systemctl is-enabled alaz-relay` çıktısı `enabled`).
+- [ ] Hook kurulu: `ls -l /etc/letsencrypt/renewal-hooks/deploy/alaz-relay` dosyası var ve çalıştırılabilir. `sudo certbot renew --dry-run` hatasız biter.
+
+Not: `shellcheck` bu makinede kurulu değildi, scriptler sadece `bash -n` ile denendi.

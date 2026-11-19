@@ -1,6 +1,8 @@
 [Unit]
 Description=Alaz relay (join by code)
 After=network-online.target
+# Without a certificate the relay cannot start; skip instead of restart-looping.
+ConditionPathExists=/etc/alaz-relay/tls/privkey.pem
 Wants=network-online.target
 
 [Service]
@@ -24,6 +26,8 @@ NoNewPrivileges=true
 # Default Limits: max_tunnels 4000 x 2 sockets + max_rooms 1000 control sockets
 # = 9000 steady state. 65536 leaves room for handshakes in flight and floods.
 LimitNOFILE=65536
+# One thread per connection; 9000 sockets can mean thousands of threads.
+TasksMax=20000
 
 ProtectSystem=strict
 ProtectHome=true
