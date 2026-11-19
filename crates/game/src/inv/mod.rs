@@ -165,6 +165,7 @@ pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look:
     let name = item.map_or_else(|| "boş".to_string(), |k| crate::lang::item_word(w, crate::lang::looks_like(w, k)));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, look != SlotLook::Disabled, &name));
     let Some(k) = item else { return resp };
+    crate::pilot::mark(ui.ctx(), || format!("slot:{}", alaz_sim::debug::snake(&format!("{k:?}"))), rect);
     // dev aid for screenshots: ALAZ_DEMO_TIP keeps the cloak's tooltip open
     if k == ItemKind::HideCloak && std::env::var_os("ALAZ_DEMO_TIP").is_some() {
         let tip = hud::item_tip(w, k);
@@ -306,6 +307,7 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
             Top::Bag | Top::Machine(_) => {}
         });
         // the whole bag area takes back what was carried out of it (machine output, a held item)
+        crate::pilot::mark(ui.ctx(), || "bag".to_string(), regs.bag);
         let zone = ui.interact(regs.bag, egui::Id::NULL.with("inv_bag_zone"), egui::Sense::hover());
         if hovering(&zone).is_some_and(|c| !matches!(c, Carry::Bag(_))) {
             crate::style::highlight(&p, regs.bag, crate::style::palette(era).good);

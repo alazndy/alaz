@@ -266,6 +266,7 @@ pub struct Renderer {
     pub(crate) prof: Option<GpuProf>,
     /// `ALAZ_SHOT`: where to write the picture, and how many frames to wait first
     pub(crate) shot: Option<(String, u32)>,
+    pub(crate) shot_once: Option<String>,
 }
 
 impl Renderer {
@@ -296,7 +297,7 @@ impl Renderer {
         config.present_mode =
             if std::env::var_os("ALAZ_NOVSYNC").is_some() { wgpu::PresentMode::AutoNoVsync } else { wgpu::PresentMode::AutoVsync };
         // ALAZ_SHOT copies the finished frame out of the swapchain
-        if std::env::var_os("ALAZ_SHOT").is_some() && surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
+        if (std::env::var_os("ALAZ_SHOT").is_some() || std::env::var_os("ALAZ_PILOT").is_some()) && surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
         surface.configure(&device, &config);
@@ -574,6 +575,7 @@ impl Renderer {
             cave_was: None,
             cave_light: 1.0,
             prof,
+            shot_once: None,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,
             view: std::env::var("ALAZ_DEMO_VIEW").ok().filter(|v| !v.is_empty()).map(crate::assets::View::new),
@@ -918,6 +920,20 @@ impl Renderer {
         let rain = if self.weather_kind < 1.5 { self.weather_amount } else { 0.0 };
         let snow = if self.weather_kind > 1.5 { self.weather_amount } else { 0.0 };
         (rain, snow, self.wind)
+    }
+
+    /// Dev aid (the game's pilot): input events as if the window had received them, seen by the next pass.
+    pub fn inject_ui_events(&mut self, events: Vec<egui::Event>) {
+        self.egui_state.egui_input_mut().events.extend(events);
+    }
+
+    /// Dev aid (the game's pilot): saves the next finished frame as a PPM and carries on.
+    pub fn request_shot(&mut self, path: String) {
+        self.shot_once = Some(path);
+    }
+
+    pub fn egui_context(&self) -> &egui::Context {
+        &self.egui_ctx
     }
 
     pub fn pointer_over_ui(&self) -> bool {

@@ -530,6 +530,7 @@ fn picture_button(ui: &mut Ui, tip: &str, selected: bool, era: Era, accent: Opti
     let enabled = ui.is_enabled();
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(BUTTON), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    crate::pilot::mark(ui.ctx(), || tip.to_string(), rect);
     let pal = palette(era);
     let p = ui.painter();
     // a selected button is the slot ground lit up, framed in the accent (or the era's light)

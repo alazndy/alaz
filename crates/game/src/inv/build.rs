@@ -71,6 +71,7 @@ fn tile(ui: &mut Ui, b: &BuildingDef, ok: bool, picked: bool, era: Era) -> egui:
     }
     let name = b.name.clone();
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    crate::pilot::mark(ui.ctx(), || format!("build:{}", alaz_sim::debug::snake(&format!("{:?}", b.kind))), rect);
     resp.on_hover_text(b.name.as_str())
 }
 

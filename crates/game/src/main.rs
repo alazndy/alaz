@@ -21,6 +21,7 @@ mod lang;
 mod menu;
 mod portrait;
 mod pxpanel;
+mod pilot;
 mod pxui;
 mod fx;
 mod gfxcfg;
@@ -726,6 +727,10 @@ struct App {
     /// A debug script driving the player (`ALAZ_SCRIPT=file`), and where its log goes.
     script: Option<alaz_sim::debug::Script>,
     script_done: bool,
+    /// Dev aid: plays through real input events (`ALAZ_PILOT=file`).
+    pilot: Option<pilot::Pilot>,
+    /// Dev aid: the pilot froze the simulation.
+    paused: bool,
     audio: Option<audio::Audio>,
     /// Health last frame, to notice a blow.
     prev_hp: Option<i32>,
@@ -857,6 +862,8 @@ impl App {
             facing: 0,
             turn_after: None,
             script_done: false,
+            pilot: pilot::Pilot::from_env(),
+            paused: false,
             script: std::env::var("ALAZ_SCRIPT").ok().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| alaz_sim::debug::Script::new(&t)),
             audio: audio::Audio::new(),
             prev_hp: None,
@@ -1040,6 +1047,214 @@ impl App {
 
     fn toggle_tab(&mut self, t: hud::Tab) {
         self.tab = if self.tab == Some(t) { None } else { Some(t) };
+    }
+
+    // The window's input, one method per kind, so the pilot's made-up events take the same path as real ones.
+    fn input_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        if pressed {
+            let used = self.menu.as_mut().is_some_and(|m| if m.capturing() { m.on_key(code, &mut self.binds) } else { false });
+            if !repeat && !used {
+                for action in self.binds.actions_for(code) {
+                    self.on_action(action);
+                }
+            }
+            if !used {
+                self.keys.insert(code);
+            }
+        } else {
+            self.keys.remove(&code);
+        }
+    }
+
+    fn input_cursor(&mut self, now: (f32, f32)) {
+        let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+        if let (Some(from), false) = (self.mid_drag, shift) {
+            // middle drag orbits: across turns the camera, up and down tilts it from low and wide to straight down
+            self.cam.yaw_deg -= (now.0 - from.0) * 0.35;
+            self.pitch_goal = (self.pitch_goal + (now.1 - from.1) * 0.25).clamp(Camera::PITCH_MIN, Camera::PITCH_TOP);
+            self.cam.pitch_deg = self.pitch_goal;
+            self.mid_drag = Some(now);
+        } else if let (Some(from), Some(g)) = (self.mid_drag, self.gfx.as_ref()) {
+            // shift + middle drag: drag the ground under the cursor along with it
+            let (w, h) = g.renderer.size();
+            let at = |c: (f32, f32)| self.cam.ground_at(2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32, g.renderer.aspect());
+            if let (Some(a), Some(b)) = (at(from), at(now)) {
+                self.cam.target.x += a.x - b.x;
+                self.cam.target.z += a.z - b.z;
+                self.follow = false;
+            }
+            self.mid_drag = Some(now);
+        }
+        self.cursor = now;
+    }
+
+    fn input_button(&mut self, button: MouseButton, pressed: bool, ui_consumed: bool) {
+        match button {
+            MouseButton::Middle => self.mid_drag = pressed.then_some(self.cursor),
+            MouseButton::Left | MouseButton::Right if pressed => {
+                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
+                if !ui_consumed && !over_ui {
+                    self.click(button == MouseButton::Left);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn input_wheel(&mut self, lines: f32) {
+        if self.menu.is_none() {
+            self.cam.zoom = (self.cam.zoom * 1.1f32.powf(lines)).clamp(0.2, 8.0);
+        }
+    }
+
+    /// How many sim ticks run per real tick. Creative worlds choose it in the UI; for tests `ALAZ_TIME_SCALE` works in
+    /// any solo world.
+    fn sim_scale(&self) -> u32 {
+        let solo = matches!(self.net, Net::Solo);
+        let free = self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative || std::env::var_os("ALAZ_TIME_SCALE").is_some();
+        if self.paused {
+            0
+        } else if solo && free {
+            self.time_scale.max(1)
+        } else {
+            1
+        }
+    }
+
+    /// The pilot's turn: it gets game time, and what it does reaches the game as ordinary input.
+    fn pilot_tick(&mut self, raw_dt: f32) {
+        let Some(mut pilot) = self.pilot.take() else { return };
+        if let Some(g) = self.gfx.as_ref() {
+            // a paused game still lets the pilot work, in real time
+            let scale = self.sim_scale().max(1) as f64;
+            let sim_s = self.world.tick as f64 / TICKS_PER_SECOND as f64;
+            let pick = |x: f32, y: f32| self.node_under((x, y));
+            let view = pilot::View { signal: pilot::read_signal(g.renderer.egui_context()), craft: self.world.craft_view(self.me), pick: &pick, world: &self.world, me: self.me, cam: self.cam, win: g.renderer.size(), ppp: g.renderer.egui_context().pixels_per_point(), marks: pilot::marks(g.renderer.egui_context()), sim_s };
+            let inputs = pilot.tick(raw_dt.min(0.25) as f64 * 1000.0 * scale, raw_dt, &view);
+            let wants: Vec<pilot::Want> = std::mem::take(&mut pilot.wants);
+            let mut shots: Vec<String> = Vec::new();
+            let ppp = view.ppp;
+            for want in wants {
+                match want {
+                    pilot::Want::State => {
+                        let line = self.pilot_state();
+                        pilot.say(sim_s, line);
+                    }
+                    pilot::Want::Look => {
+                        for l in pilot.look(&view) {
+                            pilot.say(sim_s, l);
+                        }
+                    }
+                    pilot::Want::Shot(name) => {
+                        let dir = std::path::PathBuf::from(std::env::var_os("ALAZ_PILOT").unwrap_or_default());
+                        let file = dir.with_file_name(format!("{name}.ppm"));
+                        shots.push(file.display().to_string());
+                        pilot.say(sim_s, format!("shot {}", file.display()));
+                    }
+                    pilot::Want::Marks => {
+                        let names: Vec<String> = view.marks.iter().map(|(l, r)| format!("{l} @{:.0},{:.0}", r.center().x * view.ppp, r.center().y * view.ppp)).collect();
+                        pilot.say(sim_s, format!("marks: {}", names.join(" | ")));
+                    }
+                }
+            }
+            if let Some(g) = self.gfx.as_mut() {
+                for s in shots {
+                    g.renderer.request_shot(s);
+                }
+            }
+            if let Some(n) = pilot.speed_req.take() {
+                self.paused = n == 0;
+                if n > 0 {
+                    self.time_scale = n.clamp(1, 10);
+                }
+                pilot.say(sim_s, format!("speed {}", if n == 0 { "paused".to_string() } else { format!("x{}", n.clamp(1, 10)) }));
+            }
+            self.pilot = Some(pilot);
+            self.pilot_apply(inputs, ppp);
+        } else {
+            self.pilot = Some(pilot);
+        }
+    }
+
+    fn pilot_apply(&mut self, inputs: Vec<pilot::Input>, ppp: f32) {
+        use alaz_render::egui;
+        for input in inputs {
+            let mut events = Vec::new();
+            let at = |c: (f32, f32)| egui::pos2(c.0 / ppp, c.1 / ppp);
+            match input {
+                pilot::Input::Cursor(x, y) => {
+                    events.push(egui::Event::PointerMoved(at((x, y))));
+                    self.input_cursor((x, y));
+                }
+                pilot::Input::Button(b, pressed) => {
+                    let button = match b {
+                        pilot::Btn::Left => MouseButton::Left,
+                        pilot::Btn::Right => MouseButton::Right,
+                        pilot::Btn::Middle => MouseButton::Middle,
+                    };
+                    let eb = match b {
+                        pilot::Btn::Left => egui::PointerButton::Primary,
+                        pilot::Btn::Right => egui::PointerButton::Secondary,
+                        pilot::Btn::Middle => egui::PointerButton::Middle,
+                    };
+                    events.push(egui::Event::PointerButton { pos: at(self.cursor), button: eb, pressed, modifiers: self.pilot_mods() });
+                    // the egui pass of the next frame decides whether the UI took it; the game asks that pass's answer
+                    self.input_button(button, pressed, false);
+                }
+                pilot::Input::Key(code, pressed) => {
+                    if let Some(key) = pilot::egui_key(code) {
+                        events.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: self.pilot_mods() });
+                    }
+                    self.input_key(code, pressed, false);
+                }
+                pilot::Input::Wheel(n) => {
+                    events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, n),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Wheel,
+                        modifiers: self.pilot_mods(),
+                    });
+                    if !self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui()) {
+                        self.input_wheel(n);
+                    }
+                }
+            }
+            if let Some(g) = self.gfx.as_mut() {
+                g.renderer.inject_ui_events(events);
+            }
+        }
+    }
+
+    fn pilot_mods(&self) -> alaz_render::egui::Modifiers {
+        let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+        let ctrl = self.keys.contains(&KeyCode::ControlLeft);
+        alaz_render::egui::Modifiers { shift, ctrl, command: ctrl, ..Default::default() }
+    }
+
+    /// One line about the player and the world, for the pilot's log.
+    fn pilot_state(&self) -> String {
+        let Some(a) = self.me_agent() else { return "no player".into() };
+        let w = &self.world;
+        let pack: Vec<String> = alaz_sim::ItemKind::ALL.iter().filter(|k| a.inventory.get(**k) > 0).map(|k| format!("{} {}", alaz_sim::debug::snake(&format!("{k:?}")), a.inventory.get(*k))).collect();
+        let day = w.tick / alaz_sim::time::TICKS_PER_DAY as u64;
+        format!(
+            "STATE day {day} | {} | perception {} ({}) | at ({:.0},{:.0}) m | hp {} food {} water {} warm {} stam {} | task {:?} | tab {:?} | selected {} | pack: {}",
+            hud::era_name(w),
+            w.perception_permille(),
+            w.perception_level(),
+            a.x as f64 / 1000.0,
+            a.y as f64 / 1000.0,
+            a.health,
+            a.hunger,
+            a.thirst,
+            a.warmth,
+            a.stamina,
+            a.task,
+            self.tab,
+            self.selected.is_some(),
+            pack.join(", ")
+        )
     }
 
     fn on_action(&mut self, action: keys::Action) {
@@ -1367,6 +1582,7 @@ impl App {
         if let Some(g) = self.gfx.as_ref() {
             self.cam.win = g.renderer.size();
         }
+        self.pilot_tick(raw_dt);
 
         let bench_pose = self.perf.as_ref().and_then(|p| p.bench_secs.map(|_| p.t0.elapsed().as_secs_f32()));
         if let Some(t) = bench_pose {
@@ -1503,7 +1719,7 @@ impl App {
             self.accum = 0.0;
             self.pending.clear();
         } else {
-            let scale = if matches!(self.net, Net::Solo) && self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative { self.time_scale.max(1) } else { 1 };
+            let scale = self.sim_scale();
             self.accum += dt * scale as f32;
             let mut steps = 0;
             while self.accum >= STEP && steps < 5 * scale {
@@ -2011,6 +2227,18 @@ impl App {
         cam.win = (w, h);
         let ndc = (2.0 * self.cursor.0 / w as f32 - 1.0, 1.0 - 2.0 * self.cursor.1 / h as f32);
         PointerRay::from_camera(&cam, ndc)
+    }
+
+    /// The node the pointer would pick if it stood at `c` (pixels).
+    fn node_under(&self, c: (f32, f32)) -> Option<u32> {
+        let g = self.gfx.as_ref()?;
+        let mut cam = self.cam;
+        let (w, h) = g.renderer.size();
+        cam.win = (w, h);
+        let ray = PointerRay::from_camera(&cam, (2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32))?;
+        let seed = self.world.seed;
+        let ground = ray.terrain_hit(|x, z| alaz_sim::elevation_mm(seed, x, z) as f32 / 1000.0);
+        self.pick_node(ray, ground).map(|id| id.0)
     }
 
     fn pointer_surface(&self) -> Option<(PointerRay, Vec3)> {
@@ -2580,66 +2808,17 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if event.state == ElementState::Pressed {
-                        let used = self.menu.as_mut().is_some_and(|m| {
-                            if m.capturing() { m.on_key(code, &mut self.binds) } else { false }
-                        });
-                        if !event.repeat && !used {
-                            for action in self.binds.actions_for(code) {
-                                self.on_action(action);
-                            }
-                        }
-                        if !used {
-                            self.keys.insert(code);
-                        }
-                    } else {
-                        self.keys.remove(&code);
-                    }
+                    self.input_key(code, event.state == ElementState::Pressed, event.repeat);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                let now = (position.x as f32, position.y as f32);
-                let shift = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft) || self.keys.contains(&winit::keyboard::KeyCode::ShiftRight);
-                if let (Some(from), false) = (self.mid_drag, shift) {
-                    // middle drag orbits: across turns the camera, up and down tilts it from low and wide to straight down
-                    self.cam.yaw_deg -= (now.0 - from.0) * 0.35;
-                    self.pitch_goal = (self.pitch_goal + (now.1 - from.1) * 0.25).clamp(Camera::PITCH_MIN, Camera::PITCH_TOP);
-                    self.cam.pitch_deg = self.pitch_goal;
-                    self.mid_drag = Some(now);
-                } else if let (Some(from), Some(g)) = (self.mid_drag, self.gfx.as_ref()) {
-                    // shift + middle drag: drag the ground under the cursor along with it
-                    let (w, h) = g.renderer.size();
-                    let at = |c: (f32, f32)| self.cam.ground_at(2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32, g.renderer.aspect());
-                    if let (Some(a), Some(b)) = (at(from), at(now)) {
-                        self.cam.target.x += a.x - b.x;
-                        self.cam.target.z += a.z - b.z;
-                        self.follow = false;
-                    }
-                    self.mid_drag = Some(now);
-                }
-                self.cursor = now;
-            }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
-                if !ui_consumed && !over_ui {
-                    self.click(true);
-                }
-            }
-            WindowEvent::MouseInput { button: MouseButton::Middle, state, .. } => {
-                self.mid_drag = (state == ElementState::Pressed).then_some(self.cursor);
-            }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
-                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
-                if !ui_consumed && !over_ui {
-                    self.click(false);
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } if !ui_consumed && self.menu.is_none() => {
+            WindowEvent::CursorMoved { position, .. } => self.input_cursor((position.x as f32, position.y as f32)),
+            WindowEvent::MouseInput { state, button, .. } => self.input_button(button, state == ElementState::Pressed, ui_consumed),
+            WindowEvent::MouseWheel { delta, .. } if !ui_consumed => {
                 let s = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                self.cam.zoom = (self.cam.zoom * 1.1f32.powf(s)).clamp(0.2, 8.0);
+                self.input_wheel(s);
             }
             WindowEvent::RedrawRequested => {
                 self.frame();

@@ -1882,6 +1882,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                 strike_fx(ui.ctx(), resp.rect, last);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yontma taşı"));
                 let rect = resp.rect;
+                crate::pilot::mark(ctx, || "knap".to_string(), rect);
                 let c = px::snap_pos(rect.center());
                 let r0 = KNAP_SIZE * 0.369;
                 px::well(&painter, rect, 3);
@@ -1995,6 +1996,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     acts.push(UiAction::Cmd(if grip { CommandKind::StrikeAt { angle, power } } else { CommandKind::StrikeLoose { angle, power } }));
                     st.charge = 0.0;
                 }
+                crate::pilot::signal(ctx, st.charge, st.rising);
                 // force meter
                 let (br, _) = ui.allocate_exact_size(egui::vec2(44.0, KNAP_SIZE), egui::Sense::hover());
                 let bar = br.shrink2(egui::vec2(6.0, 0.0));
@@ -2180,6 +2182,7 @@ fn draw_stack(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, 
             let (resp, painter) = ui.allocate_painter(egui::vec2(w, h), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yığın alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 9);
             let k = w / 210.0;
@@ -2238,6 +2241,7 @@ fn draw_fit(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let (resp, painter) = ui.allocate_painter(egui::vec2(FIT_SIZE, FIT_SIZE), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yerleştirme alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             let c = rect.center();
             let k = FIT_SIZE / 290.0 * 1.35;
@@ -2291,6 +2295,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 150.0), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Budama alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             let c = rect.center();
             let k = 1.5;
@@ -2354,6 +2359,7 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Sürtme alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 23);
             let (x0, x1) = (rect.left() + 30.0, rect.right() - 20.0);
@@ -2440,6 +2446,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Sıkıştırma alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 17);
             // the handle with the stone set in its notch, and the fibre wound around both
@@ -2480,6 +2487,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
                 st.charge = 0.0;
             }
             // pressure meter with the band to hit
+            crate::pilot::signal(ctx, st.charge, st.rising);
             let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(330.0, 30.0), egui::Sense::hover());
             let band = ((v.power as f32 - v.power_half as f32).max(0.0), (v.power as f32 + v.power_half as f32).min(100.0));
             px::meter(ui.painter(), bar_rect, false, band, px::verdict(last, Color32::from_rgb(90, 190, 100)), Some(st.charge * 100.0));
