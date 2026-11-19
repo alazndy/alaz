@@ -11,9 +11,16 @@ pub const MAX_RELAY_FRAME: usize = 4096;
 const ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 /// Deserialization validates every byte: a peer must not smuggle a non-alphabet `Code` past `read_msg`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "[u8; 8]")]
 pub struct Code([u8; 8]);
+
+/// A code is a bearer secret: it must not reach logs or panic messages through `{:?}`.
+impl fmt::Debug for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Code(****-****)")
+    }
+}
 
 impl TryFrom<[u8; 8]> for Code {
     type Error = &'static str;
@@ -216,5 +223,12 @@ mod tests {
         for r in [Refusal::BadProtocol, Refusal::NoSuchCode, Refusal::RoomFull, Refusal::TooManyAttempts, Refusal::Busy] {
             rt(FromRelay::Refused(r));
         }
+    }
+
+    #[test]
+    fn debug_output_never_shows_the_code() {
+        let c = Code::generate();
+        assert_eq!(format!("{c:?}"), "Code(****-****)");
+        assert!(!format!("{:?}", ToRelay::Join { protocol: 1, code: c }).contains(&c.to_string()));
     }
 }
