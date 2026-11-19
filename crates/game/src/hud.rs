@@ -1402,178 +1402,6 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
     });
 }
 
-pub(crate) fn tab_craft(ui: &mut egui::Ui, w: &World, me: &alaz_sim::world::Agent, hands: &mut [u8; 4], acts: &mut Vec<UiAction>) {
-    let defs = rules();
-    // hands: put things together and see what comes of it
-    let held = |k: ItemKind, hands: &[u8; 4]| hands.iter().filter(|&&i| i == k as u8).count() as u16;
-    // the bag can change under the hands (eaten, built with, dropped in a depot): let go of what is no longer there,
-    // or "Dene" would try a mix the player cannot see they no longer have
-    let mut taken = [0u16; ItemKind::COUNT];
-    for slot in hands.iter_mut() {
-        if let Some(&k) = ItemKind::ALL.get(*slot as usize) {
-            taken[k as usize] += 1;
-            if taken[k as usize] > me.inventory.get(k) {
-                *slot = 255;
-            }
-        }
-    }
-    ui.label(RichText::new("Ellerin").strong());
-    ui.horizontal(|ui| {
-        for slot in 0..4 {
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(60.0, 60.0), egui::Sense::click());
-            match ItemKind::ALL.get(hands[slot] as usize) {
-                Some(&k) => crate::icons::draw_slot(ui.painter(), rect, crate::lang::looks_like(w, k), w.has_seen(k)),
-                None => {
-                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(26, 21, 17));
-                    ui.painter().rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit(), Color32::from_rgb(70, 56, 40)), egui::StrokeKind::Inside);
-                }
-            }
-            let held_name = ItemKind::ALL.get(hands[slot] as usize).map(|&k| crate::lang::item_word(w, crate::lang::looks_like(w, k))).unwrap_or_else(|| "boş el".to_string());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("El {}: {held_name}", slot + 1)));
-            if resp.clicked() {
-                hands[slot] = 255;
-            }
-        }
-        let any = hands.iter().any(|&i| i != 255);
-        if ui.add_enabled(any, egui::Button::new("Dene").min_size(egui::vec2(70.0, 60.0))).clicked() {
-            acts.push(UiAction::Cmd(CommandKind::Combine { items: *hands }));
-            *hands = [255; 4];
-        }
-    });
-    let mut want = [0u16; ItemKind::COUNT];
-    for &i in hands.iter() {
-        if let Some(k) = ItemKind::ALL.get(i as usize) {
-            want[*k as usize] += 1;
-        }
-    }
-    let known_match = defs.recipes.iter().find(|r| {
-        r.station.is_none() && r.ticks == 0 && w.knows(r.discovery) && {
-            let mut need = [0u16; ItemKind::COUNT];
-            for i in &r.inputs {
-                need[i.item as usize] += i.n;
-            }
-            need == want
-        }
-    });
-    ui.label(RichText::new(match known_match {
-        Some(r) => format!("Bunu biliyorsun: {}", r.name),
-        None if hands.iter().all(|&i| i == 255) => "Çantandan bir şey seç, elinde birleştir.".to_string(),
-        None => "Ne olacağını bilmiyorsun. Dene.".to_string(),
-    }).small().weak());
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        for &k in ItemKind::ALL.iter() {
-            // a heap of lookalikes shows once, under the thing it passes for
-            if crate::lang::looks_like(w, k) != k {
-                continue;
-            }
-            let members = crate::lang::hidden_in(w, &me.inventory, k);
-            let free_of = |r: ItemKind| me.inventory.get(r).saturating_sub(held(r, hands));
-            let free: u16 = members.iter().map(|(r, _)| free_of(*r)).sum::<u16>().max(if members.is_empty() { free_of(k) } else { 0 });
-            if free == 0 {
-                continue;
-            }
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(46.0, 46.0), egui::Sense::click());
-            crate::icons::draw_slot(ui.painter(), rect, k, w.has_seen(k));
-            ui.painter().text(rect.right_bottom() - egui::vec2(3.0, 2.0), Align2::RIGHT_BOTTOM, free.to_string(), egui::FontId::proportional(22.0), Color32::WHITE);
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Çantadan al: {}", crate::lang::item_word(w, k))));
-            if resp.on_hover_text(item_tip(w, k)).clicked() {
-                if let Some(s) = hands.iter().position(|&i| i == 255) {
-                    // the hand closes on one of the heap at random: the eye cannot choose what it cannot see
-                    let pool: Vec<ItemKind> = members.iter().flat_map(|(r, _)| std::iter::repeat_n(*r, free_of(*r) as usize)).collect();
-                    let pick = if pool.is_empty() { k } else { pool[(w.tick as usize).wrapping_mul(2_654_435_761) % pool.len()] };
-                    hands[s] = pick as u8;
-                }
-            }
-        }
-    });
-    ui.separator();
-    ui.label(RichText::new("Defter (bildiklerin)").strong());
-    let hand: Vec<(usize, &_)> = defs.recipes.iter().enumerate().filter(|(_, r)| r.station.is_none() && w.knows(r.discovery)).collect();
-    if hand.is_empty() {
-        ui.label("Defterin boş. Elinde bir şeyler dene, yaparak öğrenirsin.");
-    }
-    // Clues: everything a hand recipe needs has been seen but the recipe is not known yet. No name, no steps:
-    // just a nudge to try those things together in the hands.
-    // a farming tool only makes sense once there is something to farm: those clues wait until seed or grain has been seen
-    let era_ready = |d: Discovery| match d {
-        Discovery::Farming => w.has_seen(ItemKind::Seed),
-        Discovery::Milling => w.has_seen(ItemKind::Grain),
-        _ => true,
-    };
-    let clues: Vec<&_> = defs.recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))).collect();
-    for r in clues {
-        egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                for c in &r.inputs {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                    crate::icons::draw_slot(ui.painter(), rect, c.item, true);
-                }
-                let line = "Bunlar bir arada işe yarar gibi. Elinde dene.";
-                ui.label(RichText::new(line).small().weak());
-            });
-        });
-    }
-    // the book as a wall of cards: what it makes, big; what it takes underneath; click a lit card to make it
-    let card_w = 112.0;
-    let cols = ((ui.available_width() + 6.0) / (card_w + 6.0)).floor().max(1.0) as usize;
-    let mut sorted = hand;
-    // what can be made right now first
-    sorted.sort_by_key(|(_, r)| !(me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory)));
-    egui::Grid::new("craft_cards").spacing([6.0, 6.0]).show(ui, |ui| {
-        for (n, (i, r)) in sorted.into_iter().enumerate() {
-            let can = me.inventory.has(&r.inputs) && has_needs(&r.needs, &me.inventory);
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 124.0), egui::Sense::click());
-            let p = ui.painter();
-            let hover = resp.hovered() && can;
-            p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
-            let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
-            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit() * if hover { 2.0 } else { 1.0 }, edge), egui::StrokeKind::Inside);
-            // the product
-            if let Some(o) = r.outputs.first() {
-                let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 28.0), egui::vec2(44.0, 44.0));
-                crate::icons::draw_slot(p, icon, o.item, true);
-                if o.n > 1 {
-                    p.text(icon.right_bottom() - egui::vec2(2.0, 1.0), Align2::RIGHT_BOTTOM, format!("x{}", o.n), egui::FontId::proportional(22.0), Color32::WHITE);
-                }
-            }
-            let name_col = if can { Color32::from_rgb(244, 220, 160) } else { Color32::from_rgb(150, 136, 112) };
-            let galley = p.layout(r.name.clone(), egui::FontId::proportional(22.0), name_col, card_w - 10.0);
-            p.galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 54.0), galley, name_col);
-            // what it takes: small icons, red when short
-            let k = r.inputs.len().max(1) as f32;
-            let iw = 22.0;
-            let mut x = rect.center().x - (k * (iw + 4.0) - 4.0) / 2.0;
-            for c in &r.inputs {
-                let ir = egui::Rect::from_min_size(egui::pos2(x, rect.bottom() - 28.0), egui::vec2(iw, iw));
-                crate::icons::draw_slot(p, ir, c.item, w.has_seen(c.item));
-                let short = me.inventory.get(c.item) < c.n;
-                p.text(ir.right_bottom() + egui::vec2(1.0, 3.0), Align2::RIGHT_BOTTOM, c.n.to_string(), egui::FontId::proportional(11.0), if short { Color32::from_rgb(240, 90, 70) } else { Color32::WHITE });
-                x += iw + 4.0;
-            }
-            let mut tip = format!("{}\n", r.name);
-            for c in &r.inputs {
-                tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
-            }
-            for k in &r.needs {
-                tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
-            }
-            if !r.steps.is_empty() {
-                let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
-                tip += &format!("Adımlar: {}", names.join(" → "));
-            }
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, format!("Yap: {}", r.name)));
-            if resp.on_hover_text(tip).clicked() && can {
-                acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
-            }
-            if (n + 1) % cols == 0 {
-                ui.end_row();
-            }
-        }
-    });
-}
-
 /// The groups of the build list, in the order they are shown.
 pub(crate) const BUILD_GROUPS: [&str; 7] = ["Ateş ve fırınlar", "Zanaat", "Tarım ve yiyecek", "Güç", "Sanayi", "Elektrik", "Barınma, depo ve maden"];
 
@@ -3376,6 +3204,7 @@ mod ui_tests {
         w.forget_everything();
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
@@ -3384,9 +3213,9 @@ mod ui_tests {
         pump(&mut h);
         assert_eq!(h.state().tab, Some(Tab::Craft), "the Yap button opens the craft tab");
         // pick the stone twice, then Dene
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
         assert!(h.state().knap.hands.iter().filter(|&&i| i == ItemKind::Stone as u8).count() == 2, "two stones in hands");
         h.get_by_label("Dene").click();
@@ -3408,10 +3237,11 @@ mod ui_tests {
         w.spawn_agent(sx, sy);
         w.agents[0].inventory.counts[ItemKind::Stone as usize] = 2;
         w.mark_seen(ItemKind::Stone);
+        let stone = crate::lang::item_word(&w, ItemKind::Stone);
         let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: Some(Tab::Craft), binds: Keybinds::default() };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
         h.run();
-        h.get_by_label_contains("Çantadan al").click();
+        h.get_by_label(&stone).click();
         h.run();
         h.get_by_label_contains("El 1: ").click();
         h.run();
