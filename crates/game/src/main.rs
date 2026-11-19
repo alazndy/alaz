@@ -1194,10 +1194,27 @@ impl App {
                 self.net = Net::Host(host);
                 self.say(format!("Sunucu açık: {}:{port}", lan_ip_text()));
             }
-            M::HostOnline { slot, port, new } => {
+            M::HostOnline { slot, port: _, new } => {
                 let started = !matches!(self.net, Net::Host(_));
                 if started {
-                    self.menu_action(M::Host { slot, port, new });
+                    // online-only: the code is the only way in, so no LAN port and no discovery beacon
+                    let host = match Host::bind_online_only() {
+                        Ok(h) => h,
+                        Err(e) => {
+                            self.mp_error(format!("Sunucu açılamadı: {e}"));
+                            return;
+                        }
+                    };
+                    match new {
+                        Some(nw) => self.start_new(nw),
+                        None => {
+                            if let Err(e) = self.start_slot(slot) {
+                                self.mp_error(e);
+                                return;
+                            }
+                        }
+                    }
+                    self.net = Net::Host(host);
                 }
                 if let Net::Host(h) = &mut self.net {
                     if let Err(e) = h.open_relay(&alaz_net::relay_address()) {
@@ -1339,6 +1356,7 @@ impl App {
             self.finder_off = false;
         }
         m.net_line = match &self.net {
+            Net::Host(h) if !h.lan_open() => Some(format!("Çevrimiçi sunucu · {} oyuncu", h.players())),
             Net::Host(h) => {
                 let port = h.local_addr().map_or(alaz_net::DEFAULT_PORT, |a| a.port());
                 Some(format!("Sunucu açık: {}:{port} · {} oyuncu", lan_ip_text(), h.players()))
@@ -1346,6 +1364,7 @@ impl App {
             _ => None,
         };
         m.hosting = matches!(self.net, Net::Host(_));
+        m.lan_open = matches!(&self.net, Net::Host(h) if h.lan_open());
         (m.relay, m.relay_players) = match &self.net {
             Net::Host(h) => (Some(h.relay_status()), h.players()),
             _ => (None, 0),

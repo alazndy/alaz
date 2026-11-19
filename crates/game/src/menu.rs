@@ -65,6 +65,8 @@ pub struct Menu {
     pub mp_screen: bool,
     /// This game hosts a world right now.
     pub hosting: bool,
+    /// The hosted world also accepts LAN connections (not only the relay code).
+    pub lan_open: bool,
     /// The relay link of the hosted world, if it ever was opened.
     pub relay: Option<alaz_net::RelayStatus>,
     pub relay_players: usize,
@@ -131,6 +133,7 @@ impl Menu {
             found: Vec::new(),
             mp_screen: std::env::var_os("ALAZ_DEMO_MPSCREEN").is_some(),
             hosting: false,
+            lan_open: false,
             relay: None,
             relay_players: 0,
             port_text: "7777".to_string(),
@@ -598,6 +601,8 @@ impl Menu {
                 ui.label(egui::RichText::new("Kod, ağ açık kaldıkça geçerlidir.").small().color(note));
             }
         }
+        let line = if self.lan_open { "Aynı ağdaki oyunlar için LAN sunucusu açık." } else { "Yalnızca kodla katılım." };
+        ui.label(egui::RichText::new(line).small().color(note));
         act
     }
 
@@ -1079,6 +1084,20 @@ mod tests {
         h.get_by_label("Ağa aç").click();
         h.run();
         assert!(matches!(h.state().got, Some(MenuAction::HostOnline { port: 7777, .. })));
+    }
+
+    #[test]
+    fn online_panel_says_whether_the_lan_port_is_open() {
+        let mut m = Menu::new(false);
+        m.lan_open = false;
+        let h = open_mp(m);
+        assert!(h.query_by_label("Yalnızca kodla katılım.").is_some());
+        assert!(h.query_by_label("Aynı ağdaki oyunlar için LAN sunucusu açık.").is_none());
+        let mut m = Menu::new(false);
+        m.lan_open = true;
+        let h = open_mp(m);
+        assert!(h.query_by_label("Aynı ağdaki oyunlar için LAN sunucusu açık.").is_some());
+        assert!(h.query_by_label("Yalnızca kodla katılım.").is_none());
     }
 
     #[test]
