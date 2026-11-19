@@ -135,6 +135,8 @@ pub enum WalkGoal {
     Node(NodeKind),
     /// A tall-grass tuft that drops grain seed (not flax, lentil or cotton).
     Seed,
+    /// The nearest water tile.
+    Water,
     /// 0 any wild animal, 1 a tameable one, 2 prey
     Wild(u8),
 }
@@ -444,6 +446,7 @@ impl Pilot {
             "walk" => {
                 let goal = match w.get(1).copied() {
                     Some("node:seed") => WalkGoal::Seed,
+                    Some("water") => WalkGoal::Water,
                     Some(s) if s.starts_with("node:") => WalkGoal::Node(alaz_sim::debug::node_named(&s[5..]).ok_or("unknown node kind")?),
                     Some("wild:tame") => WalkGoal::Wild(1),
                     Some("wild:prey") => WalkGoal::Wild(2),
@@ -505,8 +508,8 @@ impl Pilot {
                 let (x, y) = n.center_mm();
                 Some(ground(x, y, 0.5))
             }
-            Target::Node(k) => self.nearest_node(Some(*k), v).and_then(|i| self.resolve(&Target::NodeId(i), v)),
-            Target::SeedTuft => self.nearest_node(None, v).and_then(|i| self.resolve(&Target::NodeId(i), v)),
+            Target::Node(k) => self.nearest_node(Some(*k), v, ground).map(|c| c.1),
+            Target::SeedTuft => self.nearest_node(None, v, ground).map(|c| c.1),
             Target::KnapRim => {
                 let cv = v.craft.as_ref()?;
                 let hit = v.marks.iter().find(|(l, _)| l == "knap")?;
@@ -564,11 +567,16 @@ impl Pilot {
     }
 
     /// The nearest node of a kind that is on screen and still has something in it.
-    fn nearest_node(&self, k: Option<NodeKind>, v: &View) -> Option<u32> {
+    fn nearest_node(
+        &self,
+        k: Option<NodeKind>,
+        v: &View,
+        ground: impl Fn(i64, i64, f32) -> (f32, f32),
+    ) -> Option<(u32, (f32, f32))> {
         let me = v.world.agents.iter().find(|a| a.id == v.me)?;
         let (r, w, h) = (60, v.win.0 as f32, v.win.1 as f32);
         let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
-        let mut cands: Vec<(i64, u32, (f32, f32))> = Vec::new();
+        let mut cands: Vec<(i64, u32, (i64, i64))> = Vec::new();
         for n in v.world.nodes_in(tx - r, ty - r, tx + r, ty + r) {
             let wanted = match k {
                 Some(k) => n.kind == k,
@@ -578,16 +586,20 @@ impl Pilot {
                 continue;
             }
             let Some(id) = v.world.node_at(n.tx, n.ty) else { continue };
-            let Some((px, py)) = self.resolve(&Target::NodeId(id.0), v) else { continue };
-            if px < 8.0 || py < 8.0 || px > w - 8.0 || py > h - 8.0 {
-                continue;
-            }
             let (cx, cy) = n.center_mm();
-            cands.push((alaz_sim::world::dist2(me.x, me.y, cx, cy), id.0, (px, py)));
+            cands.push((alaz_sim::world::dist2(me.x, me.y, cx, cy), id.0, (cx, cy)));
         }
         cands.sort_by_key(|c| c.0);
-        // the nearest one a click would really reach: a big tree may stand in front of a plant
-        cands.into_iter().find(|c| (v.pick)(c.2 .0, c.2 .1) == Some(c.1)).map(|c| c.1)
+        // the nearest one a click would really reach: a big tree may stand in front of it, so a tree is also tried
+        // higher up its trunk and crown
+        let heights: &[f32] = if k == Some(NodeKind::Tree) { &[0.5, 2.0, 3.5, 5.0] } else { &[0.5] };
+        cands.into_iter().find_map(|(_, id, (cx, cy))| {
+            heights.iter().find_map(|&hgt| {
+                let (px, py) = ground(cx, cy, hgt);
+                let on_screen = px >= 8.0 && py >= 8.0 && px <= w - 8.0 && py <= h - 8.0;
+                (on_screen && (v.pick)(px, py) == Some(id)).then_some((id, (px, py)))
+            })
+        })
     }
 
     /// Nearest nodes, for the log: kind, tile, metres away, screen pixels.
@@ -670,6 +682,22 @@ impl Pilot {
                         WalkGoal::Node(kind) => {
                             let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
                             v.world.nodes_in(tx - 70, ty - 70, tx + 70, ty + 70).filter(|n| n.kind == kind && n.amount > 0).map(|n| n.center_mm()).min_by_key(|c| alaz_sim::world::dist2(me.x, me.y, c.0, c.1)).map(|c| (me, c))
+                        }
+                        WalkGoal::Water => {
+                            let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
+                            let mut best: Option<(i64, (i64, i64))> = None;
+                            for dy in -90..=90 {
+                                for dx in -90..=90 {
+                                    if v.world.map.terrain(tx + dx, ty + dy) == Some(alaz_sim::map::Terrain::Water) {
+                                        let c = ((tx + dx) as i64 * alaz_sim::map::TILE_MM + alaz_sim::map::TILE_MM / 2, (ty + dy) as i64 * alaz_sim::map::TILE_MM + alaz_sim::map::TILE_MM / 2);
+                                        let d = alaz_sim::world::dist2(me.x, me.y, c.0, c.1);
+                                        if best.is_none_or(|b| d < b.0) {
+                                            best = Some((d, c));
+                                        }
+                                    }
+                                }
+                            }
+                            best.map(|b| (me, b.1))
                         }
                         WalkGoal::Seed => {
                             let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
