@@ -2,6 +2,7 @@
 mod limits;
 mod room;
 mod splice;
+pub mod tls;
 #[cfg(test)]
 mod tests;
 
