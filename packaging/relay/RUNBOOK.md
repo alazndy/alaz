@@ -34,7 +34,34 @@ Sağlayıcı belli olmadığı için HTTP-01 seçildi. DNS sağlayıcısı API v
 
 Kullanıcı seçimi: `DynamicUser` yerine sabit `alaz-relay` kullanıcısı. Sertifika dosyaları sabit bir gruba verilmeli. Anahtar dosyası (`privkey.pem`) `root:alaz-relay` ve `0640`. Başkaları okuyamaz.
 
-`LimitNOFILE=65536`. Hesap: en fazla 4000 tünel x 2 soket + 1000 oda x 1 kontrol soketi = 9000. Geri kalan, el sıkışan ve saldıran bağlantılar için pay.
+## Kaynak hesabı (neden bu sayılar)
+
+Relay her bağlantı için bir iş parçacığı (thread) açar. Bu yüzden her kaynak sınırı tek bir sayıdan türer: `max_total_conns = 3000` (`Limits::default()`). Kabul döngüsü soketi alır almaz bu sayıyı ayırır. Sınır aşılırsa soket sessizce kapatılır; iş parçacığı açılmaz, cevap yazılmaz.
+
+| Kaynak | Hesap | Birim ayarı |
+|---|---|---|
+| Soket | en çok 3000. Bir tünel 2 soket, bir oda 1: 1000 tünel x 2 + 500 oda = 2500; 500'ü el sıkışan bağlantılara pay | |
+| İş parçacığı | soket başına 1 (tünelde eşleşen taraf 2 iş parçacığı kullanır, host'un kabul soketinin iş parçacığı biter) + 4 servis iş parçacığı = en çok 3004 | `TasksMax=3200` |
+| Dosya tanımlayıcı | soket başına 2 (akış + `try_clone`) = 6000, artı dinleyiciler | `LimitNOFILE=16384` |
+| Bellek | iş parçacığı başına yaklaşık 110 KiB (128 KiB yığın, TLS durumu, 16 KiB kopya tamponu) x 3000 = yaklaşık 330 MiB | `MemoryHigh=400M`, `MemoryMax=512M` |
+
+Sayılar tahmindir; ilk gerçek kurulumda `systemctl status alaz-relay` ve `systemd-cgtop` ile ölçüp ayarla. Küçük VM'de (1 GB) bu sınırlar relay'i tek başına bellek tüketmekten korur. İş parçacığı açılamazsa ya da sınır aşılırsa relay çökmez, yalnız o bağlantıyı kapatır.
+
+Diğer sınırlar (hepsi `Limits` içinde):
+
+| Sınır | Değer |
+|---|---|
+| IPv4 adresi / IPv6 /64 başına bağlantı | 64 (bir /48 en çok 4 katı = 256) |
+| IP (IPv6'da /48) başına oda | 4 |
+| IP (IPv6'da /48) başına katılımcı tüneli | 16 |
+| Yanlış kod: pencere ve kilit | 60 sn'de 10 hata (/48'de 40), sonra 5 dk kilit; kilitli IP bağlanamaz, soket kabulde kapatılır |
+| Genel katılma bütçesi | 20 deneme/sn. Yakın zamanda hata yapmış IP'ler bunun 10'unu kullanabilir; 10'u hata yapmamış IP'lere ayrılmıştır |
+| Boşta tünel | 120 sn iki yönde de bayt yoksa kapanır |
+| Oda / tünel (genel) | 500 / 1000 |
+
+### Tarama maliyeti (bilinen, şimdilik kabul)
+
+Her kontrol bağlantısı saniyede yaklaşık 50 kez, her tünel yönü saniyede yaklaşık 100 kez uyanır (20 ms ve 10 ms'lik okuma aralığı). Dolu bir relay'de (500 oda + 1000 tünel) bu, boştayken bile sürekli küçük bir işlemci yüküdür: kabaca 25000 + 200000 uyanma/sn. Küçük bir VM'de bir çekirdeğin bir kısmını yer. Sınırlar sayesinde üst sınır bellidir, ama ölçülmedi. Yük gerçek kullanımda sorun çıkarırsa (`top` ile `alaz-relay` sürekli yüksekse) sonraki adım: uzun zaman aşımlı bloklayan okuma veya tünel başına yoklama iş parçacığı. Şimdilik yapılmadı.
 
 ## Adım 1: VM ve ağ
 
@@ -60,12 +87,14 @@ sudo ufw enable
 
 ## Adım 2: Binary'yi derle ve kopyala
 
-Derleme ayrı bir makinede veya VM'de yapılabilir.
+Derleme ayrı bir makinede veya VM'de yapılabilir. Dosyalar **sadece senin kullanıcına ait, 0700 modlu** bir klasöre konur (ortak `/tmp` klasörüne düz yazılmaz; başka bir yerel kullanıcı dosyaları sudo çalışmadan önce değiştirebilir). Derlediğin makinede SHA-256 özetini al, VM'de karşılaştır.
 
 ```
 cargo build --release -p alaz-relay
-ssh USER@relay.alazlab.com 'mkdir -p /tmp/relay'
-scp target/release/alaz-relay packaging/relay/{alaz-relay.service,deploy.sh,renew-cert.sh} USER@relay.alazlab.com:/tmp/relay/
+sha256sum target/release/alaz-relay packaging/relay/{alaz-relay.service,deploy.sh,renew-cert.sh} > relay.sha256
+dir=$(ssh USER@relay.alazlab.com 'umask 077; mktemp -d')
+scp target/release/alaz-relay packaging/relay/{alaz-relay.service,deploy.sh,renew-cert.sh} relay.sha256 USER@relay.alazlab.com:"$dir"/
+echo "$dir"
 ```
 
 Binary Linux x86_64 veya VM'in mimarisi (Oracle ARM VM'de aarch64) için derlenmeli. Relay sadece Linux'ta çalışır.
@@ -74,7 +103,8 @@ Binary Linux x86_64 veya VM'in mimarisi (Oracle ARM VM'de aarch64) için derlenm
 
 ```
 sudo apt-get update && sudo apt-get install -y certbot
-cd /tmp/relay
+cd DIR          # Adım 2'nin yazdığı klasör
+sha256sum --check --strict relay.sha256 || exit 1   # özet tutmuyorsa DUR; sudo çalıştırma
 sudo ./deploy.sh ./alaz-relay        # kullanıcı, klasör, servis; sertifika yoksa başlatmaz
 sudo ./renew-cert.sh issue           # sertifikayı alır, kopyalar
 sudo systemctl restart alaz-relay

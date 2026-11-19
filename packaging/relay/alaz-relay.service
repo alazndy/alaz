@@ -23,11 +23,16 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 
-# Default Limits: max_tunnels 4000 x 2 sockets + max_rooms 1000 control sockets
-# = 9000 steady state. 65536 leaves room for handshakes in flight and floods.
-LimitNOFILE=65536
-# One thread per connection; 9000 sockets can mean thousands of threads.
-TasksMax=20000
+# Sizes follow Limits::default() (see RUNBOOK "Kaynak hesabı"):
+#   max_total_conns 3000 sockets, one thread each, two fds each (stream + clone) = 6000 fds
+#   plus listeners and the one fd being admitted. 16384 leaves a wide margin.
+LimitNOFILE=16384
+# 3000 connection threads + 4 service threads (main, stats, signals, cert watch) = 3004.
+TasksMax=3200
+# 3000 threads x about 110 KiB (small stack, TLS state, copy buffer) = about 330 MiB.
+# MemoryHigh makes the kernel reclaim first; MemoryMax is the hard stop for the unit only.
+MemoryHigh=400M
+MemoryMax=512M
 
 ProtectSystem=strict
 ProtectHome=true
@@ -41,6 +46,13 @@ RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictSUIDSGID=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

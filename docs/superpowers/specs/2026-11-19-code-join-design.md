@@ -78,6 +78,14 @@ kapanır. Birleştikten sonra akış yalnızca ham bayttır.
 - Aracı yalnızca eşleşme mesajı için çerçeve çözer; tünel bağlandıktan sonra düz aktarım. Kod ve sır logda yer almaz.
 - Aracıya bağlanma hedefi sabit (`relay.alazlab.com`, `ALAZ_RELAY` ile değiştirilebilir, yalnızca test/kendi barındırma için); kullanıcıdan gelen serbest URL kabul edilmez (SSRF).
 - Bağımlılıklar eklenmeden önce `cargo audit`.
+- **Kaynak sınırları (güvenlik incelemesi sonrası):** toplam soket sınırı 3000, kabul döngüsünde, iş parçacığı açılmadan ayrılır; aşan soket
+  sessizce kapanır (cevap yok). İş parçacıkları küçük yığınla açılır ve açılamazsa bağlantı bırakılır (panik yok). Kilitli IP ve IP başına
+  bağlantı sınırı TLS el sıkışmasından önce, kabulde uygulanır. IPv6 iki düzeyde sayılır (/64 ve /48, sıkı olan geçerli). IP (IPv6'da /48)
+  başına en çok 4 oda ve 16 katılımcı tüneli. Katılma bütçesi 20/sn; bunun yarısı yakın zamanda hata yapmamış IP'lere ayrılmıştır.
+  Eşleşmiş tünel 120 sn iki yönde de bayt görmezse kapanır. Oyun tarafı: kimliği doğrulanmamış (Hello göndermemiş) bağlantı en çok 4 KiB
+  tamponlar; Hello'dan sonra istemciden hosta çerçeve en çok 1 MiB (hosttan istemciye 64 MiB). İstemci en çok 16 eşzamanlı tünel açar,
+  işlenmemiş tur birikimi 10 000'i geçerse bağlantıyı keser; uzaktan gelen hata metni menüde 200 karaktere kısaltılır.
+  "Ağa aç" yalnızca `127.0.0.1` (rastgele port) dinler ve LAN keşfini açmaz; LAN sunucusu ("Sunucu kur") değişmedi.
 
 ### Hata durumları (kullanıcı ne görür)
 Aracıya ulaşılamıyor; kod yok ya da süresi bitti; oda dolu; sürüm uyuşmuyor; host koptu; aşırı deneme. Her biri menüde
