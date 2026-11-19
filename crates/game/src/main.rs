@@ -10,6 +10,7 @@ use alaz_sim::{rules, AgentId, BuildingKind, Command, CommandKind, RouteStep, Wo
 use hud::{Selection, UiAction, UiCtx};
 mod art;
 mod audio;
+mod book;
 mod export;
 mod hud;
 mod icons;
@@ -25,7 +26,9 @@ mod fx;
 mod gfxcfg;
 mod saveio;
 mod story;
+mod style;
 mod ui_art;
+mod uishot;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -899,7 +902,6 @@ impl App {
             Ok("craft") => Some(hud::Tab::Craft),
             Ok("build") => Some(hud::Tab::Build),
             Ok("help") => Some(hud::Tab::Help),
-            Ok("journal") => Some(hud::Tab::Journal),
             Ok("creative") => Some(hud::Tab::Creative),
             _ => None,
         };
@@ -910,7 +912,7 @@ impl App {
             _ => {}
         }
         if std::env::var_os("ALAZ_DEMO_JOURNAL").is_some() {
-            app.tab = Some(hud::Tab::Journal);
+            app.knap.journal.book_open = true;
         }
         if show_menu && app.perf.as_ref().is_none_or(|p| p.bench_secs.is_none()) {
             app.menu = Some(menu::Menu::new(false));
@@ -1056,6 +1058,8 @@ impl App {
                     self.selected = None;
                 } else if self.tab.is_some() {
                     self.tab = None;
+                } else if self.knap.journal.book_open {
+                    self.knap.journal.book_open = false;
                 } else {
                     self.menu = Some(menu::Menu::new(true));
                 }
@@ -1116,7 +1120,7 @@ impl App {
             A::Craft => self.toggle_tab(hud::Tab::Craft),
             A::Build => self.toggle_tab(hud::Tab::Build),
             A::Goals => self.toggle_tab(hud::Tab::Goals),
-            A::Journal => self.toggle_tab(hud::Tab::Journal),
+            A::Journal => self.knap.journal.toggle_book(),
             // while placing, R turns the building; otherwise it opens the routes
             A::Routes if self.build_mode.is_some() => self.facing = (self.facing + 1) & 3,
             A::Routes => self.toggle_tab(hud::Tab::Routes),
@@ -1934,6 +1938,7 @@ impl App {
                     }
                 }
                 UiAction::Deselect => self.selected = None,
+                UiAction::ToggleBook => self.knap.journal.toggle_book(),
                 UiAction::CloseWindow => {
                     self.tab = None;
                     self.selected = None;
@@ -2821,6 +2826,12 @@ fn main() {
     if let Some(i) = args.iter().position(|a| a == "--export-assets") {
         let dir = args.get(i + 1).cloned().unwrap_or_else(|| "alaz-assets".into());
         export::run(std::path::Path::new(&dir));
+        return;
+    }
+    // `--ui-shot <folder>`: draw the inventory window per era and tab into PNGs, then leave (no window)
+    if let Some(i) = args.iter().position(|a| a == "--ui-shot") {
+        let dir = args.get(i + 1).cloned().unwrap_or_else(|| "alaz-ui-shots".into());
+        uishot::run(std::path::Path::new(&dir));
         return;
     }
     let el = EventLoop::new().expect("event loop");

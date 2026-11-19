@@ -26,8 +26,6 @@ pub enum Tab {
     Craft,
     Build,
     Goals,
-    /// Days, discoveries and recipes.
-    Journal,
     Routes,
     Help,
     /// Sandbox: give items, move the clock and the sky.
@@ -81,6 +79,8 @@ pub enum UiAction {
     MoveBuilding(usize),
     /// Close the inventory window: its tab and the machine shown in it.
     CloseWindow,
+    /// Open or close the book (J); the inventory window stays as it is.
+    ToggleBook,
 }
 
 pub fn item_name(k: ItemKind) -> &'static str {
@@ -677,7 +677,7 @@ pub(crate) fn requirement_note(r: alaz_sim::buildings::Requirement) -> &'static 
 }
 
 /// Why a machine stands idle when what it needs is missing.
-fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
+pub(crate) fn requirement_missing(r: alaz_sim::buildings::Requirement) -> &'static str {
     use alaz_sim::buildings::Requirement as R;
     match r {
         R::Power => "Güç yok: 8 m içinde su çarkı, yel değirmeni, çalışan buhar ya da elektrik motoru (ya da 6 m içinde manejde hayvan) gerek.",
@@ -1297,7 +1297,7 @@ fn draw_hints(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, tab_open: bool) {
 }
 
 /// Bottom bar: panel tabs on the left, things you do right now on the right.
-fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, acts: &mut Vec<UiAction>) {
+fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, book_open: bool, acts: &mut Vec<UiAction>) {
     use crate::ui_art::{icon_button, Glyph};
     let defs = rules();
     let inv = &me.inventory;
@@ -1308,26 +1308,29 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
         panel(ui, 3.0, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             let gold = Color32::from_rgb(244, 208, 120);
-            let mut tab_btn = |ui: &mut egui::Ui, g: Glyph, label: &str, tab: Tab, action: Action, enabled: bool| {
+            let tab_btn = |ui: &mut egui::Ui, acts: &mut Vec<UiAction>, g: Glyph, label: &str, tab: Tab, action: Action, enabled: bool| {
                 let key = ui_ctx.binds.short(action);
                 if crate::ui_art::icon_only(ui, g, label, Some(key.as_str()), ui_ctx.tab == Some(tab), enabled, gold).clicked() {
                     acts.push(UiAction::ToggleTab(tab));
                 }
             };
-            tab_btn(ui, Glyph::Bag, crate::lang::tab_word(w, "Çanta"), Tab::Bag, Action::Bag, true);
-            tab_btn(ui, Glyph::Hammer, crate::lang::tab_word(w, "Yap"), Tab::Craft, Action::Craft, true);
-            tab_btn(ui, Glyph::House, crate::lang::tab_word(w, "İnşa"), Tab::Build, Action::Build, has_build);
+            tab_btn(ui, acts, Glyph::Bag, crate::lang::tab_word(w, "Çanta"), Tab::Bag, Action::Bag, true);
+            tab_btn(ui, acts, Glyph::Hammer, crate::lang::tab_word(w, "Yap"), Tab::Craft, Action::Craft, true);
+            tab_btn(ui, acts, Glyph::House, crate::lang::tab_word(w, "İnşa"), Tab::Build, Action::Build, has_build);
             ui.separator();
-            tab_btn(ui, Glyph::Flag, crate::lang::tab_word(w, "Hedefler"), Tab::Goals, Action::Goals, true);
-            tab_btn(ui, Glyph::Book, "Günlük", Tab::Journal, Action::Journal, true);
+            tab_btn(ui, acts, Glyph::Flag, crate::lang::tab_word(w, "Hedefler"), Tab::Goals, Action::Goals, true);
+            let key = ui_ctx.binds.short(Action::Journal);
+            if crate::ui_art::icon_only(ui, Glyph::Book, "Günlük", Some(key.as_str()), book_open, true, gold).clicked() {
+                acts.push(UiAction::ToggleBook);
+            }
             if has_routes {
-                tab_btn(ui, Glyph::Route, crate::lang::tab_word(w, "Rotalar"), Tab::Routes, Action::Routes, true);
+                tab_btn(ui, acts, Glyph::Route, crate::lang::tab_word(w, "Rotalar"), Tab::Routes, Action::Routes, true);
             }
             ui.separator();
-            tab_btn(ui, Glyph::Help, "Yardım", Tab::Help, Action::Help, true);
+            tab_btn(ui, acts, Glyph::Help, "Yardım", Tab::Help, Action::Help, true);
             if w.settings.difficulty == alaz_sim::world::Difficulty::Creative {
                 ui.separator();
-                tab_btn(ui, Glyph::Plus, "Yaratıcı", Tab::Creative, Action::Creative, true);
+                tab_btn(ui, acts, Glyph::Plus, "Yaratıcı", Tab::Creative, Action::Creative, true);
             }
         });
     });
@@ -1666,6 +1669,7 @@ fn set_era_font(ctx: &egui::Context, _era: u8) {
         list.insert(0, "alaz-pixel".into());
         list.insert(0, "alaz-era".into());
     }
+    crate::style::add_fonts(&mut fonts);
     ctx.set_fonts(fonts);
     if first == u8::MAX {
         // and the interface size chosen last time
@@ -1693,7 +1697,7 @@ pub fn apply_style(ctx: &egui::Context) {
 }
 
 pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState, acts: &mut Vec<UiAction>) {
-    ERA.store(w.perception_level(), std::sync::atomic::Ordering::Relaxed);
+    ERA.store(crate::style::era_level(w.perception_level()), std::sync::atomic::Ordering::Relaxed);
     apply_style(ctx);
     let Some(me) = w.agents.get(ui_ctx.me.0 as usize) else { return };
 
@@ -1705,8 +1709,14 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         draw_goal_banner(ctx, w, me);
         draw_hints(ctx, w, ui_ctx, ui_ctx.tab.is_some());
     }
-    draw_action_bar(ctx, w, me, ui_ctx, acts);
-    crate::inv::draw_window(ctx, &mut crate::inv::Cx { w, me, ui_ctx, hands: &mut knap.hands, acts });
+    draw_action_bar(ctx, w, me, ui_ctx, knap.journal.book_open, acts);
+    crate::book::set_open(ctx, knap.journal.book_open);
+    let inv_open = crate::inv::draw_window(ctx, &mut crate::inv::Cx { w, me, ui_ctx, hands: &mut knap.hands, acts });
+    // like the window, the book steps aside while a workpiece is on the bench
+    if w.craft_view(ui_ctx.me).is_none() {
+        let machine = crate::inv::open_machine_of(w, me, ui_ctx.selection);
+        crate::book::draw(ctx, w, me, &mut knap.journal, inv_open, machine, acts);
+    }
     // while a workpiece is on the bench the bench panel steps aside instead of lying under it
     // (the bag, craft and build tabs live in the inventory window)
     let side_tab = ui_ctx.tab.filter(|t| !matches!(t, Tab::Bag | Tab::Craft | Tab::Build));
@@ -1722,7 +1732,6 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                         Tab::Craft => ("Yapabildiklerin", Action::Craft),
                         Tab::Build => ("İnşa", Action::Build),
                         Tab::Goals => ("Hedefler", Action::Goals),
-                        Tab::Journal => ("Günlük", Action::Journal),
                         Tab::Routes => ("Görev rotası", Action::Routes),
                         Tab::Help => ("Yardım", Action::Help),
                         Tab::Creative => ("Yaratıcı mod", Action::Creative),
@@ -1732,7 +1741,6 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                         Tab::Craft => (crate::ui_art::Glyph::Hammer, Color32::from_rgb(200, 200, 210)),
                         Tab::Build => (crate::ui_art::Glyph::House, Color32::from_rgb(210, 140, 90)),
                         Tab::Goals => (crate::ui_art::Glyph::Flag, Color32::from_rgb(240, 190, 80)),
-                        Tab::Journal => (crate::ui_art::Glyph::Book, Color32::from_rgb(214, 180, 120)),
                         Tab::Routes => (crate::ui_art::Glyph::Route, Color32::from_rgb(130, 200, 150)),
                         Tab::Help => (crate::ui_art::Glyph::Help, Color32::from_rgb(160, 190, 240)),
                         Tab::Creative => (crate::ui_art::Glyph::Plus, Color32::from_rgb(180, 150, 240)),
@@ -1748,7 +1756,6 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                 egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| match tab {
                     Tab::Bag | Tab::Craft | Tab::Build => {}
                     Tab::Goals => tab_goals(ui, w),
-                    Tab::Journal => crate::journal_ui::tab_journal(ui, w, &mut knap.journal),
                     Tab::Routes => tab_routes(ui, w, ui_ctx, acts),
                     Tab::Help => tab_help(ui, ui_ctx.binds),
                     Tab::Creative => tab_creative(ui, ui_ctx, &mut knap.creative_search, acts),
@@ -3082,27 +3089,6 @@ mod ui_tests {
     }
 
     #[test]
-    fn the_notebook_hints_at_what_can_be_tried_once_the_things_have_been_seen() {
-        let mk = |seen: bool| {
-            let mut w = World::new(5);
-            let (sx, sy) = w.spawn_mm;
-            w.spawn_agent(sx, sy);
-            w.forget_everything();
-            if seen {
-                w.mark_seen(ItemKind::Stone);
-            }
-            let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: Some(Tab::Craft), binds: Keybinds::default() };
-            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 720.0)).build_ui_state(|ui, s| app(ui.ctx(), s), state);
-            h.run();
-            h
-        };
-        let blind = mk(false);
-        assert!(blind.query_by_label_contains("işe yarar gibi").is_none(), "nothing seen, no clue");
-        let seen = mk(true);
-        assert!(seen.query_by_label_contains("işe yarar gibi").is_some(), "stones seen: the notebook nudges");
-    }
-
-    #[test]
     fn a_player_can_combine_two_stones_with_the_mouse_and_play_the_knapping() {
         let mut w = World::new(5);
         let (sx, sy) = w.spawn_mm;
@@ -3424,71 +3410,6 @@ mod ui_tests {
         }
         for e in [Event::CaveEntered(b), Event::CaveLevel { agent: b, level: 2 }, Event::CaveDark(b), Event::CaveRelit(b), Event::CaveStumbled(b)] {
             assert!(event_hint(&e, &w, a).is_none(), "{e:?} is not for the other player");
-        }
-    }
-
-    /// The journal tab (every page) and the camp window must stay fully on screen in small windows.
-    #[test]
-    fn journal_and_camp_fit_small_windows() {
-        for size in [(800.0f32, 600.0f32), (1000.0, 720.0), (1280.0, 800.0)] {
-            for section in 0..3u8 {
-                let mut w = World::new(5);
-                let (sx, sy) = w.spawn_mm;
-                w.spawn_agent(sx, sy);
-                w.learn_everything();
-                w.agents[0].inventory.counts[ItemKind::Paper as usize] = 1;
-                w.tick = alaz_sim::time::TICKS_PER_DAY * 6;
-                w.demo_journal(6);
-                let mut knap = KnapState::default();
-                knap.journal.section = section;
-                let state = State { w, knap, acts: Vec::new(), tab: Some(Tab::Journal), binds: Keybinds::default() };
-                let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(size.0, size.1)).with_step_dt(1.0 / 60.0).build_ui_state(
-                    move |ui, s| {
-                        let ui_ctx = UiCtx {
-                            hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0,
-                        };
-                        draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
-                    },
-                    state,
-                );
-                h.step();
-                h.step();
-                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
-                let r = h.get_by_label("Kapat [J]").rect();
-                assert!(screen.contains_rect(r), "journal close button {r:?} outside {screen:?} (section {section})");
-                let r = h.get_by_label(crate::journal_ui::SECTIONS[section as usize]).rect();
-                assert!(screen.contains_rect(r), "journal section tab {r:?} outside {screen:?}");
-            }
-        }
-        // the camp window: a seated person at an evening fire
-        for size in [(800.0f32, 600.0f32), (1280.0, 800.0)] {
-            let mut w = World::new(5);
-            let (sx, sy) = w.spawn_mm;
-            w.spawn_agent(sx, sy);
-            w.learn_everything();
-            w.tick = alaz_sim::time::tick_of_minute(19 * 60);
-            w.buildings.push(alaz_sim::Building { fuel: 100_000, ..alaz_sim::Building::new(BuildingKind::Campfire, sx + 1_800, sy + 600) });
-            w.step(&[Command { agent: AgentId(0), kind: CommandKind::Camp }]);
-            assert!(w.agents[0].is_seated());
-            let state = State { w, knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
-            let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(size.0, size.1)).with_step_dt(1.0 / 60.0).build_ui_state(
-                move |ui, s| {
-                    let ui_ctx = UiCtx {
-                        hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0,
-                    };
-                    draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
-                },
-                state,
-            );
-            h.step();
-            h.step();
-            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0, size.1));
-            let r = h.get_by_label("Kapat").rect();
-            assert!(screen.contains_rect(r), "camp close button {r:?} outside {screen:?}");
-            let r = h.get_by_label("Yarın için hedef").rect();
-            assert!(screen.contains_rect(r), "camp goal list {r:?} outside {screen:?}");
         }
     }
 

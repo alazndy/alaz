@@ -1,13 +1,16 @@
-//! Yap on top: four hand slots, "Dene", and the notebook of what the player knows. Items come from the bag grid
-//! below by click or drag.
+//! Yap on top: four hand slots and "Dene". Items come from the bag grid below by click or drag. What the player
+//! knows is in the book.
 
-use alaz_render::egui::{self, Align2, Color32, RichText, Stroke, Ui};
+use alaz_render::egui::{self, Color32, Stroke, Ui};
 use alaz_sim::rules::rules;
-use alaz_sim::world::Inventory;
-use alaz_sim::{CommandKind, Discovery, ItemKind, RecipeId};
+use alaz_sim::{CommandKind, ItemKind, World};
 
+use super::info::{describe, Subject};
 use super::{slot, Carry, Cx, SlotLook};
 use crate::hud::UiAction;
+use crate::style::icons::{icon_button, Icon};
+use crate::style::lines::{draw_lines, Line, Picto};
+use crate::style::Family;
 
 const EMPTY: u8 = 255;
 
@@ -19,13 +22,9 @@ fn free_in_bag(cx: &Cx, k: ItemKind) -> u16 {
     cx.me.inventory.get(k).saturating_sub(held(cx.hands, k))
 }
 
-fn needs_met(needs: &[ItemKind], inv: &Inventory) -> bool {
-    needs.iter().all(|&k| inv.get(k) > 0)
-}
-
-pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
-    // the bag can change under the hands (eaten, built with, loaded into a machine): let go of what is no longer there,
-    // or "Dene" would try a mix the player cannot see they no longer have
+/// Lets go of hands whose item has left the bag: the bag can change under the hands (eaten, built with, loaded into
+/// a machine), and "Dene" would try a mix the player cannot see they no longer have.
+fn release_missing(cx: &mut Cx) {
     let mut taken = [0u16; ItemKind::COUNT];
     for h in cx.hands.iter_mut() {
         if let Some(&k) = ItemKind::ALL.get(*h as usize) {
@@ -35,8 +34,68 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
             }
         }
     }
-    ui.label(RichText::new("Ellerin").strong());
-    ui.horizontal(|ui| {
+}
+
+/// Index of the known no-station, instant recipe that the hands would make, if any.
+pub(crate) fn known_match(w: &World, hands: &[u8; 4]) -> Option<usize> {
+    let mut want = [0u16; ItemKind::COUNT];
+    for &i in hands.iter() {
+        if let Some(k) = ItemKind::ALL.get(i as usize) {
+            want[*k as usize] += 1;
+        }
+    }
+    if want.iter().all(|&n| n == 0) {
+        return None;
+    }
+    rules().recipes.iter().position(|r| {
+        r.station.is_none() && r.ticks == 0 && w.knows(r.discovery) && {
+            let mut need = [0u16; ItemKind::COUNT];
+            for i in &r.inputs {
+                need[i.item as usize] += i.n;
+            }
+            need == want
+        }
+    })
+}
+
+/// What the info panel says: the hovered item, else the recipe the hands would make if it is known, else a "?".
+pub(crate) fn info_lines(w: &World, hands: &[u8; 4], hovered: Option<ItemKind>, level: u8) -> Vec<Line> {
+    if let Some(k) = hovered {
+        return describe(w, Subject::Item(k), level);
+    }
+    match known_match(w, hands) {
+        Some(i) => describe(w, Subject::Recipe(i), level),
+        None => vec![Line::Pictos(vec![Picto::Icon(Icon::Question)])],
+    }
+}
+
+/// The info panel for Yap, drawn by the window into the info region.
+pub(crate) fn draw_info(ui: &mut Ui, cx: &Cx) {
+    let era = crate::style::current_era();
+    let level = crate::style::era_level(cx.w.perception_level());
+    draw_lines(ui, cx.w, era, &info_lines(cx.w, cx.hands, super::hovered_item(ui.ctx()), level));
+}
+
+pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
+    release_missing(cx);
+    let era = crate::style::current_era();
+    let pal = crate::style::palette(era);
+    let any = cx.hands.iter().any(|&i| i != EMPTY);
+    // the work surface fills the main region's width; hands, arrow and "Dene" sit in its middle
+    let hands_sz = egui::vec2(super::SLOT * 2.0 + 6.0, super::SLOT * 2.0 + 6.0);
+    let arrow_sz = egui::vec2(72.0, 60.0);
+    let btn = crate::style::icons::BUTTON;
+    let gap = 28.0;
+    let row_w = hands_sz.x + gap + arrow_sz.x + gap + btn;
+    let size = egui::vec2(ui.available_width().min(row_w + 160.0), hands_sz.y + 80.0);
+    ui.add_space(((ui.available_height() - size.y) * 0.3).max(8.0));
+    let (surface, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let p = ui.painter().clone();
+    crate::style::frame(&p, surface, era, Some(crate::style::accent(Family::Bench)));
+    let left = surface.center().x - row_w / 2.0;
+    let top = surface.center().y - hands_sz.y / 2.0;
+    let hands_rect = egui::Rect::from_min_size(egui::pos2(left, top), hands_sz);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(hands_rect), |ui| {
         egui::Grid::new("inv_hands").spacing([6.0, 6.0]).show(ui, |ui| {
             for i in 0..4 {
                 hand_slot(ui, cx, i);
@@ -45,51 +104,25 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
                 }
             }
         });
-        arrow(ui);
-        let any = cx.hands.iter().any(|&i| i != EMPTY);
-        if ui.add_enabled(any, egui::Button::new("Dene").min_size(egui::vec2(80.0, 60.0))).clicked() {
+    });
+    arrow(&p, egui::Rect::from_center_size(egui::pos2(hands_rect.right() + gap + arrow_sz.x / 2.0, surface.center().y), arrow_sz), pal.light);
+    let btn_rect = egui::Rect::from_center_size(egui::pos2(left + row_w - btn / 2.0, surface.center().y), egui::Vec2::splat(btn));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(btn_rect), |ui| {
+        let go = ui.add_enabled_ui(any, |ui| icon_button(ui, Icon::Play, "Dene", false, era)).inner;
+        if go.clicked() {
             cx.acts.push(UiAction::Cmd(CommandKind::Combine { items: *cx.hands }));
             *cx.hands = [EMPTY; 4];
         }
     });
-    let mut want = [0u16; ItemKind::COUNT];
-    for &i in cx.hands.iter() {
-        if let Some(k) = ItemKind::ALL.get(i as usize) {
-            want[*k as usize] += 1;
-        }
-    }
-    let known_match = rules().recipes.iter().find(|r| {
-        r.station.is_none() && r.ticks == 0 && cx.w.knows(r.discovery) && {
-            let mut need = [0u16; ItemKind::COUNT];
-            for i in &r.inputs {
-                need[i.item as usize] += i.n;
-            }
-            need == want
-        }
-    });
-    ui.label(
-        RichText::new(match known_match {
-            Some(r) => format!("Bunu biliyorsun: {}", r.name),
-            None if cx.hands.iter().all(|&i| i == EMPTY) => "Çantandan bir şey seç, elinde birleştir.".to_string(),
-            None => "Ne olacağını bilmiyorsun. Dene.".to_string(),
-        })
-        .small()
-        .weak(),
-    );
-    ui.separator();
-    notebook(ui, cx);
 }
 
 /// Painted, because the pixel font has no arrow glyph.
-fn arrow(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(48.0, 60.0), egui::Sense::hover());
-    let col = Color32::from_rgb(214, 160, 70);
-    let t = crate::pxui::unit() * 3.0;
-    let (a, b) = (rect.left_center() + egui::vec2(6.0, 0.0), rect.right_center() - egui::vec2(6.0, 0.0));
-    let p = ui.painter();
+fn arrow(p: &egui::Painter, rect: egui::Rect, col: Color32) {
+    let t = crate::pxui::unit() * 4.0;
+    let (a, b) = (rect.left_center(), rect.right_center());
     p.line_segment([a, b], Stroke::new(t, col));
-    p.line_segment([b, b + egui::vec2(-12.0, -10.0)], Stroke::new(t, col));
-    p.line_segment([b, b + egui::vec2(-12.0, 10.0)], Stroke::new(t, col));
+    p.line_segment([b, b + egui::vec2(-18.0, -16.0)], Stroke::new(t, col));
+    p.line_segment([b, b + egui::vec2(-18.0, 16.0)], Stroke::new(t, col));
 }
 
 fn hand_slot(ui: &mut Ui, cx: &mut Cx, i: usize) {
@@ -140,94 +173,6 @@ pub(crate) fn drop_on_hand(cx: &mut Cx, i: usize, c: Carry) {
     }
 }
 
-fn notebook(ui: &mut Ui, cx: &mut Cx) {
-    let (w, me, defs) = (cx.w, cx.me, rules());
-    ui.label(RichText::new("Defter (bildiklerin)").strong());
-    let hand: Vec<(usize, &_)> = defs.recipes.iter().enumerate().filter(|(_, r)| r.station.is_none() && w.knows(r.discovery)).collect();
-    if hand.is_empty() {
-        ui.label("Defterin boş. Elinde bir şeyler dene, yaparak öğrenirsin.");
-    }
-    // Clues: everything a hand recipe needs has been seen but the recipe is not known yet. No name, no steps:
-    // just a nudge to try those things together in the hands.
-    // a farming tool only makes sense once there is something to farm: those clues wait until seed or grain has been seen
-    let era_ready = |d: Discovery| match d {
-        Discovery::Farming => w.has_seen(ItemKind::Seed),
-        Discovery::Milling => w.has_seen(ItemKind::Grain),
-        _ => true,
-    };
-    let clues: Vec<&_> = defs.recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))).collect();
-    for r in clues {
-        egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                for c in &r.inputs {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                    crate::icons::draw_slot(ui.painter(), rect, c.item, true);
-                }
-                let line = "Bunlar bir arada işe yarar gibi. Elinde dene.";
-                ui.label(RichText::new(line).small().weak());
-            });
-        });
-    }
-    // the book as a wall of cards: what it makes, big; what it takes underneath; click a lit card to make it
-    let card_w = 112.0;
-    let cols = ((ui.available_width() + 6.0) / (card_w + 6.0)).floor().max(1.0) as usize;
-    let mut sorted = hand;
-    // what can be made right now first
-    sorted.sort_by_key(|(_, r)| !(me.inventory.has(&r.inputs) && needs_met(&r.needs, &me.inventory)));
-    egui::Grid::new("craft_cards").spacing([6.0, 6.0]).show(ui, |ui| {
-        for (n, (i, r)) in sorted.into_iter().enumerate() {
-            let can = me.inventory.has(&r.inputs) && needs_met(&r.needs, &me.inventory);
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 124.0), egui::Sense::click());
-            let p = ui.painter();
-            let hover = resp.hovered() && can;
-            p.rect_filled(rect, 0.0, if hover { Color32::from_rgb(58, 46, 30) } else { Color32::from_rgb(34, 27, 20) });
-            let edge = if can { Color32::from_rgb(214, 160, 70) } else { Color32::from_rgb(70, 56, 40) };
-            p.rect_stroke(crate::pxui::snap_rect(rect), 0.0, Stroke::new(crate::pxui::unit() * if hover { 2.0 } else { 1.0 }, edge), egui::StrokeKind::Inside);
-            // the product
-            if let Some(o) = r.outputs.first() {
-                let icon = egui::Rect::from_center_size(rect.center_top() + egui::vec2(0.0, 28.0), egui::vec2(44.0, 44.0));
-                crate::icons::draw_slot(p, icon, o.item, true);
-                if o.n > 1 {
-                    p.text(icon.right_bottom() - egui::vec2(2.0, 1.0), Align2::RIGHT_BOTTOM, format!("x{}", o.n), egui::FontId::proportional(22.0), Color32::WHITE);
-                }
-            }
-            let name_col = if can { Color32::from_rgb(244, 220, 160) } else { Color32::from_rgb(150, 136, 112) };
-            let galley = p.layout(r.name.clone(), egui::FontId::proportional(22.0), name_col, card_w - 10.0);
-            p.galley(egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top() + 54.0), galley, name_col);
-            // what it takes: small icons, red when short
-            let k = r.inputs.len().max(1) as f32;
-            let iw = 22.0;
-            let mut x = rect.center().x - (k * (iw + 4.0) - 4.0) / 2.0;
-            for c in &r.inputs {
-                let ir = egui::Rect::from_min_size(egui::pos2(x, rect.bottom() - 28.0), egui::vec2(iw, iw));
-                crate::icons::draw_slot(p, ir, c.item, w.has_seen(c.item));
-                let short = me.inventory.get(c.item) < c.n;
-                p.text(ir.right_bottom() + egui::vec2(1.0, 3.0), Align2::RIGHT_BOTTOM, c.n.to_string(), egui::FontId::proportional(11.0), if short { Color32::from_rgb(240, 90, 70) } else { Color32::WHITE });
-                x += iw + 4.0;
-            }
-            let mut tip = format!("{}\n", r.name);
-            for c in &r.inputs {
-                tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
-            }
-            for k in &r.needs {
-                tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
-            }
-            if !r.steps.is_empty() {
-                let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
-                tip += &format!("Adımlar: {}", names.join(" → "));
-            }
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, format!("Yap: {}", r.name)));
-            if resp.on_hover_text(tip).clicked() && can {
-                cx.acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) }));
-            }
-            if (n + 1) % cols == 0 {
-                ui.end_row();
-            }
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::tests::{harness, ui_ctx, world_with};
@@ -269,6 +214,41 @@ mod tests {
         h.get_by_label(&stone).click();
         h.run();
         assert_eq!(h.state().knap.hands[0], ItemKind::Stone as u8);
+    }
+
+    fn hands_for(r: &alaz_sim::rules::RecipeDef) -> Option<[u8; 4]> {
+        let mut hands = [255u8; 4];
+        let mut n = 0;
+        for c in &r.inputs {
+            for _ in 0..c.n {
+                *hands.get_mut(n)? = c.item as u8;
+                n += 1;
+            }
+        }
+        Some(hands)
+    }
+
+    #[test]
+    fn craft_info_shows_known_match() {
+        use crate::inv::info::{describe, Subject};
+        use crate::style::lines::{Line, Picto};
+        let mut w = world_with(&[]);
+        w.unlock_everything();
+        let (hands, r) = rules()
+            .recipes
+            .iter()
+            .find_map(|r| (r.station.is_none() && r.ticks == 0 && !r.inputs.is_empty() && w.knows(r.discovery)).then(|| hands_for(r).map(|h| (h, r))).flatten())
+            .expect("an instant hand recipe fits in four hands");
+        let i = known_match(&w, &hands).expect("the known mix is matched");
+        assert_eq!(rules().recipes[i].inputs.len(), r.inputs.len());
+        assert_eq!(info_lines(&w, &hands, None, 3), describe(&w, Subject::Recipe(i), 3));
+        assert!(!info_lines(&w, &hands, None, 3).is_empty());
+        // the hovered item wins over the hands
+        assert_eq!(info_lines(&w, &hands, Some(ItemKind::Stone), 3), describe(&w, Subject::Item(ItemKind::Stone), 3));
+        // an unknown mix says only "?"
+        let fresh = world_with(&[]);
+        let mix = [ItemKind::Stone as u8, ItemKind::Stone as u8, ItemKind::Stone as u8, ItemKind::Stone as u8];
+        assert_eq!(info_lines(&fresh, &mix, None, 3), vec![Line::Pictos(vec![Picto::Icon(crate::style::icons::Icon::Question)])]);
     }
 
     #[test]

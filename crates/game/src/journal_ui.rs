@@ -5,7 +5,8 @@ use crate::hud::{discovery_name, item_name, kind_name, milestone_name, panel, Ui
 use alaz_render::egui::{self, Align2, Color32, RichText};
 use alaz_sim::journal::{Entry, Goal, Hazard, UNKNOWN_DAY};
 use alaz_sim::rules::rules;
-use alaz_sim::{BuildingKind, CommandKind, Discovery, ItemKind, World};
+use alaz_sim::world::{Agent, Inventory};
+use alaz_sim::{BuildingKind, CommandKind, Discovery, ItemKind, RecipeId, World};
 
 /// UI state of the journal and the camp window.
 #[derive(Default)]
@@ -15,6 +16,14 @@ pub struct JournalState {
     pub search: String,
     /// The camp window was closed with its button (it comes back with the next sitting down).
     pub camp_closed: bool,
+    /// The book lies open beside the inventory window; it is its own window, not a tab.
+    pub book_open: bool,
+}
+
+impl JournalState {
+    pub fn toggle_book(&mut self) {
+        self.book_open = !self.book_open;
+    }
 }
 
 pub const SECTIONS: [&str; 3] = ["Günler", "Keşifler", "Tarifler"];
@@ -96,19 +105,20 @@ fn day_name(day: u32) -> String {
     format!("{}. gün", day + 1)
 }
 
-pub fn tab_journal(ui: &mut egui::Ui, w: &World, st: &mut JournalState) {
-    ui.horizontal(|ui| {
-        for (i, name) in SECTIONS.iter().enumerate() {
-            if ui.selectable_label(st.section as usize == i, *name).clicked() {
-                st.section = i as u8;
-            }
-        }
-    });
-    ui.separator();
+/// What the recipes page needs besides the world: the player (what can be made now), the machine the inventory
+/// window has open (a click on its recipes picks them) and where commands go.
+pub struct PageCx<'a> {
+    pub me: &'a Agent,
+    pub machine: Option<(usize, BuildingKind)>,
+    pub acts: &'a mut Vec<UiAction>,
+}
+
+/// The page the book shows for `st.section`.
+pub fn page(ui: &mut egui::Ui, w: &World, st: &mut JournalState, pc: &mut PageCx) {
     match st.section {
         0 => section_days(ui, w),
         1 => section_finds(ui, w),
-        _ => section_recipes(ui, w, st),
+        _ => section_recipes(ui, w, st, pc),
     }
 }
 
@@ -195,7 +205,52 @@ fn recipe_line(r: &alaz_sim::rules::RecipeDef) -> String {
     s
 }
 
-fn section_recipes(ui: &mut egui::Ui, w: &World, st: &mut JournalState) {
+fn needs_met(needs: &[ItemKind], inv: &Inventory) -> bool {
+    needs.iter().all(|&k| inv.get(k) > 0)
+}
+
+/// Everything a hand recipe needs has been seen but the recipe is not known yet. No name, no steps: just a nudge to
+/// try those things together in the hands.
+fn clues(ui: &mut egui::Ui, w: &World) {
+    // a farming tool only makes sense once there is something to farm: those clues wait until seed or grain has been seen
+    let era_ready = |d: Discovery| match d {
+        Discovery::Farming => w.has_seen(ItemKind::Seed),
+        Discovery::Milling => w.has_seen(ItemKind::Grain),
+        _ => true,
+    };
+    for r in rules().recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))) {
+        egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                for c in &r.inputs {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+                    crate::icons::draw_slot(ui.painter(), rect, c.item, true);
+                }
+                ui.label(RichText::new("Bunlar bir arada işe yarar gibi. Elinde dene.").small().weak());
+            });
+        });
+    }
+}
+
+fn recipe_tip(w: &World, me: &Agent, r: &alaz_sim::rules::RecipeDef) -> String {
+    let mut tip = format!("{}\n", r.name);
+    for c in &r.inputs {
+        tip += &format!("{} {} (sende {})\n", c.n, crate::lang::item_word(w, c.item), me.inventory.get(c.item));
+    }
+    for k in &r.needs {
+        tip += &format!("Gerekir: {}\n", crate::lang::item_word(w, *k));
+    }
+    if !r.steps.is_empty() {
+        let names: Vec<&str> = r.steps.iter().map(|s| s.label.as_str()).collect();
+        tip += &format!("Adımlar: {}", names.join(" → "));
+    }
+    tip
+}
+
+/// The known recipes of one station (None: by hand), with their index in the rules.
+type Group<'a> = (Option<BuildingKind>, Vec<(usize, &'a alaz_sim::rules::RecipeDef)>);
+
+fn section_recipes(ui: &mut egui::Ui, w: &World, st: &mut JournalState, pc: &mut PageCx) {
     let defs = rules();
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut st.search).hint_text("Tarif ara...").desired_width(220.0));
@@ -204,32 +259,58 @@ fn section_recipes(ui: &mut egui::Ui, w: &World, st: &mut JournalState) {
         }
     });
     let q = st.search.trim().to_lowercase();
-    let known: Vec<&alaz_sim::rules::RecipeDef> = defs.recipes.iter().filter(|r| w.knows(r.discovery)).collect();
+    let known: Vec<(usize, &alaz_sim::rules::RecipeDef)> = defs.recipes.iter().enumerate().filter(|(_, r)| w.knows(r.discovery)).collect();
+    if known.iter().all(|(_, r)| r.station.is_some()) {
+        ui.label("Defterin boş. Elinde bir şeyler dene, yaparak öğrenirsin.");
+    }
+    if q.is_empty() {
+        clues(ui, w);
+    }
     ui.label(RichText::new(format!("Bilinen tarifler: {}/{}", known.len(), defs.recipes.len())).weak());
     // grouped by where the work is done: by hand first, then each station in the order the rules list them
-    let mut groups: Vec<(Option<BuildingKind>, Vec<&alaz_sim::rules::RecipeDef>)> = Vec::new();
-    for r in known {
-        match groups.iter_mut().find(|(s, _)| *s == r.station) {
-            Some((_, v)) => v.push(r),
-            None => groups.push((r.station, vec![r])),
+    let mut groups: Vec<Group> = Vec::new();
+    for e in known {
+        match groups.iter_mut().find(|(s, _)| *s == e.1.station) {
+            Some((_, v)) => v.push(e),
+            None => groups.push((e.1.station, vec![e])),
         }
     }
     groups.sort_by_key(|(s, _)| s.map(|k| k as usize + 1).unwrap_or(0));
+    let picked = pc.machine.and_then(|(b, _)| crate::inv::info::recipe_pick(ui.ctx(), b).or_else(|| crate::inv::info::default_pick(w, b)));
     for (station, list) in groups {
         let title = station.map_or("El ile".to_string(), building_name);
-        let shown: Vec<_> = list.iter().filter(|r| q.is_empty() || recipe_line(r).to_lowercase().contains(&q) || r.name.to_lowercase().contains(&q) || title.to_lowercase().contains(&q)).collect();
+        let shown: Vec<_> = list.iter().filter(|(_, r)| q.is_empty() || recipe_line(r).to_lowercase().contains(&q) || r.name.to_lowercase().contains(&q) || title.to_lowercase().contains(&q)).collect();
         if shown.is_empty() {
             continue;
         }
         let head = format!("{title} ({})", shown.len());
+        let open_machine = pc.machine.is_some_and(|(_, k)| Some(k) == station);
         let body = |ui: &mut egui::Ui| {
-            for r in &shown {
-                ui.add(egui::Label::new(RichText::new(&r.name).color(Color32::from_rgb(244, 218, 150))).wrap());
+            for &&(i, r) in &shown {
+                let pickable = open_machine;
+                let makeable = station.is_none() && pc.me.inventory.has(&r.inputs) && needs_met(&r.needs, &pc.me.inventory);
+                let col = if picked == Some(i) && pickable {
+                    Color32::from_rgb(190, 232, 150)
+                } else if station.is_none() && !makeable {
+                    Color32::from_rgb(170, 154, 126)
+                } else {
+                    Color32::from_rgb(244, 218, 150)
+                };
+                let sense = if pickable || makeable { egui::Sense::click() } else { egui::Sense::hover() };
+                let resp = ui.add(egui::Label::new(RichText::new(&r.name).color(col)).wrap().sense(sense));
+                if resp.on_hover_text(recipe_tip(w, pc.me, r)).clicked() {
+                    match pc.machine {
+                        Some((b, _)) if pickable => crate::inv::info::set_recipe_pick(ui.ctx(), b, i),
+                        _ if makeable => pc.acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) })),
+                        _ => {}
+                    }
+                }
                 ui.add(egui::Label::new(RichText::new(recipe_line(r)).weak().small()).wrap());
             }
         };
-        // a search opens every group that has a hit
-        egui::CollapsingHeader::new(head).id_salt(("recipes", station.map(|k| k as usize))).open(if q.is_empty() { None } else { Some(true) }).show(ui, body);
+        // a search opens every group that has a hit; the open machine's own recipes are the ones to choose from
+        let open = if q.is_empty() && !open_machine { None } else { Some(true) };
+        egui::CollapsingHeader::new(head).id_salt(("recipes", station.map(|k| k as usize))).open(open).show(ui, body);
     }
 }
 
