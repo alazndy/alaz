@@ -112,7 +112,7 @@ bilmek gerekmez.
 | 3.6 | README, sürüm notu | Haiku |
 
 **Kararlar (Göktuğ, 2026-11-19):**
-- Alan adı **var**; TLS sertifikası onun üzerinden alınır. (Hangi alan adı: proje başlarken sorulacak.)
+- Alan adı **var**: `alazlab.com`; TLS sertifikası onun üzerinden alınır. Aracı için bir alt alan adı kullanılır (öneri: `relay.alazlab.com`).
 - Kodla katılma **ücretsiz**; yukarıdaki sınırlar yeterli.
 
 **Açık soru (senin):** Sunucu nerede: A, B ya da C? **Henüz karar yok.** Proje 3 bu karara kadar bekler; 1 ve 2
