@@ -3,6 +3,7 @@ use alaz_relay_proto::{Code, FromRelay, RELAY_PROTOCOL, Refusal, ToRelay, read_m
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -246,10 +247,11 @@ fn per_ip_failures_lock_out_that_ip() {
         join_reply(a, Code::generate()),
         FromRelay::Refused(Refusal::NoSuchCode)
     );
-    assert_eq!(
-        join_reply(a, code),
-        FromRelay::Refused(Refusal::TooManyAttempts)
-    );
+    // a locked IP is closed at accept, with no reply and no thread
+    let spawned = r.spawned.load(Ordering::Relaxed);
+    assert!(closed_silently(a));
+    assert_eq!(r.spawned.load(Ordering::Relaxed), spawned);
+    let _ = code;
     assert_eq!(r.counters().lockouts, 1);
 }
 
@@ -261,8 +263,10 @@ fn per_ip_connection_cap() {
     });
     let _c1 = dial(a);
     let _c2 = dial(a);
-    let mut c3 = dial(a);
-    assert_eq!(recv(&mut c3), FromRelay::Refused(Refusal::Busy));
+    wait_for(|| _r.spawned.load(Ordering::Relaxed) == 2);
+    // over the cap: closed with no reply and no thread
+    assert!(closed_silently(a));
+    assert_eq!(_r.spawned.load(Ordering::Relaxed), 2);
 }
 
 #[test]
@@ -457,15 +461,11 @@ fn accept_is_exempt_from_lockout() {
     });
     let (mut ctrl, code) = open(a);
     for _ in 0..3 {
-        join_reply(a, Code::generate());
+        miss(a);
     }
-    assert_eq!(
-        join_reply(a, code),
-        FromRelay::Refused(Refusal::TooManyAttempts)
-    );
-    let mut h = dial(a);
-    send(&mut h, ToRelay::Accept { id: 12345 });
-    assert_eq!(recv(&mut h), FromRelay::Refused(Refusal::NoSuchCode));
+    // new sockets from the locked IP are closed at accept; connections already open keep working
+    assert!(closed_silently(a));
+    let _ = code;
     // the host's own control connection still works while the IP is locked
     send(&mut ctrl, ToRelay::NewCode);
     assert!(matches!(recv(&mut ctrl), FromRelay::Opened { .. }));
@@ -505,6 +505,7 @@ fn ipv6_addresses_in_one_slash_64_share_a_lockout_and_stale_entries_vanish() {
     let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
     let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
     let other: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+    // 2 fails in the /64 lock it; the /48 holds 2 of its 4 allowed, so a sibling /64 is still free
     assert!(!t.record_fail(a, &lim));
     assert!(t.record_fail(b, &lim));
     assert!(t.is_locked(a) && t.is_locked(b) && !t.is_locked(other));
@@ -522,9 +523,220 @@ fn ipv6_addresses_in_one_slash_64_share_a_lockout_and_stale_entries_vanish() {
     };
     t.record_fail(c, &big);
     t.record_fail(other, &big);
-    assert_eq!(t.len(), 2);
+    // c: one IPv4 entry; other: its /64 and its /48
+    assert_eq!(t.len(), 3);
     thread::sleep(Duration::from_millis(250));
     assert!(t.try_add_conn(a, 5));
     t.drop_conn(a);
     assert_eq!(t.len(), 0);
+}
+
+/// True when a fresh connection is closed by the relay without a single byte coming back.
+fn closed_silently(a: SocketAddr) -> bool {
+    let mut s = TcpStream::connect(a).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut buf = Vec::new();
+    match s.read_to_end(&mut buf) {
+        Ok(_) => buf.is_empty(),
+        Err(e) => {
+            !matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) && buf.is_empty()
+        }
+    }
+}
+
+#[test]
+fn over_cap_connections_are_closed_without_a_thread() {
+    let (r, a) = start(Limits {
+        max_total_conns: 3,
+        ..lenient()
+    });
+    let held: Vec<TcpStream> = (0..3).map(|_| dial(a)).collect();
+    wait_for(|| r.spawned.load(Ordering::Relaxed) == 3);
+    for _ in 0..10 {
+        assert!(closed_silently(a));
+    }
+    assert_eq!(
+        r.spawned.load(Ordering::Relaxed),
+        3,
+        "over-cap sockets got a thread"
+    );
+    assert_eq!(r.total_conns.load(Ordering::Relaxed), 3);
+    drop(held);
+    wait_for(|| r.total_conns.load(Ordering::Relaxed) == 0);
+    let (_c, _code) = open(a);
+}
+
+#[test]
+fn refused_thread_drops_the_connection_and_frees_every_slot() {
+    // a stack no OS can give: spawn returns Err, which must not panic
+    let r = Relay::new(Limits {
+        stack_size: 1 << 50,
+        ..lenient()
+    });
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let mut peer = TcpStream::connect(addr).unwrap();
+    let (s, _) = l.accept().unwrap();
+    r.serve(Tcp(s));
+    assert_eq!(r.total_conns.load(Ordering::Relaxed), 0);
+    assert_eq!(r.ips.conns(Ipv4Addr::LOCALHOST.into()), 0);
+    peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut buf = Vec::new();
+    assert!(peer.read_to_end(&mut buf).is_ok() && buf.is_empty());
+}
+
+#[test]
+fn locked_ip_is_closed_at_accept_not_after_the_first_frame() {
+    let (r, a) = start(Limits {
+        max_fails_per_window: 1,
+        ..lenient()
+    });
+    for _ in 0..3 {
+        miss(a);
+    }
+    let n = r.spawned.load(Ordering::Relaxed);
+    for _ in 0..5 {
+        assert!(closed_silently(a));
+    }
+    assert_eq!(r.spawned.load(Ordering::Relaxed), n);
+}
+
+#[test]
+fn idle_tunnel_is_closed_and_slots_released() {
+    let (r, a) = start(Limits {
+        tunnel_idle: Duration::from_millis(400),
+        ..lenient()
+    });
+    let (mut ctrl, code) = open(a);
+    let (mut j, mut h) = pair(a, &mut ctrl, code);
+    // traffic keeps it alive well past the idle limit
+    for _ in 0..8 {
+        echo_once(&mut j, &mut h, b"x");
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(r.counters().tunnels, 1);
+    // then silence: the relay closes both ends and frees the places
+    wait_for(|| r.counters().tunnels == 0);
+    let mut buf = Vec::new();
+    assert!(j.read_to_end(&mut buf).is_ok());
+    assert_eq!(r.active_joins.load(Ordering::Relaxed), 0);
+    drop(h);
+}
+
+#[test]
+fn rooms_per_ip_are_capped() {
+    let (r, a) = start(Limits {
+        max_rooms_per_ip: 2,
+        ..lenient()
+    });
+    let _a = open(a);
+    let _b = open(a);
+    let mut c = dial(a);
+    send(
+        &mut c,
+        ToRelay::Open {
+            protocol: RELAY_PROTOCOL,
+        },
+    );
+    assert_eq!(recv(&mut c), FromRelay::Refused(Refusal::Busy));
+    assert_eq!(r.counters().rooms, 2);
+}
+
+#[test]
+fn tunnels_per_ip_are_capped_and_released() {
+    let (r, a) = start(Limits {
+        max_tunnels_per_ip: 2,
+        ..lenient()
+    });
+    let (mut ctrl, code) = open(a);
+    let p1 = pair(a, &mut ctrl, code);
+    let _p2 = pair(a, &mut ctrl, code);
+    assert_eq!(join_reply(a, code), FromRelay::Refused(Refusal::Busy));
+    drop(p1);
+    wait_for(|| r.counters().tunnels == 1);
+    let _p3 = pair(a, &mut ctrl, code);
+}
+
+#[test]
+fn global_join_budget_keeps_a_reserve_for_clean_ips() {
+    let r = Relay::new(Limits {
+        global_attempts_per_sec: 4,
+        reserved_attempts_per_sec: 2,
+        ..Limits::default()
+    });
+    assert!(r.attempt_allowed(true));
+    assert!(r.attempt_allowed(true));
+    assert!(
+        !r.attempt_allowed(true),
+        "failing IPs stop at budget minus reserve"
+    );
+    assert!(r.attempt_allowed(false));
+    assert!(r.attempt_allowed(false));
+    assert!(!r.attempt_allowed(false), "the whole budget is still 4");
+}
+
+#[test]
+fn default_limits_match_the_documented_numbers() {
+    let l = Limits::default();
+    assert_eq!(l.global_attempts_per_sec, 20);
+    assert_eq!(l.max_rooms_per_ip, 4);
+    assert_eq!(l.tunnel_idle, Duration::from_secs(120));
+    // two sockets per tunnel plus one per room must fit under the socket cap
+    assert!(l.max_tunnels * 2 + l.max_rooms < l.max_total_conns);
+}
+
+#[test]
+fn ipv6_slash_48_aggregates_connections_and_failures() {
+    use crate::room::{IpTable, Kind};
+    let t = IpTable::new(Duration::from_secs(60));
+    // eight different /64 networks of one /48, cap 2 per /64 and 8 per /48
+    let nets: Vec<IpAddr> = (0..16u16)
+        .map(|i| format!("2001:db8:7:{i}::1").parse().unwrap())
+        .collect();
+    let mut taken = 0;
+    for ip in &nets {
+        if t.acquire(*ip, Kind::Conn, 2) {
+            taken += 1;
+        }
+    }
+    assert_eq!(taken, 8, "the /48 bucket caps rotation across /64s");
+    // the narrower bucket still wins inside one /64
+    let t = IpTable::new(Duration::from_secs(60));
+    let same = nets[0];
+    assert!(t.acquire(same, Kind::Conn, 2) && t.acquire(same, Kind::Conn, 2));
+    assert!(!t.acquire(same, Kind::Conn, 2));
+    // failures rotate across /64s but still lock the /48: limit 3 per /64, 12 per /48
+    let lim = Limits {
+        max_fails_per_window: 3,
+        ..Limits::default()
+    };
+    let t = IpTable::new(lim.fail_window);
+    let mut locked = false;
+    for ip in nets.iter().cycle().take(13) {
+        locked |= t.record_fail(*ip, &lim);
+    }
+    assert!(locked);
+    assert!(t.is_locked("2001:db8:7:ffff::1".parse().unwrap()));
+    assert!(!t.is_locked("2001:db8:8::1".parse().unwrap()));
+}
+
+#[test]
+fn ip_table_sweep_is_amortized() {
+    let t = crate::room::IpTable::new(Duration::from_secs(60));
+    for i in 0..5000u32 {
+        let ip = IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i));
+        assert!(t.try_add_conn(ip, 4));
+    }
+    assert!(t.sweeps() <= 1, "swept {} times for 5000 calls", t.sweeps());
+    assert_eq!(t.len(), 5000);
+}
+
+/// A wrong-code attempt; the relay may already have closed the socket once the IP is locked.
+fn miss(a: SocketAddr) {
+    let mut j = dial(a);
+    let _ = write_msg(&mut j, &join_msg(Code::generate()));
+    let _ = read_msg::<FromRelay, _>(&mut j);
 }

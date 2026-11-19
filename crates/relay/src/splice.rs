@@ -46,8 +46,28 @@ impl Bucket {
 
 type Shared = Arc<Mutex<Box<dyn Transport>>>;
 
+/// Millisecond clock of the last byte seen in either direction.
+struct Activity {
+    start: Instant,
+    last_ms: AtomicU64,
+}
+
+impl Activity {
+    fn touch(&self) {
+        self.last_ms
+            .store(self.start.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    fn idle_for(&self) -> Duration {
+        let now = self.start.elapsed().as_millis() as u64;
+        Duration::from_millis(now.saturating_sub(self.last_ms.load(Ordering::Relaxed)))
+    }
+}
+
 struct Pump {
     stall: Duration,
+    idle: Duration,
+    activity: Arc<Activity>,
     done: Arc<AtomicBool>,
     moved: Arc<AtomicU64>,
     cut: Arc<AtomicBool>,
@@ -105,10 +125,16 @@ fn pump(src: Shared, dst: Shared, p: Pump, lim: &Limits) {
         let r = src.lock().unwrap().read(&mut buf);
         let n = match r {
             Ok(0) => break,
-            Ok(n) => n,
+            Ok(n) => {
+                p.activity.touch();
+                n
+            }
             Err(e) if is_retry(&e) => {
                 // lets the other direction take the lock
                 thread::sleep(Duration::from_millis(1));
+                if p.activity.idle_for() > p.idle {
+                    break;
+                }
                 continue;
             }
             Err(_) => break,
@@ -151,8 +177,14 @@ pub fn splice(a: Box<dyn Transport>, b: Box<dyn Transport>, lim: &Limits) -> boo
     let done = Arc::new(AtomicBool::new(false));
     let moved = Arc::new(AtomicU64::new(0));
     let cut = Arc::new(AtomicBool::new(false));
+    let activity = Arc::new(Activity {
+        start: Instant::now(),
+        last_ms: AtomicU64::new(0),
+    });
     let mk = || Pump {
         stall: lim.write_stall,
+        idle: lim.tunnel_idle,
+        activity: activity.clone(),
         done: done.clone(),
         moved: moved.clone(),
         cut: cut.clone(),
@@ -160,7 +192,11 @@ pub fn splice(a: Box<dyn Transport>, b: Box<dyn Transport>, lim: &Limits) -> boo
     };
     let other = {
         let (a, b, p, lim) = (a.clone(), b.clone(), mk(), lim.clone());
-        thread::spawn(move || pump(b, a, p, &lim))
+        crate::spawn_small(lim.stack_size, move || pump(b, a, p, &lim))
+    };
+    let Ok(other) = other else {
+        finish(&a, &b, &mk());
+        return false;
     };
     pump(a, b, mk(), lim);
     let _ = other.join();

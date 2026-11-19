@@ -12,7 +12,7 @@ pub use limits::Limits;
 use alaz_relay_proto::{
     Code, FromRelay, MAX_RELAY_FRAME, RELAY_PROTOCOL, Refusal, ToRelay, read_msg, write_msg,
 };
-use room::{ConnSlot, Handoff, JoinSlot, Pending, Room, State};
+use room::{ConnSlot, Handoff, IpCount, JoinSlot, Kind, Pending, Room, State};
 use splice::splice;
 use std::io::{ErrorKind, Read, Write};
 use std::net::IpAddr;
@@ -21,6 +21,15 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Starts a thread with the relay's small stack. The error is the caller's to handle: a refused
+/// thread must drop the connection, never panic (a panic aborts the whole process in release builds).
+pub(crate) fn spawn_small<F: FnOnce() + Send + 'static>(
+    stack: usize,
+    f: F,
+) -> std::io::Result<thread::JoinHandle<()>> {
+    thread::Builder::new().stack_size(stack).spawn(f)
+}
 
 pub trait Transport: Read + Write + Send + 'static {
     fn peer_ip(&self) -> IpAddr;
@@ -45,7 +54,11 @@ pub struct Relay {
     pub(crate) active_joins: AtomicUsize,
     pub(crate) tunnels: AtomicUsize,
     pub(crate) stats: room::Stats,
-    pub(crate) attempts: Mutex<(Instant, u32)>,
+    /// (window start, attempts, attempts by IPs with recent failures)
+    pub(crate) attempts: Mutex<(Instant, u32, u32)>,
+    pub(crate) total_conns: AtomicUsize,
+    #[cfg(test)]
+    pub(crate) spawned: AtomicUsize,
 }
 
 impl Relay {
@@ -57,28 +70,45 @@ impl Relay {
             active_joins: AtomicUsize::new(0),
             tunnels: AtomicUsize::new(0),
             stats: room::Stats::default(),
-            attempts: Mutex::new((Instant::now(), 0)),
+            attempts: Mutex::new((Instant::now(), 0, 0)),
+            total_conns: AtomicUsize::new(0),
+            #[cfg(test)]
+            spawned: AtomicUsize::new(0),
         })
     }
 
-    /// Handles one connection on its own thread: host control (`Open`), host tunnel (`Accept`) or joiner (`Join`).
-    pub fn serve<T: Transport>(self: &Arc<Self>, conn: T) {
-        let ip = conn.peer_ip();
-        let relay = self.clone();
-        if !self.ips.try_add_conn(ip, self.limits.max_conns_per_ip) {
-            thread::spawn(move || {
-                // the reply write may have to finish a TLS handshake first, which blocks on a silent peer
-                conn.set_read_timeout(Some(relay.limits.first_frame_timeout));
-                conn.set_write_timeout(Some(relay.limits.first_frame_timeout));
-                relay.refuse(&mut { conn }, Refusal::Busy);
-            });
-            return;
+    /// Decides at accept time, before any TLS work and before any thread exists, whether this peer
+    /// may hold a connection. None means: close the socket and say nothing.
+    pub fn admit(self: &Arc<Self>, ip: IpAddr) -> Option<ConnSlot> {
+        if self.total_conns.fetch_add(1, Ordering::Relaxed) >= self.limits.max_total_conns {
+            self.total_conns.fetch_sub(1, Ordering::Relaxed);
+            return None;
         }
-        let slot = ConnSlot {
+        if self.ips.is_locked(ip) || !self.ips.try_add_conn(ip, self.limits.max_conns_per_ip) {
+            self.total_conns.fetch_sub(1, Ordering::Relaxed);
+            return None;
+        }
+        Some(ConnSlot {
             relay: self.clone(),
             ip,
-        };
-        thread::spawn(move || relay.handle(conn, slot));
+        })
+    }
+
+    /// Admits and serves one connection (the accept loop calls `admit` itself, before the TLS wrapper exists).
+    pub fn serve<T: Transport>(self: &Arc<Self>, conn: T) {
+        match self.admit(conn.peer_ip()) {
+            Some(slot) => self.serve_admitted(conn, slot),
+            None => conn.shutdown(),
+        }
+    }
+
+    /// Handles one admitted connection on its own thread: host control (`Open`), host tunnel (`Accept`)
+    /// or joiner (`Join`). If the OS refuses the thread the connection is dropped.
+    pub fn serve_admitted<T: Transport>(self: &Arc<Self>, conn: T, slot: ConnSlot) {
+        let relay = self.clone();
+        #[cfg(test)]
+        self.spawned.fetch_add(1, Ordering::Relaxed);
+        let _ = spawn_small(self.limits.stack_size, move || relay.handle(conn, slot));
     }
 
     pub fn counters(&self) -> Counters {
@@ -111,13 +141,26 @@ impl Relay {
         }
     }
 
-    fn attempt_allowed(&self) -> bool {
+    /// One shared budget per second. Addresses with a recent failed guess may use only the part above
+    /// the reserve, so a guesser who spends the budget still leaves room for everyone else.
+    pub(crate) fn attempt_allowed(&self, has_recent_fails: bool) -> bool {
+        let lim = &self.limits;
         let mut g = self.attempts.lock().unwrap();
         if g.0.elapsed() >= Duration::from_secs(1) {
-            *g = (Instant::now(), 0);
+            *g = (Instant::now(), 0, 0);
+        }
+        if has_recent_fails {
+            if g.2
+                >= lim
+                    .global_attempts_per_sec
+                    .saturating_sub(lim.reserved_attempts_per_sec)
+            {
+                return false;
+            }
+            g.2 += 1;
         }
         g.1 += 1;
-        g.1 <= self.limits.global_attempts_per_sec
+        g.1 <= lim.global_attempts_per_sec
     }
 
     /// A failed lookup: same delay and same reply whether the code never existed or expired.
@@ -142,6 +185,14 @@ impl Relay {
         if protocol != RELAY_PROTOCOL {
             return self.refuse(&mut conn, Refusal::BadProtocol);
         }
+        let Some(_room_ip) = IpCount::take(
+            self,
+            conn.peer_ip(),
+            Kind::Room,
+            self.limits.max_rooms_per_ip,
+        ) else {
+            return self.refuse(&mut conn, Refusal::Busy);
+        };
         let (events, inbox) = mpsc::channel();
         let room = Arc::new(Room {
             events,
@@ -222,13 +273,18 @@ impl Relay {
         if self.ips.is_locked(ip) {
             return self.refuse(&mut conn, Refusal::TooManyAttempts);
         }
-        if !self.attempt_allowed() {
+        if !self.attempt_allowed(self.ips.has_recent_fails(ip)) {
             return self.refuse(&mut conn, Refusal::Busy);
         }
-        let id = {
-            let mut raw = [0u8; 8];
-            getrandom::fill(&mut raw).expect("OS randomness unavailable");
-            u64::from_le_bytes(raw)
+        let mut raw = [0u8; 8];
+        if getrandom::fill(&mut raw).is_err() {
+            return self.refuse(&mut conn, Refusal::Busy);
+        }
+        let id = u64::from_le_bytes(raw);
+        let Some(_tunnel_ip) =
+            IpCount::take(self, ip, Kind::Tunnel, self.limits.max_tunnels_per_ip)
+        else {
+            return self.refuse(&mut conn, Refusal::Busy);
         };
         let (hand_tx, hand_rx) = mpsc::sync_channel(1);
         let (room, _slot) = {

@@ -164,10 +164,17 @@ impl Transport for TlsConn {
 pub fn accept_loop(listener: TcpListener, relay: Arc<Relay>, certs: Arc<Reloadable>) {
     for incoming in listener.incoming() {
         match incoming {
-            Ok(sock) => match TlsConn::new(certs.config(), sock) {
-                Ok(conn) => relay.serve(conn),
-                Err(_) => continue,
-            },
+            Ok(sock) => {
+                // lockout, per-IP and global caps are decided before any TLS work or thread: over them, just close
+                let Ok(peer) = sock.peer_addr() else { continue };
+                let Some(slot) = relay.admit(peer.ip().to_canonical()) else {
+                    continue;
+                };
+                match TlsConn::new(certs.config(), sock) {
+                    Ok(conn) => relay.serve_admitted(conn, slot),
+                    Err(_) => continue,
+                }
+            }
             // out of file descriptors and similar: back off instead of spinning
             Err(_) => thread::sleep(Duration::from_millis(50)),
         }

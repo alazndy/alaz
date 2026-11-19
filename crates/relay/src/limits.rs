@@ -9,7 +9,17 @@ pub struct Limits {
     pub lockout: Duration,
     /// Join attempts per second over all IPs.
     pub global_attempts_per_sec: u32,
+    /// Part of `global_attempts_per_sec` that IPs with a recent failed guess may not use, so a guesser
+    /// cannot starve addresses that have behaved.
+    pub reserved_attempts_per_sec: u32,
+    /// Sockets alive at once over everything; checked before a thread is started.
+    pub max_total_conns: usize,
+    /// Per IPv4 address or IPv6 /64 (a /48 may use four times as many).
     pub max_conns_per_ip: usize,
+    /// Per IPv4 address or IPv6 /48.
+    pub max_rooms_per_ip: usize,
+    /// Joiners (paired or waiting) per IPv4 address or IPv6 /48.
+    pub max_tunnels_per_ip: usize,
     pub max_rooms: usize,
     /// Players per room, host included.
     pub max_players: usize,
@@ -23,6 +33,10 @@ pub struct Limits {
     pub first_frame_timeout: Duration,
     /// A tunnel write that makes no progress for this long means the receiver is stuck: the tunnel is closed.
     pub write_stall: Duration,
+    /// A paired tunnel that moves no byte in either direction for this long is closed.
+    pub tunnel_idle: Duration,
+    /// Stack of every thread the relay starts; small because a connection thread does little.
+    pub stack_size: usize,
     pub pair_timeout: Duration,
     /// Failed lookups answer no sooner than this, so a miss costs the same however it came about.
     pub fail_delay: Duration,
@@ -40,14 +54,20 @@ impl Default for Limits {
             max_fails_per_window: 10,
             fail_window: Duration::from_secs(60),
             lockout: Duration::from_secs(300),
-            global_attempts_per_sec: 100,
+            global_attempts_per_sec: 20,
+            reserved_attempts_per_sec: 10,
+            max_total_conns: 3000,
             max_conns_per_ip: 64,
-            max_rooms: 1000,
+            max_rooms_per_ip: 4,
+            max_tunnels_per_ip: 16,
+            max_rooms: 500,
             max_players: 8,
-            max_tunnels: 4000,
+            max_tunnels: 1000,
             control_idle: Duration::from_secs(60),
             first_frame_timeout: Duration::from_secs(10),
             write_stall: Duration::from_secs(30),
+            tunnel_idle: Duration::from_secs(120),
+            stack_size: 128 << 10,
             pair_timeout: Duration::from_secs(10),
             fail_delay: Duration::from_millis(300),
             tunnel_rate: 2 << 20,
