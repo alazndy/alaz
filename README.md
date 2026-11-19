@@ -95,7 +95,7 @@ Varsayılan tuşlar. Hepsi oyun içinden yeniden atanabilir.
 | Tuş | Eylem | Tuş | Eylem |
 |---|---|---|---|
 | W A S D | Yürü | Sol Shift | Koş |
-| Space | Zıpla / vur (mini oyun) | Tab | 2D ↔ 2.5D |
+| Space | Zıpla / vur (mini oyun) | | |
 | Q / E | Kamerayı döndür | Oklar | Kamerayı kaydır |
 | F | Karakteri takip et | X | Dur |
 | I | Çanta | C | Yap |

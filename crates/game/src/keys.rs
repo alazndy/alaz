@@ -18,7 +18,6 @@ pub enum Action {
     CamRight,
     RotLeft,
     RotRight,
-    View,
     Primary,
     Follow,
     Stop,
@@ -42,7 +41,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 30] = [
+    pub const ALL: [Action; 29] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -54,7 +53,6 @@ impl Action {
         Action::CamRight,
         Action::RotLeft,
         Action::RotRight,
-        Action::View,
         Action::Primary,
         Action::Follow,
         Action::Stop,
@@ -88,7 +86,6 @@ impl Action {
             Action::CamRight => "Kamera sağa",
             Action::RotLeft => "Kamerayı sola döndür",
             Action::RotRight => "Kamerayı sağa döndür",
-            Action::View => "2D / 2.5D görünüm",
             Action::Primary => "Zıpla / vur (mini oyun)",
             Action::Follow => "Karakteri takip et",
             Action::Stop => "Dur",
@@ -123,7 +120,6 @@ impl Action {
             Action::CamRight => "cam_right",
             Action::RotLeft => "rot_left",
             Action::RotRight => "rot_right",
-            Action::View => "view",
             Action::Primary => "primary",
             Action::Follow => "follow",
             Action::Stop => "stop",
@@ -159,7 +155,6 @@ impl Action {
             Action::CamRight => (K::ArrowRight, None),
             Action::RotLeft => (K::KeyQ, None),
             Action::RotRight => (K::KeyE, None),
-            Action::View => (K::Tab, None),
             Action::Primary => (K::Space, None),
             Action::Follow => (K::KeyF, None),
             Action::Stop => (K::KeyX, None),
@@ -366,5 +361,13 @@ mod tests {
         let k = Keybinds::from_text("nonsense\nbag=Zzz,??\n\n=\n");
         assert_eq!(k.slots(Action::Craft), Action::Craft.default_keys());
         assert_eq!(k.slots(Action::Bag), [None, None]);
+    }
+
+    #[test]
+    fn old_view_binding_is_ignored() {
+        let k = Keybinds::from_text("view=Tab,F2\nbag=I,yok\n");
+        assert!(k.actions_for(KeyCode::Tab).is_empty());
+        assert!(k.actions_for(KeyCode::F2).is_empty());
+        assert_eq!(k.actions_for(KeyCode::KeyI), vec![Action::Bag]);
     }
 }
