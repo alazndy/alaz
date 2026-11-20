@@ -297,6 +297,7 @@ shot NAME / state
 |---|---|
 | `ALAZ_BENCH=30 ALAZ_NOVSYNC=1` | Performans ölçümü: kare, çizim ve sim süreleri |
 | `ALAZ_PERF=1` | 5 saniyede bir performans dökümü |
+| `WGPU_BACKEND=dx12` (ya da `vulkan`, `gl`) | Grafik arayüzünü seçer. Oyun açılırken sessizce kapanıyorsa (bazı Intel Vulkan sürücüleri çöker) `dx12` dene. Windows'ta çökme iletisi `%LOCALAPPDATA%\alaz\crash.txt` dosyasına yazılır |
 | `ALAZ_DEMO_AT=coast\|swim\|forest\|peak\|…` | Gösteri sahnesinde yeri seçer |
 | `ALAZ_DEMO_WALK=dx,dy` | Yürüme tuşunu basılı tutar |
 | `ALAZ_DEMO_IDLE` | Gösteride el işi başlatmaz |
