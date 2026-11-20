@@ -84,7 +84,19 @@ fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
     let cave = world.agents[agent.0 as usize].cave.expect("the walker went in");
     assert_eq!(cave.natural_tile(), Some(mouth.landing));
     assert_eq!(cave.light, 0);
-    assert_eq!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.landing.x).abs().max((t.y - mouth.landing.y).abs()) <= 2), true);
+    assert!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.landing.x).abs().max((t.y - mouth.landing.y).abs()) <= 2));
+
+    // and walking back out to the lip leaves the cave again, in front of the mouth
+    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: gx, y: gy } }]);
+    for _ in 0..2_000 {
+        if world.agents[agent.0 as usize].cave.is_none() {
+            break;
+        }
+        world.step(&[]);
+    }
+    let a = &world.agents[agent.0 as usize];
+    assert!(a.cave.is_none(), "still underground at {:?} with {:?}", a.cave, a.task);
+    assert_eq!((a.x, a.y), (ax, ay));
 }
 
 #[test]
