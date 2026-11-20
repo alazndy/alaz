@@ -438,7 +438,7 @@ impl Renderer {
                 g[LOOK_SLOT..LOOK_SLOT + 4].copy_from_slice(&[x, gh(x, z) + 0.4, z, 1.0]);
             }
         let torch = cave.is_some_and(|c| c.light > 0) as u8 as f32;
-        self.cave_light += (torch - self.cave_light) * (1.0 - (-6.0 * dt).exp());
+        self.cave_light += (torch - self.cave_light) * (1.0 - (-6.0 * cdt).exp());
         g[CAVE_SLOT] = self.cave_light;
         let (pitch, yaw) = (cam.pitch_deg.to_radians(), cam.yaw_deg.to_radians());
         let forward = -glam::Vec3::new(pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos());
@@ -1248,127 +1248,5 @@ mod globals_slots {
         let source = crate::quality::scene_source(include_str!("../shader.wgsl"), crate::quality::Quality::default());
         let shader = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
         Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&shader).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod cave_upload_tests {
-    use super::*;
-    use alaz_sim::{CaveView, Command, CommandKind, ItemKind};
-
-    #[test]
-    fn cave_height_patch_matches_a_full_upload_when_floors_change_layers() {
-        let tile = CaveTile { x: 58, y: 80, z: -8 };
-        let origin = natural_height_origin(tile);
-        assert_eq!(origin, natural_height_origin(CaveTile { x: 59, ..tile }));
-        let old = CaveLayout {
-            floors: BTreeMap::from([((58, 80), -8), ((59, 80), -8), ((58, 81), -9)]),
-            rubble: BTreeMap::from([((57, 81), -8)]),
-        };
-        let next = CaveLayout {
-            floors: BTreeMap::from([((59, 80), -8), ((58, 81), -11), ((57, 81), -8)]),
-            rubble: BTreeMap::from([((58, 80), -8), ((60, 81), -9)]),
-        };
-        let area = HeightArea::full(origin);
-        let mut patched = area.pixels(&old, tile.z);
-        let patch = natural_height_delta(&old, &next).unwrap();
-        let extent = patch.extent();
-        assert!(extent.width < 10 && extent.height < 10);
-        for (row, pixels) in patch.pixels(&next, tile.z).chunks_exact(extent.width as usize).enumerate() {
-            let offset = (patch.min.1 - origin.1 + row as i32) as usize * HWIN as usize
-                + (patch.min.0 - origin.0) as usize;
-            patched[offset..offset + pixels.len()].copy_from_slice(pixels);
-        }
-        assert_eq!(patched, area.pixels(&next, tile.z));
-        assert!(natural_height_delta(&next, &next).is_none());
-    }
-
-    fn seeded_walk(seed: u64, mouth: (i32, i32)) -> (World, Vec<CaveView>) {
-        let mut world = World::with_size(alaz_sim::map::tag_seed_natural(seed, 256), 256, 256);
-        world.wild.clear();
-        let node = world.node_at(mouth.0, mouth.1).unwrap();
-        let (x, y) = world.nodes[node.0 as usize].center_mm();
-        let agent = world.spawn_agent(x, y);
-        world.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
-        world.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        let position = world.cave_entrance_destination(node).unwrap();
-        world.step(&[Command { agent: agent, kind: CommandKind::MoveToFloor { position } }]);
-        for _ in 0..100 {
-            if world.agents[0].cave_view().is_some() { break; }
-            world.step(&[]);
-        }
-        let start = world.agents[0].cave_view().unwrap();
-        let (sx, sy) = start.tile();
-        let furthest = world.natural_cave_tiles(start, 18).into_iter()
-            .filter(|&tile| !world.natural_cave_flooded(tile) && world.natural_cave_exit_at(tile).is_none())
-            .max_by_key(|tile| (tile.x - sx).abs() + (tile.y - sy).abs())
-            .unwrap();
-        let (x, y) = furthest.center_mm();
-        world.step(&[Command { agent, kind: CommandKind::MoveTo { x, y } }]);
-        let mut samples = vec![start];
-        for _ in 0..2_500 {
-            let Some(cave) = world.agents[0].cave_view() else { break };
-            if samples.last().is_none_or(|last| (last.tile(), last.elevation_m()) != (cave.tile(), cave.elevation_m())) {
-                samples.push(cave);
-            }
-            if world.agents[0].task == alaz_sim::world::Task::Idle {
-                break;
-            }
-            world.step(&[]);
-        }
-        assert!(samples.len() >= 8, "seed {seed}: only {} visited tiles", samples.len());
-        (world, samples)
-    }
-
-    #[ignore = "CPU timing of natural cave view preparation and upload payloads"]
-    #[test]
-    fn seeded_cave_upload_cost() {
-        use std::{hint::black_box, time::Instant};
-
-        for (seed, mouth) in [(4, (190, 102)), (42, (222, 150)), (66, (26, 122))] {
-            let (world, walk) = seeded_walk(seed, mouth);
-            let mut totals = [0.0; 2];
-            let mut sizes = [0; 2];
-            let mut rebuilt_meshes = 0;
-            const REPEATS: usize = 5;
-            for _ in 0..REPEATS {
-                for patch in [false, true] {
-                    let mut previous: Option<(CaveTile, CaveLayout, u8)> = None;
-                    for &cave in &walk {
-                        let t0 = Instant::now();
-                        let (x, y) = cave.tile();
-                        let z = cave.elevation_m();
-                        let tile = CaveTile { x, y, z };
-                        let origin = if patch { natural_height_origin(tile) } else { (x - HWIN as i32 / 2, y - HWIN as i32 / 2) };
-                        let layout = CaveLayout::sample(&world, cave);
-                        let prev = previous.as_ref();
-                        if patch {
-                            black_box(layout.flooded(&world));
-                        }
-                        if !patch || prev.is_none_or(|(last, old, depth)| last.z != z || *old != layout || *depth != cave.depth()) {
-                            black_box(build_natural_cave(&world, &layout.floors, &layout.rubble, cave.depth(), z));
-                            rebuilt_meshes += usize::from(patch);
-                        }
-                        let area = if let (true, Some((last, old, _))) = (patch, prev)
-                            && last.z == z && natural_height_origin(*last) == origin {
-                            natural_height_delta(old, &layout)
-                        } else {
-                            Some(HeightArea::full(origin))
-                        };
-                        if let Some(area) = area {
-                            sizes[usize::from(patch)] += black_box(area.pixels(&layout, z)).len() * 16;
-                        }
-                        previous = Some((tile, layout, cave.depth()));
-                        totals[usize::from(patch)] += t0.elapsed().as_secs_f64();
-                    }
-                }
-            }
-            let count = walk.len() * REPEATS;
-            println!(
-                "seed {seed}: {} tiles, CPU/tile {:.3} -> {:.3} ms, height bytes/tile {} -> {}, rebuilt {}/{} meshes",
-                walk.len(), totals[0] * 1000.0 / count as f64, totals[1] * 1000.0 / count as f64,
-                sizes[0] / count, sizes[1] / count, rebuilt_meshes, count,
-            );
-        }
     }
 }

@@ -593,6 +593,8 @@ mod mesh_hashes {
                     pose,
                     chips: None,
                     lift: if i % 11 == 0 { Some(0.4) } else { None },
+                    floor_height: None,
+                    cave_exposure: None,
                     lean: Some((0.1, 0.05)),
                     heading: pose.heading,
                     depth: (i % 3) as u8 * (i % 2) as u8,
