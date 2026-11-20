@@ -3181,7 +3181,21 @@ mod pointer_tests {
     }
 }
 
+/// The Windows build has no console, so a panic would vanish with the window. The message goes to a file the player can send.
+#[cfg(windows)]
+fn install_crash_log() {
+    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("alaz")) else { return };
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("crash.txt"), format!("{info}\n\n{}", std::backtrace::Backtrace::force_capture()));
+        previous(info);
+    }));
+}
+
 fn main() {
+    #[cfg(windows)]
+    install_crash_log();
     // `--export-assets <folder>`: write the code-made models, tiles and icons out as files, then leave (no window)
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--export-assets") {

@@ -286,7 +286,9 @@ impl Renderer {
         let quality = quality.with_env();
         quality::set_pixels(quality.pixels);
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())));
+        // `WGPU_BACKEND` (vulkan, dx12, gl, metal) picks the graphics API: a broken driver for one of them (the Intel Vulkan driver
+        // on some Windows machines crashes at start) can then be avoided
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())));
         let surface = instance.create_surface(window.clone()).expect("create surface");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
