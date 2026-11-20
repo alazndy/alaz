@@ -151,12 +151,14 @@ impl Transport for TlsConn {
         let _ = self.sock.shutdown(Shutdown::Both);
     }
 
+    // Timeouts go on the socket the stream reads from, not on `self.sock`: on Windows `try_clone` makes a handle with its
+    // own copy of the timeout, so setting it on the clone leaves the reading handle on its old value.
     fn set_read_timeout(&self, d: Option<Duration>) {
-        let _ = self.sock.set_read_timeout(d);
+        let _ = self.tls.sock.set_read_timeout(d);
     }
 
     fn set_write_timeout(&self, d: Option<Duration>) {
-        let _ = self.sock.set_write_timeout(d);
+        let _ = self.tls.sock.set_write_timeout(d);
     }
 }
 
