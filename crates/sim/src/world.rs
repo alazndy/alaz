@@ -4761,6 +4761,7 @@ impl World {
             }
         }
         self.run_tasks();
+        self.run_cave_gaps();
         self.run_natural_cave_tasks();
         self.run_physics();
         self.run_taming();

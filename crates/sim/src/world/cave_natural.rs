@@ -97,7 +97,7 @@ impl World {
         let Some(start) = c.natural_tile() else {
             return BTreeMap::new();
         };
-        let radius = if c.light > 0 { 7 } else { 1 };
+        let radius = if c.light > 0 { 7 } else { 2 };
         let mut nav = self.natural_nav();
         let tiles = nav.nearby_floors(start, radius);
         let floors = tiles.iter().map(|tile| (tile.xy(), tile.z)).collect();
@@ -268,6 +268,30 @@ impl World {
             .into_iter()
             .find(|tile| tile.z < current.z && tile.xy() != current.xy())
             .map(CaveTile::center_mm)
+    }
+
+    /// Walking onto the open lip of a natural cave goes in, as stepping into a hole does. No command and no light.
+    pub(super) fn run_cave_gaps(&mut self) {
+        if !crate::map::has_natural_caves(self.seed) {
+            return;
+        }
+        for ai in 0..self.agents.len() {
+            let a = &self.agents[ai];
+            if a.cave.is_some() || a.kind != AgentKind::Human || a.fly {
+                continue;
+            }
+            let (tx, ty) = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
+            if !self.map.surface_cave_gap(tx, ty) {
+                continue;
+            }
+            let node = SIDES.into_iter().find_map(|(dx, dy)| {
+                let mouth = self.map.natural_cave_mouth(tx + dx, ty + dy)?;
+                (mouth.threshold.xy() == (tx, ty)).then(|| self.node_at(tx + dx, ty + dy))?
+            });
+            if let Some(node) = node {
+                self.enter_cave(ai, node);
+            }
+        }
     }
 
     pub(super) fn run_natural_cave_tasks(&mut self) {

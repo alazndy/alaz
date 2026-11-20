@@ -288,7 +288,9 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
     let next = (nx.div_euclid(TILE_MM) as i32, ny.div_euclid(TILE_MM) as i32);
     // people may walk on into water on their own (wading, then swimming); routes still go round it
     let into_water = a.kind == AgentKind::Human && nav.map.terrain(next.0, next.1) == Some(Terrain::Water);
-    if next != here && !nav.passable(next.0, next.1) && !into_water {
+    // ...and into the open lip of a cave, which they simply walk down into
+    let into_cave = a.kind == AgentKind::Human && nav.map.surface_cave_gap(next.0, next.1);
+    if next != here && !nav.passable(next.0, next.1) && !into_water && !into_cave {
         return Free::Blocked;
     }
     let drop = (crate::map::elevation_at_mm(nav.map.seed, a.x, a.y) - crate::map::elevation_at_mm(nav.map.seed, nx, ny)) as i64;
@@ -361,7 +363,7 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
     let (nx, ny) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
     let next_tile = (nx.div_euclid(TILE_MM) as i32, ny.div_euclid(TILE_MM) as i32);
     let current_tile = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
-    if next_tile != current_tile && !a.fly && nav.map.surface_cave_gap(next_tile.0, next_tile.1) {
+    if next_tile != current_tile && !a.fly && a.kind != AgentKind::Human && nav.map.surface_cave_gap(next_tile.0, next_tile.1) {
         return Step::Blocked;
     }
     match nav.map.terrain_mm(nx, ny) {

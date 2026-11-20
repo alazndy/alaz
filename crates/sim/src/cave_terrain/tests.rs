@@ -62,6 +62,32 @@ fn new_small_worlds_have_an_accessible_cave_gallery() {
 }
 
 #[test]
+fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
+    use super::CaveTile;
+    use crate::map::tag_seed_new_world;
+    use crate::{Command, CommandKind, World};
+
+    let mut world = World::with_size(tag_seed_new_world(4, 128), 128, 128);
+    world.wild.clear();
+    let (tx, ty) = world.map.cave_spawn_fallback().expect("a gallery");
+    let mouth = world.map.natural_cave_mouth(tx, ty).unwrap();
+    let (ax, ay) = CaveTile { x: tx, y: ty, z: 0 }.center_mm();
+    let agent = world.spawn_agent(ax, ay);
+    let (gx, gy) = mouth.threshold.center_mm();
+    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: gx, y: gy } }]);
+    for _ in 0..2_000 {
+        if world.agents[agent.0 as usize].cave.is_some() {
+            break;
+        }
+        world.step(&[]);
+    }
+    let cave = world.agents[agent.0 as usize].cave.expect("the walker went in");
+    assert_eq!(cave.natural_tile(), Some(mouth.landing));
+    assert_eq!(cave.light, 0);
+    assert_eq!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.landing.x).abs().max((t.y - mouth.landing.y).abs()) <= 2), true);
+}
+
+#[test]
 fn natural_entrances_follow_the_slope_and_rock_roof() {
     use super::{CaveEntrance, CaveNav};
     use crate::map::{Map, tag_seed_natural};

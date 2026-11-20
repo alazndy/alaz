@@ -379,7 +379,8 @@ impl World {
             return;
         }
         let a = &mut self.agents[idx];
-        let Some(light) = take_light(&mut a.inventory) else { return self.reject(id, Reject::NoLight) };
+        // no light is needed to go in: without one the walker sees little and gropes
+        let light = take_light(&mut a.inventory).unwrap_or(0);
         if matches!(a.task, Task::Craft { .. }) {
             self.events.push(Event::CraftAbandoned(id));
         }
@@ -502,6 +503,12 @@ impl World {
                         None => self.events.push(Event::CaveDark(id)),
                     }
                 }
+            } else if let Some(l) = take_light(&mut self.agents[ai].inventory) {
+                // a light found or made underground is lit at once
+                c.light = l;
+                c.full = l;
+                c.dark = 0;
+                self.events.push(Event::CaveRelit(id));
             } else {
                 c.dark = c.dark.saturating_add(1);
                 // groping about in the dark, now and then a knock
