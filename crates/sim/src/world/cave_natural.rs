@@ -5,6 +5,13 @@ use crate::rules::{Gear, Rules, ToolKind};
 use crate::world::cave_play::{CAVE_MINE_TICKS, ROCK_SWING_TICKS, RUBBLE_SWING_TICKS};
 use std::collections::BTreeMap;
 
+/// How far past the middle of the lip tile (towards the cave) a walker goes in, and how far back it must be to come out.
+/// The gap between the two keeps a walker standing on the edge from going in and out every tick.
+const LIP_ENTER_MM: i64 = -250;
+const LIP_EXIT_MM: i64 = -400;
+/// Where it is put on coming out: just across the edge, in the tile it came from.
+const LIP_OUT_MM: i64 = 550;
+
 fn centre(x: i32, y: i32) -> (i64, i64) {
     CaveTile { x, y, z: 0 }.center_mm()
 }
@@ -165,10 +172,6 @@ impl World {
             && !self.pumped_at(x, y)
     }
 
-    pub(super) fn natural_exit(&self, c: CaveSelf) -> Option<(i64, i64)> {
-        self.natural_cave_exit_at(c.natural_tile()?)
-    }
-
     pub fn natural_cave_exit_at(&self, tile: CaveTile) -> Option<(i64, i64)> {
         SIDES.into_iter().find_map(|(dx, dy)| {
             let (x, y) = (tile.x + dx, tile.y + dy);
@@ -194,7 +197,13 @@ impl World {
             let end = route.first().copied().unwrap_or(start);
             a.path = route.into_iter().map(CaveTile::xy).collect();
             a.path_goal = end.xy();
-            let (x, y) = end.center_mm();
+            let (mut x, mut y) = end.center_mm();
+            if let Some((dx, dy)) = SIDES.into_iter().find(|&(dx, dy)| self.map.natural_cave_mouth(end.x + dx, end.y + dy).is_some_and(|m| m.threshold == end)) {
+                // the way out ends at the lip's outer edge, past which the walker steps onto the surface
+                // (dx, dy) points from the lip to the mouth's anchor on the surface
+                x += i64::from(dx) * (TILE_MM * 9 / 20);
+                y += i64::from(dy) * (TILE_MM * 9 / 20);
+            }
             a.task = Task::Move { x, y };
             c.leaving = true;
         } else {
@@ -288,10 +297,40 @@ impl World {
                 let mouth = self.map.natural_cave_mouth(tx + dx, ty + dy)?;
                 (mouth.threshold.xy() == (tx, ty)).then(|| self.node_at(tx + dx, ty + dy))?
             });
-            if let Some(node) = node {
-                self.enter_cave(ai, node);
+            let Some(node) = node else { continue };
+            let Some(mouth) = self.natural_mouth(node.0) else { continue };
+            let (cx, cy) = mouth.threshold.center_mm();
+            let depth = (self.agents[ai].x - cx) * i64::from(mouth.direction.0) + (self.agents[ai].y - cy) * i64::from(mouth.direction.1);
+            if depth < LIP_ENTER_MM {
+                continue;
             }
+            // the walker goes down where it stands: no jump to the landing
+            let (x, y) = (self.agents[ai].x, self.agents[ai].y);
+            self.enter_cave(ai, node);
+            let a = &mut self.agents[ai];
+            if let Some(c) = a.cave.as_mut() {
+                c.x = x;
+                c.y = y;
+                c.cool = 0;
+                c.set_elevation(mouth.threshold.z);
+            }
+            a.x = x;
+            a.y = y;
         }
+    }
+
+    /// Where a walker coming back up to the lip steps out onto the surface, once it is past the tile's outer edge.
+    pub(super) fn natural_lip_exit(&self, c: CaveSelf) -> Option<(i64, i64)> {
+        let tile = c.natural_tile()?;
+        SIDES.into_iter().find_map(|(dx, dy)| {
+            let mouth = self.map.natural_cave_mouth(tile.x + dx, tile.y + dy)?;
+            if tile != mouth.threshold {
+                return None;
+            }
+            let (cx, cy) = tile.center_mm();
+            let depth = (c.x - cx) * i64::from(mouth.direction.0) + (c.y - cy) * i64::from(mouth.direction.1);
+            (depth <= LIP_EXIT_MM).then(|| (cx - i64::from(mouth.direction.0) * LIP_OUT_MM, cy - i64::from(mouth.direction.1) * LIP_OUT_MM))
+        })
     }
 
     pub(super) fn run_natural_cave_tasks(&mut self) {
@@ -411,6 +450,7 @@ impl World {
         let depth = CaveSelf::natural_depth_at(next.z);
         let already_wet = self.natural_cave_flooded(tile);
         let access = self.natural_step_access(tile, next, pick, rules);
+        let at_exit = self.natural_cave_exit_at(tile).is_some();
         let a = &mut self.agents[ai];
         if let Err(rejection) = access {
             if c.leaving {
@@ -421,7 +461,7 @@ impl World {
             }
             return;
         }
-        let (tx, ty) = if next.xy() == goal && goal == tile.xy() && !c.leaving {
+        let (tx, ty) = if next.xy() == goal && goal == tile.xy() && (!c.leaving || at_exit) {
             target
         } else {
             next.center_mm()
@@ -871,8 +911,8 @@ mod tests {
             }
             w.step(&[]);
         }
-        assert!(w.agents[0].cave.is_none(), "an alternate way led outside");
-        assert_eq!((w.agents[0].x, w.agents[0].y), expected_exit);
+        assert!(w.agents[0].cave.is_none(), "an alternate way led outside: {:?} {:?} {:?} lip {:?}", w.agents[0].cave, w.agents[0].task, w.agents[0].path, alternate);
+        assert_eq!((w.agents[0].x.div_euclid(TILE_MM), w.agents[0].y.div_euclid(TILE_MM)), (expected_exit.0.div_euclid(TILE_MM), expected_exit.1.div_euclid(TILE_MM)));
         assert!(w.natural_cave_rubble_at(blocked));
     }
 

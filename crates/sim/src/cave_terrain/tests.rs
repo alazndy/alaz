@@ -74,6 +74,7 @@ fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
     let (ax, ay) = CaveTile { x: tx, y: ty, z: 0 }.center_mm();
     let agent = world.spawn_agent(ax, ay);
     let (gx, gy) = mouth.threshold.center_mm();
+    let (ox, oy) = (gx - i64::from(mouth.direction.0) * TILE_MM * 9 / 20, gy - i64::from(mouth.direction.1) * TILE_MM * 9 / 20);
     world.step(&[Command { agent, kind: CommandKind::MoveTo { x: gx, y: gy } }]);
     for _ in 0..2_000 {
         if world.agents[agent.0 as usize].cave.is_some() {
@@ -82,12 +83,20 @@ fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
         world.step(&[]);
     }
     let cave = world.agents[agent.0 as usize].cave.expect("the walker went in");
-    assert_eq!(cave.natural_tile(), Some(mouth.landing));
+    // it goes down where it stands, on the lip, and does not jump to the landing
+    assert_eq!(cave.natural_tile(), Some(mouth.threshold));
+    assert_eq!((cave.x, cave.y), (world.agents[agent.0 as usize].x, world.agents[agent.0 as usize].y));
     assert_eq!(cave.light, 0);
-    assert!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.landing.x).abs().max((t.y - mouth.landing.y).abs()) <= 2));
+    assert!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.threshold.x).abs().max((t.y - mouth.threshold.y).abs()) <= 2));
 
-    // and walking back out to the lip leaves the cave again, in front of the mouth
-    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: gx, y: gy } }]);
+    // standing still on the lip does not flip it in and out
+    for _ in 0..60 {
+        world.step(&[]);
+    }
+    assert!(world.agents[agent.0 as usize].cave.is_some());
+
+    // walking back out past the lip's outer edge leaves the cave again, just across that edge
+    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: ox, y: oy } }]);
     for _ in 0..2_000 {
         if world.agents[agent.0 as usize].cave.is_none() {
             break;
@@ -96,7 +105,8 @@ fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
     }
     let a = &world.agents[agent.0 as usize];
     assert!(a.cave.is_none(), "still underground at {:?} with {:?}", a.cave, a.task);
-    assert_eq!((a.x, a.y), (ax, ay));
+    assert_eq!(a.x.div_euclid(TILE_MM) as i32, tx);
+    assert_eq!(a.y.div_euclid(TILE_MM) as i32, ty);
 }
 
 #[test]
@@ -229,7 +239,11 @@ fn natural_caves_share_digging_exits_and_saved_state() {
         .expect("enter from the other mouth");
     assert!(loaded.natural_cave_tiles(second_spot, 24).contains(&carved));
 
-    let (x, y) = exit_tile.center_mm();
+    // the exit is the outer edge of the lip tile, which lies between the cave and the mouth's surface anchor
+    let anchor = loaded.nodes[exit.0 as usize].center_mm();
+    let (cx, cy) = exit_tile.center_mm();
+    let (dx, dy) = ((cx - anchor.0).signum(), (cy - anchor.1).signum());
+    let (x, y) = (cx - dx * TILE_MM * 9 / 20, cy - dy * TILE_MM * 9 / 20);
     loaded.step(&[Command {
         agent: first,
         kind: CommandKind::MoveTo { x, y },
@@ -248,8 +262,8 @@ fn natural_caves_share_digging_exits_and_saved_state() {
         agent.task
     );
     assert_eq!(
-        (agent.x, agent.y),
-        loaded.nodes[exit.0 as usize].center_mm()
+        (agent.x.div_euclid(TILE_MM), agent.y.div_euclid(TILE_MM)),
+        (anchor.0.div_euclid(TILE_MM), anchor.1.div_euclid(TILE_MM))
     );
 }
 const SIDE: usize = 129;

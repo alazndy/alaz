@@ -521,7 +521,7 @@ impl World {
             }
             c.cool = c.cool.saturating_sub(1);
             if c.elevation_m().is_some() {
-                if let Some(exit) = (c.cool == 0).then(|| self.natural_exit(c)).flatten() {
+                if let Some(exit) = (c.cool == 0).then(|| self.natural_lip_exit(c)).flatten() {
                     self.leave_at(ai, &c, Some(exit));
                 } else {
                     self.agents[ai].cave = Some(c);
