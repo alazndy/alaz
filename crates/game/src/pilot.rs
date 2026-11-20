@@ -376,11 +376,10 @@ impl Pilot {
                 }
                 continue;
             }
-            if !line.is_empty() {
-                if let Err(e) = self.queue(line) {
+            if !line.is_empty()
+                && let Err(e) = self.queue(line) {
                     self.say(sim_s, format!("? {line}: {e}"));
                 }
-            }
         }
     }
 
@@ -607,15 +606,21 @@ impl Pilot {
         let Some(me) = v.world.agents.iter().find(|a| a.id == v.me) else { return vec![] };
         let (tx, ty) = ((me.x / alaz_sim::map::TILE_MM) as i32, (me.y / alaz_sim::map::TILE_MM) as i32);
         let mut all: Vec<(i64, String)> = Vec::new();
+        // Screen positions need a terrain height each, which is slow: only the nearest ones get one.
+        let mut near = Vec::new();
         for n in v.world.nodes_in(tx - 40, ty - 40, tx + 40, ty + 40) {
             if n.amount == 0 {
                 continue;
             }
             let Some(id) = v.world.node_at(n.tx, n.ty) else { continue };
             let (cx, cy) = n.center_mm();
-            let d = alaz_sim::world::dist2(me.x, me.y, cx, cy);
-            let at = self.resolve(&Target::NodeId(id.0), v).map_or("off".to_string(), |(x, y)| format!("{x:.0},{y:.0}"));
-            all.push((d, format!("  {:?} x{} at {:.0} m, screen {at}", n.kind, n.amount, (d as f64).sqrt() / 1000.0)));
+            near.push((alaz_sim::world::dist2(me.x, me.y, cx, cy), id.0, format!("{:?} x{}", n.kind, n.amount)));
+        }
+        near.sort_by_key(|c| c.0);
+        near.truncate(16);
+        for (d, id, what) in near {
+            let at = self.resolve(&Target::NodeId(id), v).map_or("off".to_string(), |(x, y)| format!("{x:.0},{y:.0}"));
+            all.push((d, format!("  {what} at {:.0} m, screen {at}", (d as f64).sqrt() / 1000.0)));
         }
         // what the tall grass around would give when picked (mirrors the sim's rule; cotton tufts not counted)
         let (mut seed_n, mut flax_n, mut lentil_n, mut far_seed) = (0, 0, 0, None::<i64>);
@@ -636,10 +641,11 @@ impl Pilot {
             }
         }
         all.push((-1, format!("  FIBRE TUFTS within 200 tiles give: seed {seed_n}, flax {flax_n}, lentil {lentil_n}; nearest seed tuft {}", far_seed.map_or("none".to_string(), |d| format!("{:.0} m", (d as f64).sqrt() / 1000.0)))));
+        let mut wild_at = None;
         for w in &v.world.wild {
             let d = alaz_sim::world::dist2(me.x, me.y, w.x, w.y);
             if d < 600_000i64 * 600_000 {
-                let at = self.resolve(&Target::Wild(0), v).map_or("?".to_string(), |(x, y)| format!("{x:.0},{y:.0}"));
+                let at = wild_at.get_or_insert_with(|| self.resolve(&Target::Wild(0), v).map_or("?".to_string(), |(x, y)| format!("{x:.0},{y:.0}"))).clone();
                 all.push((d, format!("  WILD {:?} trust {} at {:.0} m (nearest wild on screen at {at})", w.species, w.trust, (d as f64).sqrt() / 1000.0)));
             }
         }
