@@ -1,6 +1,6 @@
 # Kodla internetten katılma: tasarım
 
-Tarih: 2026-11-19. Durum: **onay bekliyor**. Bağlı plan: `2026-11-19-openworld-ideas-roadmap.md`, Proje 3.
+Tarih: 2026-11-19. Bağlı plan: `2026-11-19-openworld-ideas-roadmap.md`, Proje 3.
 
 ## Amaç ve neden
 Bugün çok oyunculu yalnızca aynı ağda (LAN) çalışıyor. Başka şehirdeki bir arkadaşın katılması için sunucu kuranın
@@ -10,14 +10,14 @@ Kod yalnızca sahibinin doğrudan verdiği arkadaşlara gidecek (Discord'da herk
 
 ## Hedefler
 - İki oyuncu, hiçbiri port açmadan, kodla bağlanır.
-- Lockstep protokolü (`ToHost`/`ToClient`, `Turn`) ve oyun mantığı değişmez.
+- LAN ve internet aynı lockstep oyun protokolünü kullanır. Aracı bu mesajları yorumlamadan iletir.
+- Sunucu her oyuncu komutunun bağlantıya atanmış karaktere ait olduğunu doğrular. Oyuncu ortak işçi komutlarında işçiyi hedef olarak seçebilir.
 - LAN yolu ve "Ağdaki oyunlar" listesi aynen çalışmaya devam eder.
 - Aracı sunucu küçük, tek ikili dosya, ücretsiz bir bulut VM'inde `relay.alazlab.com` adresinde çalışır.
 
 ## Hedef olmayanlar
 - Hesap, arkadaş listesi, davet bildirimi (Essential gibi). Yerine kod.
 - Doğrudan bağlantı / NAT delme (ICE). Aracı her durumda çalışır; doğrudan bağlantı ileride eklenebilir.
-- Yabancı oyuncuya karşı denetim. Güven modeli bugünkü gibi: bir istemci her karakteri yönetebilir, sunucu denetlemez.
 - Sohbet, sunucu listesi, herkese açık eşleme.
 
 ## Kaçınılacak sonuçlar (çalışsa bile başarısızlık sayılır)
@@ -78,6 +78,15 @@ kapanır. Birleştikten sonra akış yalnızca ham bayttır.
 - Aracı yalnızca eşleşme mesajı için çerçeve çözer; tünel bağlandıktan sonra düz aktarım. Kod ve sır logda yer almaz.
 - Aracıya bağlanma hedefi sabit (`relay.alazlab.com`, `ALAZ_RELAY` ile değiştirilebilir, yalnızca test/kendi barındırma için); kullanıcıdan gelen serbest URL kabul edilmez (SSRF).
 - Bağımlılıklar eklenmeden önce `cargo audit`.
+- **Kaynak sınırları (güvenlik incelemesi sonrası):** toplam soket sınırı 3000, kabul döngüsünde, iş parçacığı açılmadan ayrılır; aşan soket
+  sessizce kapanır (cevap yok). İş parçacıkları küçük yığınla açılır ve açılamazsa bağlantı bırakılır (panik yok). IP başına
+  bağlantı sınırı TLS el sıkışmasından önce, kabulde uygulanır. Kilitli IP kapatılmaz: IP başına 8, toplam 256 soketlik havuza girer;
+  Open ve Accept çalışır (aynı NAT'taki host etkilenmez), Join "çok fazla deneme" ile reddedilir; havuz dolarsa soket cevapsız kapanır. IPv6 iki düzeyde sayılır (/64 ve /48, sıkı olan geçerli). IP (IPv6'da /48)
+  başına en çok 4 oda ve 16 katılımcı tüneli. Katılma bütçesi 20/sn; bunun yarısı yakın zamanda hata yapmamış IP'lere ayrılmıştır.
+  Eşleşmiş tünel 300 sn iki yönde de bayt görmezse kapanır (küçültülmüş pencerede oyun döngüsü durabilir; host oyuncularını kaybetmemeli). Oyun tarafı: kimliği doğrulanmamış (Hello göndermemiş) bağlantı en çok 4 KiB
+  tamponlar; Hello'dan sonra istemciden hosta çerçeve en çok 1 MiB (hosttan istemciye 64 MiB). İstemci en çok 16 eşzamanlı tünel açar,
+  işlenmemiş tur birikimi 10 000'i geçerse bağlantıyı keser; uzaktan gelen hata metni menüde 200 karaktere kısaltılır.
+  "Ağa aç" yalnızca `127.0.0.1` (rastgele port) dinler ve LAN keşfini açmaz; LAN sunucusu ("Sunucu kur") değişmedi.
 
 ### Hata durumları (kullanıcı ne görür)
 Aracıya ulaşılamıyor; kod yok ya da süresi bitti; oda dolu; sürüm uyuşmuyor; host koptu; aşırı deneme. Her biri menüde
@@ -86,6 +95,11 @@ kısa Türkçe bir cümle. Bağlantı koparsa oyun donmaz; mevcut "bağlantı ko
 ### Bilinen risk: dünya anlık görüntüsü
 Katılan oyuncuya tüm dünya tek mesajla gider (`Welcome.snapshot`). İnternette büyük bir dünya yavaş açılabilir.
 Builder ilk iş tipik bir dünyanın boyutunu ölçer; büyükse sıkıştırma ekler (protokol sürümü artırılır).
+
+**Ölçüm (2026-11-19):** `World::to_bytes()`, varsayılan harita 256x256, seed 5, 3 oyuncu, release derleme
+(`cargo test -p alaz-net --release --test snapshot_size -- --ignored --nocapture`; test süresi yaklaşık 3 sn):
+tick 0 = 7745 bayt, tick 1000 = 7912 bayt, tick 20000 = 7958 bayt (yaklaşık 8 KB).
+Bu ölçümdeki dünya 2 MiB sınırının altında kaldı. Oyun protokolü 7, bağlantıya atanan oyuncuyu ve dünya değiştiğinde yeni oturumu taşır.
 
 ### Test
 - Aracı için yerel testler: eşleme, tünel aktarımı, yanlış kod, dolu oda, süre aşımı, hız ve bağlantı sınırları (kendinden imzalı sertifikayla).

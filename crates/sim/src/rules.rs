@@ -393,6 +393,13 @@ fn base_arc() -> &'static std::sync::Arc<Rules> {
     RULES.get_or_init(|| std::sync::Arc::new(Rules::parse(RULES_TOML).expect("data/rules.toml is invalid")))
 }
 
+impl RecipeDef {
+    /// Total number of strikes over all steps.
+    pub fn total_strikes(&self) -> u32 {
+        self.steps.iter().map(|s| s.strikes as u32).sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,12 +420,5 @@ mod tests {
                 assert!(rec.ticks > 0, "{} needs a duration", rec.id);
             }
         }
-    }
-}
-
-impl RecipeDef {
-    /// Total number of strikes over all steps.
-    pub fn total_strikes(&self) -> u32 {
-        self.steps.iter().map(|s| s.strikes as u32).sum()
     }
 }

@@ -23,10 +23,11 @@ pub(crate) enum ShotTab {
     Machine,
     /// The book open beside the Bag tab.
     Book,
+    Progression,
 }
 
 impl ShotTab {
-    pub(crate) const ALL: [ShotTab; 5] = [ShotTab::Bag, ShotTab::Craft, ShotTab::Build, ShotTab::Machine, ShotTab::Book];
+    pub(crate) const ALL: [ShotTab; 6] = [ShotTab::Bag, ShotTab::Craft, ShotTab::Build, ShotTab::Machine, ShotTab::Book, ShotTab::Progression];
 
     fn name(self) -> &'static str {
         match self {
@@ -35,6 +36,7 @@ impl ShotTab {
             ShotTab::Build => "build",
             ShotTab::Machine => "machine",
             ShotTab::Book => "book",
+            ShotTab::Progression => "progression",
         }
     }
 }
@@ -186,12 +188,19 @@ thread_local! {
 
 /// Draws the window for perception `level` on `tab` and writes `<dir>/<level>-<tab>.png`.
 pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<PathBuf> {
-    let (w, furnace) = demo_world();
+    let (w, furnace) = if tab == ShotTab::Progression && level == 0 {
+        let mut w = World::new(5);
+        w.spawn_agent(w.spawn_mm.0, w.spawn_mm.1);
+        (w, 0)
+    } else {
+        demo_world()
+    };
     let (ui_tab, selection) = match tab {
         ShotTab::Bag | ShotTab::Book => (Some(Tab::Bag), None),
         ShotTab::Craft => (Some(Tab::Craft), None),
         ShotTab::Build => (Some(Tab::Build), None),
         ShotTab::Machine => (None, Some(Selection::Building(furnace))),
+        ShotTab::Progression => (None, None),
     };
     let binds = crate::keys::Keybinds::default();
     let ui_ctx = UiCtx {
@@ -212,11 +221,12 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         evo: 9.0,
         yaw: 0.0,
         fade: 0.0,
+        cave_tiles: None,
     };
     let mut knap = KnapState::default();
-    if tab == ShotTab::Book {
+    if matches!(tab, ShotTab::Book | ShotTab::Progression) {
         knap.journal.book_open = true;
-        knap.journal.section = 2;
+        knap.journal.section = if tab == ShotTab::Progression { 1 } else { 2 };
     }
     // filled hands, so the info panel has something to show
     let instant = alaz_sim::rules().recipes.iter().find(|r| r.station.is_none() && r.ticks == 0 && w.knows(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().map(|c| c.n).sum::<u16>() <= 4);

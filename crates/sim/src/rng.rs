@@ -25,6 +25,29 @@ pub fn value_noise(seed: u64, x: i32, y: i32, cell: i32) -> i64 {
     lerp(top, bot, sy)
 }
 
+/// Signed value noise in -1024..=1023 with independent lattice spacing on each axis.
+pub(crate) fn value_noise_3d(seed: u64, point: [i64; 3], spacing: [i64; 3]) -> i32 {
+    let axis = |p: i64, step: i64| {
+        let fraction = p.rem_euclid(step) * 1024 / step;
+        let weight = fraction * fraction * (3072 - 2 * fraction) / (1024 * 1024);
+        (p.div_euclid(step), weight as i32)
+    };
+    let (x, sx) = axis(point[0], spacing[0]);
+    let (y, sy) = axis(point[1], spacing[1]);
+    let (z, sz) = axis(point[2], spacing[2]);
+    let lerp = |a: i32, b: i32, t: i32| a + (((b - a) * t) >> 10);
+    let plane = |z: i64| {
+        let layer = seed ^ (z as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+        let corner = |dx: i64, dy: i64| {
+            (hash2(layer, (x + dx) as i32, (y + dy) as i32) & 2047) as i32 - 1024
+        };
+        let north = lerp(corner(0, 0), corner(1, 0), sx);
+        let south = lerp(corner(0, 1), corner(1, 1), sx);
+        lerp(north, south, sy)
+    };
+    lerp(plane(z), plane(z + 1), sz)
+}
+
 /// Three-octave fractal noise in 0..=255.
 pub fn fbm(seed: u64, x: i32, y: i32) -> i64 {
     (value_noise(seed, x, y, 64) * 4

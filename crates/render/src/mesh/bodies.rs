@@ -513,7 +513,7 @@ pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dy
             BodyKind::Tree => {
                 let node = alaz_sim::world::Node { kind: NodeKind::Tree, tx: b.tx, ty: b.ty, amount: 1 };
                 let start = out.len();
-                push_node(out, world, &node, world.perception_level());
+                push_node(out, world, &node, world.perception_level(), TreeDetail::Full);
                 out.set_anchor(0.0, 0.0);
                 out.foliage = false;
                 let Some(v0) = out.get(start) else { continue };
@@ -707,8 +707,8 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
             v.pos[1] += lift.max(0.0);
         }
     }
-    if let Some((roll, lean)) = j.lean {
-        if roll.abs() > 0.002 || lean > 0.002 {
+    if let Some((roll, lean)) = j.lean
+        && (roll.abs() > 0.002 || lean > 0.002) {
             let h = j.heading;
             let fwd = glam::Vec3::new(h.dsin(), 0.0, h.dcos());
             let right = glam::Vec3::new(h.dcos(), 0.0, -h.dsin());
@@ -719,7 +719,6 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
                 v.pos = (rot * (p - foot) + foot).to_array();
             }
         }
-    }
     // in the water: wading, the body goes in to the waist; out of its depth, it lies forward on the surface
     // and swims (the walk's arm swing becomes the stroke), riding up and down on the very swell drawn there
     if j.depth == 1 {

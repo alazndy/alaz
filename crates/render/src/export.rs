@@ -20,11 +20,11 @@ fn tri_key(t: &[Vertex]) -> Vec<u8> {
 /// Splits two poses of one model into what both share and what only one of them has (whole triangles).
 fn split(idle: &[Vertex], busy: &[Vertex]) -> (Vec<Vertex>, Vec<Vertex>, Vec<Vertex>) {
     let mut pool: HashMap<Vec<u8>, usize> = HashMap::new();
-    for t in busy.chunks_exact(3) {
+    for t in busy.as_chunks::<3>().0 {
         *pool.entry(tri_key(t)).or_default() += 1;
     }
     let (mut both, mut only_idle, mut only_busy) = (Vec::new(), Vec::new(), Vec::new());
-    for t in idle.chunks_exact(3) {
+    for t in idle.as_chunks::<3>().0 {
         match pool.get_mut(&tri_key(t)) {
             Some(n) if *n > 0 => {
                 *n -= 1;
@@ -35,10 +35,10 @@ fn split(idle: &[Vertex], busy: &[Vertex]) -> (Vec<Vertex>, Vec<Vertex>, Vec<Ver
     }
     // the busy-only triangles: those the shared ones do not account for
     let mut used: HashMap<Vec<u8>, usize> = HashMap::new();
-    for t in both.chunks_exact(3) {
+    for t in both.as_chunks::<3>().0 {
         *used.entry(tri_key(t)).or_default() += 1;
     }
-    for t in busy.chunks_exact(3) {
+    for t in busy.as_chunks::<3>().0 {
         match used.get_mut(&tri_key(t)) {
             Some(n) if *n > 0 => *n -= 1,
             _ => only_busy.extend_from_slice(t),
@@ -131,7 +131,7 @@ pub(crate) fn node_samples(known: bool) -> Vec<(String, Mesh, [f32; 3])> {
         }
         seen_names.push(name.clone());
         let mut m = Mesh::new();
-        push_node(&mut m, &world, n, 0);
+        push_node(&mut m, &world, n, 0, TreeDetail::Full);
         if m.is_empty() {
             continue;
         }
@@ -164,13 +164,12 @@ pub fn export_world_assets(dir: &Path) -> std::io::Result<Vec<String>> {
             std::fs::write(dir.join(&f), glb_of_poses(&m.verts, &m.verts, *a))?;
             done.push(f);
             // the version before its ore is recognised, when it looks different
-            if let Some((_, u, ua)) = unknown.iter().find(|(n, _, _)| n == name) {
-                if tri_key(&u.verts) != tri_key(&m.verts) {
+            if let Some((_, u, ua)) = unknown.iter().find(|(n, _, _)| n == name)
+                && tri_key(&u.verts) != tri_key(&m.verts) {
                     let f = format!("models/{name}_unknown.glb");
                     std::fs::write(dir.join(&f), glb_of_poses(&u.verts, &u.verts, *ua))?;
                     done.push(f);
                 }
-            }
         }
         for (name, bmp) in sprites::export_tiles() {
             let f = format!("tiles/{name}.png");
@@ -202,10 +201,10 @@ mod tests {
         let key = |t: &[Vertex]| -> Key { [t[0].color[0].to_bits(), t[0].color[1].to_bits(), t[0].color[2].to_bits(), t[0].glow.to_bits(), t[0].uv[0].to_bits(), t[0].uv[1].to_bits()] };
         let rel = |t: &[Vertex], an: [f32; 2]| -> [[f32; 3]; 3] { std::array::from_fn(|i| [t[i].pos[0] - an[0], t[i].pos[1], t[i].pos[2] - an[1]]) };
         let mut buckets: HashMap<Key, Vec<[[f32; 3]; 3]>> = HashMap::new();
-        for t in b.chunks_exact(3) {
+        for t in b.as_chunks::<3>().0 {
             buckets.entry(key(t)).or_default().push(rel(t, anchor_b));
         }
-        for t in a.chunks_exact(3) {
+        for t in a.as_chunks::<3>().0 {
             let p = rel(t, anchor_a);
             let list = buckets.get_mut(&key(t)).ok_or("a triangle's attributes are missing")?;
             let pos = list.iter().position(|q| (0..3).all(|i| (0..3).all(|k| (p[i][k] - q[i][k]).abs() <= tol)));

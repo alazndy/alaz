@@ -146,11 +146,10 @@ impl Story {
             }
             return;
         }
-        if let Some((title, body)) = self.page {
-            if card(ctx, "story_age", &format!("Yeni bir çağ: {title}"), body, "Devam", None).is_some() {
+        if let Some((title, body)) = self.page
+            && card(ctx, "story_age", &format!("Yeni bir çağ: {title}"), body, "Devam", None).is_some() {
                 self.page = None;
             }
-        }
         if !panel_open {
             self.checklist(ctx, w, me, binds);
         }

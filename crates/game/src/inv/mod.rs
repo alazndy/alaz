@@ -532,6 +532,7 @@ mod tests {
             evo: 9.0,
             yaw: 0.0,
             fade: 0.0,
+            cave_tiles: None,
         }
     }
 

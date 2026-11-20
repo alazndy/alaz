@@ -380,13 +380,17 @@ fn flood(cells: &[Cell], from: (i32, i32)) -> Vec<i32> {
 
 /// The ore a vein on depth `depth` (0 = level 1) turns out to be: the same mix the old chambers gave, without the
 /// share that was plain stone.
-fn vein_ore(depth: u8, roll: u64) -> u8 {
-    let table: &[(u8, u64)] = match depth {
+pub(crate) fn vein_distribution(depth: u8) -> &'static [(u8, u64)] {
+    match depth {
         0 => &[(ORE_IRON, 35)],
         1 => &[(ORE_IRON, 30), (ORE_COPPER, 30)],
         2 => &[(ORE_COPPER, 25), (ORE_TIN, 25), (ORE_IRON, 15), (ORE_COAL, 20)],
         _ => &[(ORE_TIN, 30), (ORE_COPPER, 20), (ORE_IRON, 15), (ORE_COAL, 35)],
-    };
+    }
+}
+
+pub(crate) fn vein_ore(depth: u8, roll: u64) -> u8 {
+    let table = vein_distribution(depth);
     let total: u64 = table.iter().map(|t| t.1).sum();
     let mut r = roll % total;
     for &(code, w) in table {
@@ -483,8 +487,8 @@ fn gen_level(seed: u64, tx: i32, ty: i32, lv: u8, entry: (i32, i32)) -> Level {
         }
     }
     // the sump: the room round the stair down on the third level
-    if lv == 2 {
-        if let Some((sx, sy)) = l.down {
+    if lv == 2
+        && let Some((sx, sy)) = l.down {
             for dy in -4..=4i32 {
                 for dx in -4..=4i32 {
                     let (x, y) = (sx + dx, sy + dy);
@@ -495,7 +499,6 @@ fn gen_level(seed: u64, tx: i32, ty: i32, lv: u8, entry: (i32, i32)) -> Level {
                 }
             }
         }
-    }
     // ore veins in the walls beside open ground
     let mut exposed: Vec<usize> = Vec::new();
     for y in 2..CAVE_H - 2 {
@@ -612,13 +615,36 @@ pub struct CaveSelf {
 }
 
 impl CaveSelf {
+    /// Natural caves store the elevation in the same byte older caves used for the level number.
+    pub fn elevation_m(&self) -> Option<i16> {
+        (self.level > CAVE_LEVELS).then_some(i16::from(self.level) - 100)
+    }
+
+    pub(crate) fn set_elevation(&mut self, metres: i16) {
+        self.level = (metres + 100) as u8;
+    }
+
+    pub(crate) fn natural_tile(&self) -> Option<crate::cave_terrain::CaveTile> {
+        let (x, y) = self.tile();
+        self.elevation_m().map(|z| crate::cave_terrain::CaveTile { x, y, z })
+    }
+
     pub fn tile(&self) -> (i32, i32) {
         (self.x.div_euclid(TILE) as i32, self.y.div_euclid(TILE) as i32)
     }
 
     /// Depth in the old sense: 0 on the first level.
     pub fn depth(&self) -> u8 {
-        self.level - 1
+        self.elevation_m().map_or_else(|| self.level.saturating_sub(1), Self::natural_depth_at)
+    }
+
+    pub(crate) fn natural_depth_at(z: i16) -> u8 {
+        match z {
+            ..=-60 => 3,
+            -59..=-35 => 2,
+            -34..=-16 => 1,
+            _ => 0,
+        }
     }
 }
 

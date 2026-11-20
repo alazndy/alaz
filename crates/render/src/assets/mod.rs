@@ -217,9 +217,9 @@ pub fn decode_png(raw: &[u8]) -> Result<Image, String> {
     let n = (w * h) as usize;
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf[..n * 4].to_vec(),
-        png::ColorType::Rgb => buf[..n * 3].chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::Rgb => buf[..n * 3].as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
         png::ColorType::Grayscale => buf[..n].iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buf[..n * 2].chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::GrayscaleAlpha => buf[..n * 2].as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
         png::ColorType::Indexed => return Err("indexed picture was not expanded".into()),
     };
     Ok(Image { w, h, rgba })

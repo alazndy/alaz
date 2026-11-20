@@ -44,7 +44,7 @@ Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen 
   - otomasyon: taşıyıcı bantlar, rotalı otomatlar
 - **Canlı dünya:**
   - evcilleştirilebilen köpek, öküz ve at; kurtlar; avlanma
-  - içinde yürünen 4 katlı mağaralar (meşale ışığı, kazma, çökme, su baskını), gizli maden yatakları ve arama kazması
+  - araziyle birleşen mağara ağları (meşale, kazma, cevher damarları, tavan çökmesi ve su baskını), gizli maden yatakları ve arama kazması
 - **Su:** Rüzgârla şekillenen Gerstner dalgaları, akan nehirler, yüzme ve boğulma, suda yüzüp akıntıyla giden eşyalar.
 - **Fizik:** Devrilen ağaçlar, yuvarlanan kayalar, düşme hasarı, zıplama.
 - **Ortak rüzgâr:** Yön ve güç tek kaynaktan gelir. Otlar, yapraklar, dalgalar, bulutlar, duman ve yağmur hep aynı rüzgârla hareket eder.
@@ -111,6 +111,8 @@ Fare ile:
 - **İmleç etiketi:** İmlecin altındaki şeyin adını ve sağ tıkın ne yapacağını gösterir.
 - **Envanter penceresi:** I/C/B ya da bir makineye tıkla. Eşyayı çantadan sürükleyip makineye ya da ellere bırak; tık = 1, Shift+tık = hepsi; pencerenin dışına sürükle = yere bırak.
 - **Defter:** J ile ayrı açılır, envanterle birlikte açık kalabilir; geniş ekranda pencerenin soluna yanaşır.
+- **Eşya rehberi:** U, işaretçinin altındaki eşyanın sayfasını açar. Eşya seçilmemişse listeyi açar. Defter’den kaynakları, tarifleri ve inşa maliyetlerini inceleyebilirsin.
+- **Keşif ağacı:** Defter’in Keşifler sekmesinde dört çağın ana yolunu ve yan dallarını izle. Ağacı sürükleyerek kaydır, tekerlekle yakınlaştır. Soluk soru işaretleri henüz ulaşamadığın keşifleri gösterir. Hedefler (H) sıradaki keşfi Defter’de açar.
 
 ## Oynanış
 
@@ -163,6 +165,16 @@ Yan dallar:
 | v2 | 4 km ve altı yeni dünyalar | Nehirler (dere → nehir, denize kesintisiz) ve göller. Küçük dünyalarda çayırda maden damarları |
 | v3 | 4 km'den büyük yeni dünyalar | 9 km'lik kıtalar ve okyanuslar, bükülmüş kıyılar, dağ kuşaklarında sıradağlar ve karlı zirveler, enlem kuşaklarına göre iklim (tundra, orman, çayır, çöl), uzun nehirler |
 
+Yeni dünyalarda geniş mağara boşlukları, tüneller ve dar kollar aynı üç boyutlu yeraltı alanından çıkar. Dünyanın yüzeyiyle kesişen ve yürünebilir devamı olan boşluklar giriş oluşturur. Bir ağ birden fazla yüzey ağzını bağlayabilir. Kazılan kaya ve çöküntüler dünya koordinatıyla kaydedilir ve her girişten aynı şekilde görünür. Çöküntü geçişi kapatır. Sağ tıklayarak temizlenir ve kazmayla daha hızlı açılır. Eski kayıtlar kendi mağara üreticisini kullanır.
+
+128–256 m arası yeni dünyalarda üretici, başlangıca karadan bağlanan bir mağara ağzı arar. Gerekirse yüzeye açılan bir galeri bulmak için yeraltı alanını yeniden örnekler. Bu arama sırasında yüzey arazisi sabit kalır.
+
+Mağara ağzına sağ tıklayınca karakter ağza yürür ve yanında ışık varsa içeri girer. Mağarada tıklayarak yürürken oyun su basmış geçitleri ve gereken kazma seviyesini hesaba katar.
+
+Kayalık yamaçta tavanı sağlam kalan bir galeri, kayaya açılan bir ağız oluşturur. Açık arazide alçalan galerinin girişi, mağara tabanına inen bir geçit olarak görünür.
+
+«Çıkışa git» yürüyerek ulaşılabilen en yakın ağzı seçer. Çöküntü rotayı kapatırsa yol yeniden hesaplanır. Keşif haritası, oyun açıkken gördüğün galerileri, çıkışları, çöküntüleri ve su basmış geçitleri hatırlar.
+
 **Başlangıç yeri:** Yeni dünyalarda doğma noktası, bir yeni oyuncunun yaşayabileceği bir yer olarak aranır. Bu yerde bulunması gerekenler:
 - **Hemen yanında:** çayır ya da orman; yakında ağaç, taş yığınları, dal, lif, yemiş ve su.
 - **Yürüme mesafesinde:** kil ve bakır.
@@ -181,6 +193,8 @@ crates/
     src/debug.rs      debug kapıları: oyunu satır satır süren betik dili
   render/  wgpu çizici: piksel sanatı geçişi, gölgeler, su/rüzgâr gölgelendiricileri, modeller
   net/     lockstep çok oyunculu (sunucu/istemci)
+  relay-proto/  aracı ile oyun arasındaki mesajlar ve oda kodu (render ve sim bağımlılığı yok)
+  relay/   internet aracısı (alaz-relay): kodla eşleştirir, bağlantıları aktarır; Linux/Unix
   game/    pencere, giriş, arayüz (egui), menü, hikâye, ses
 ```
 
@@ -206,13 +220,18 @@ Kayıtlar tarifleri indeksle anar; bu yüzden **yeni tarifler dosyanın sonuna e
 
 ## Kayıtlar
 
-Sürümlü ikili biçim (postcard), şu an sürüm 24. Eski sürümler yüklenirken yükseltilir. Kayıt yalnız değişenleri tutar:
+Sürümlü ikili biçim (postcard). Doğal mağaralı dünyalar sürüm 32, diğer dünyalar sürüm 30 kullanır. Kayıt başlıca şunları tutar:
 - değişen kaynaklar
 - binalar ve ajanlar
 - chunk sırası
 - kendi kurallar
+- doğal mağaralarda kazılan kaya ve çöküntüler
 
 Gerisi tohumdan yeniden üretilir. Yüklenen dünyanın hash'i kayıttakiyle karşılaştırılır.
+
+Ana dosya eksik veya bozuk olduğunda oyun sağlam yedeğe döner. Kayıt menüsü bu yuvadan devam etmeye izin verir. Sonraki kayıt sağlam yedeği korur.
+
+Doğal mağaralarda keşfettiğin yerler kayıt yuvasındaki `cave-map.alz` dosyasında saklanır. Yedeği açarsan o kayıt alınırken bildiğin yerleri görürsün. Keşif haritası çok oyunculu dünya verisine eklenmez.
 
 ## Çok oyunculu
 
@@ -225,6 +244,23 @@ Gerisi tohumdan yeniden üretilir. Yüklenen dünyanın hash'i kayıttakiyle kar
 - Portlar: oyun TCP 7777, ağda bulma UDP 7778. Windows ilk sunucu kurulumunda güvenlik duvarı izni sorar: izin ver.
 - Duraklatma menüsü sunucunun adresini ve oyuncu sayısını gösterir.
 
+### İnternetten (kodla)
+
+Aracı sunucu çalıştığında arkadaşınla port açmadan internet üzerinden oynayabilirsin. Kuran oyuncu bir kod alır. Arkadaşı kodu yazarak katılır.
+
+- **Ağa aç:** Çok oyunculu ekranında **Ağa aç**'a bas. `K7Q4-XM2P` gibi bir kod çıkar. **Kopyala** düğmesiyle panoya kopyalayabilirsin. Bağlı oyuncu sayısı da görünür.
+- **Kodla katıl:** Arkadaşın **Kodla katıl** alanına kodu yazar. Büyük-küçük harf, boşluk ve tire önemli değildir.
+- **Yeni kod:** Yeni bir kod alır. Eski kod hemen geçersiz olur.
+- **Ağı kapat:** Kod geçersiz olur. Ağda olan oyuncular oyunda kalır.
+- Kod, ağı açık tuttuğun sürece geçerlidir. Bir odada en çok 8 oyuncu olabilir (kuran dahil).
+- Kodu güvendiğin arkadaşlarınla paylaş. Sunucu oyuncu komutlarını bağlantıya atanmış karakterle sınırlar. Oyuncular ortak işçi komutları verebilir.
+- Çok oyunculu ekranından **Ağa aç** yalnız internet yolunu açar; LAN portu açılmaz. Oyun zaten LAN için açıksa ikisi de çalışır.
+- Oyun bağlantıyı `relay.alazlab.com` (port 443, TLS) adresindeki aracı sunucu üzerinden kurar. Aracı oyuncuları eşleştirir. LAN ve internet oyunları aynı eşzamanlı simülasyonu kullanır.
+- Aracı kod ya da oyun içeriğini kaydetmez; yalnız sayaç tutar. TLS aracıda sonlandığı için aracı trafiği teknik olarak görebilir.
+- Herkes aynı oyun sürümünü kullanmalı.
+- Aracının adresini `ALAZ_RELAY=host:port` ortam değişkeniyle değiştirebilirsin (test ya da kendi aracın için). Aracıyı kurma adımları: `packaging/relay/RUNBOOK.md`.
+- LAN ile oynama ("Sunucu kur", "Ağdaki oyunlar", `--host`, `--join`) eskisi gibi çalışır.
+
 **Komut satırından:**
 
 ```bash
@@ -234,7 +270,7 @@ cargo run --release -p alaz -- --join 192.168.1.5
 
 - **Lockstep:** Her oyuncunun komutları her adımda dağıtılır, herkes aynı sim'i çalıştırır.
 - **Katılma:** Katılan oyuncu dünyanın kaydını alır.
-- **Döngü:** Yeni dünyayı yalnız sunucu başlatır.
+- **Döngü:** Yeni dünyayı yalnız sunucu başlatır. Bağlı oyunculara yeni dünyada birer karakter atanır.
 
 ## Geliştirici araçları ve debug kapıları
 
@@ -270,7 +306,20 @@ shot NAME / state
 | `every_command_has_a_working_gate` | Her oyuncu komutunu kapısından geçirir |
 | `worldgen_report` (`--ignored`) | Üreticileri ölçer. Değişkenler: `ALAZ_REPORT_GEN`, `ALAZ_REPORT_SEEDS`, `ALAZ_REPORT_SIZE`, `ALAZ_REPORT_ROWS` |
 | `dump_v2_map`, `dump_v3_map` (`--ignored`) | Harita görüntüsü (`ALAZ_MAP_PPM`, `ALAZ_MAP_STEP`) |
+| `dump_cave_slices` (`--ignored`) | Üç boyutlu mağara alanının yatay ve dikey kesitleri ile örnek alandaki en büyük bağlı ağın üstten görünümü |
+| `seeded_cave_upload_cost` (`--ignored`) | Üç mağara yürüyüşünde çizim hazırlığının işlemci süresi ve ekran kartına gönderilen yükseklik verisi |
 | `time_land_functions` (`--ignored`) | Arazi fonksiyonlarının hızını ölçer |
+
+Mağara önizlemesi için bir çıktı klasörü oluştur ve `ALAZ_CAVE_SLICE_DIR` ile göster.
+`ALAZ_CAVE_SEED` tohumu, `ALAZ_CAVE_GEN` yüzey üreticisini (`2` veya `3`),
+`ALAZ_CAVE_XY_Z` yatay kesitin yüksekliğini ve `ALAZ_CAVE_XZ_Y` dikey kesitin konumunu seçer.
+Kesit konumları metre cinsindendir.
+
+```bash
+mkdir -p /tmp/alaz-cave-preview
+ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
+  cargo test --locked -p alaz-sim dump_cave_slices -- --ignored
+```
 
 **Ortam değişkenleri:**
 
@@ -286,6 +335,7 @@ shot NAME / state
 | `ALAZ_DEMO_LINEUP=<kıyafet maskesi>[,lod\|walk\|sit]` | Oyuncunun önüne on evrim aşamasını yan yana dizer (aynı kişi: `ALAZ_DEMO_LINEUP_ID`, varsayılan 12) |
 | `ALAZ_DEMO_FALL=deer\|wolf\|ox\|horse\|dog` | Kameranın önünde bu türden bir hayvan tekrar tekrar ölüp devrilir (ölüm animasyonu) |
 | `ALAZ_DEMO_SURFACE=mud\|puddle\|ice\|fire\|ash` | Zemin durumlarını gösterir: yağmur sonrası çamur, birikinti, buz (`ALAZ_DEMO_HOUR=9` ve `ALAZ_DEMO_WEATHER=snow` ile), yanan çimen, kül |
+| `ALAZ_RELAY=host:port` | İnternet aracısının adresi (varsayılan `relay.alazlab.com:443`); test ve kendi aracın için |
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |
 
@@ -295,9 +345,7 @@ shot NAME / state
 cargo test --release --workspace
 ```
 
-180 civarı test var (sim 153, arayüz 21, ağ 4, çizim 1; sim testlerinin 6'sı elle çalıştırılan araçlar). Kapsadıkları:
-- **Sim:** her çağın akışı, kayıt uyumluluğu (sürüm 17-24), determinizm, fizik, su ve rüzgâr, dünya üreticileri, doğma kalitesi, debug kapıları, tam tarama.
-- **Diğer crate'ler:** arayüz testleri (egui_kittest), çok oyunculu ve render testleri.
+Testler simülasyonu, arayüzü, ağı ve çizimi kapsar. Simülasyon testleri çağların akışını, dünya ve mağara üretimini, fizik kurallarını ve eski kayıtların yüklenmesini denetler. Ağ testleri yerel soket açar. `--ignored` ile çalıştırılan ölçüm ve önizleme araçları normal test çalışmasına dahil değildir.
 
 ## Durum ve bilinen sorunlar
 

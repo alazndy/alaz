@@ -5,6 +5,8 @@
 
 use super::*;
 use alaz_sim::caves::{Cell, Level, CAVE_H, CAVE_W, ORE_COAL, ORE_COPPER, ORE_IRON, ORE_TIN};
+use alaz_sim::cave_terrain::CaveTile;
+use std::collections::{BTreeMap, BTreeSet};
 use super::shapes::{limb, rock, sphere};
 
 /// Tiles on a side of one cached block of the cave mesh.
@@ -245,8 +247,8 @@ pub(crate) fn build_cave_block(level: &Level, seed: u64, node: u32, depth: u8, b
                     }
                     // fixtures that do not get in the way: a stalagmite or a few pebbles, by the wall only
                     let by_wall = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().find(|&&(dx, dy)| matches!(level.cell(tx + dx, ty + dy), Cell::Rock));
-                    if cell == Cell::Floor {
-                        if let Some(&(dx, dy)) = by_wall {
+                    if cell == Cell::Floor
+                        && let Some(&(dx, dy)) = by_wall {
                             let r = unit(seed, tx, ty, 3);
                             let (px, pz) = (x + 0.5 + dx as f32 * 0.36, z + 0.5 + dy as f32 * 0.36);
                             if r < 0.08 {
@@ -260,7 +262,6 @@ pub(crate) fn build_cave_block(level: &Level, seed: u64, node: u32, depth: u8, b
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -268,6 +269,73 @@ pub(crate) fn build_cave_block(level: &Level, seed: u64, node: u32, depth: u8, b
     for v in &mut out.verts {
         // models stand at height 0 here (the height window is flat in a cave)
         v.off = [0.0, 0.0];
+    }
+    out.verts
+}
+
+pub(crate) fn build_natural_cave(world: &World, floors: &BTreeMap<(i32, i32), i16>, rubble: &BTreeMap<(i32, i32), i16>, depth: u8) -> Vec<Vertex> {
+    let (base, low) = palette(depth + 1);
+    let mut out = Mesh::new();
+    let mut caps = BTreeSet::new();
+    for (&(tx, ty), &height) in floors {
+        let (x, y, z) = (tx as f32, f32::from(height), ty as f32);
+        let tint = 0.86 + 0.26 * unit(world.seed, tx, ty, 2);
+        let tile = CaveTile { x: tx, y: ty, z: height };
+        let exit = world.natural_cave_exit_at(tile).is_some();
+        let floor_color = if exit { [0.52, 0.54, 0.45] } else if world.natural_cave_flooded(tile) { [0.12, 0.32, 0.43] } else { mul(base, tint) };
+        quad(&mut out, [[x, y, z], [x + 1.0, y, z], [x + 1.0, y, z + 1.0], [x, y, z + 1.0]], floor_color, if exit { 0.62 } else { 0.0 }, 1.0);
+
+        for ((dx, dy), (a, b)) in [
+            ((0, -1), ([x, z], [x + 1.0, z])),
+            ((1, 0), ([x + 1.0, z], [x + 1.0, z + 1.0])),
+            ((0, 1), ([x + 1.0, z + 1.0], [x, z + 1.0])),
+            ((-1, 0), ([x, z + 1.0], [x, z])),
+        ] {
+            let neighbor = (tx + dx, ty + dy);
+            if rubble.contains_key(&neighbor) {
+                continue;
+            }
+            let (top, light) = match floors.get(&neighbor) {
+                Some(&next) if next > height => (f32::from(next), 1.0),
+                Some(_) => continue,
+                None => {
+                    let top = y + WALL_H + (tint - 1.0) * 0.6;
+                    if caps.insert(neighbor) {
+                        let (nx, nz) = (neighbor.0 as f32, neighbor.1 as f32);
+                        quad(&mut out, [[nx, top, nz], [nx + 1.0, top, nz], [nx + 1.0, top, nz + 1.0], [nx, top, nz + 1.0]], mul(low, 0.9), 0.0, WALL);
+                    }
+                    (top, WALL)
+                }
+            };
+            let mid = y + (top - y) * 0.46;
+            for (lo, hi, col) in [(y, mid, mul(low, tint)), (mid, top, mul(base, tint))] {
+                quad(&mut out, [[a[0], lo, a[1]], [b[0], lo, b[1]], [b[0], hi, b[1]], [a[0], hi, a[1]]], col, 0.0, light);
+            }
+            if light == WALL
+                && let Some(ore) = world.natural_cave_ore_at(CaveTile { x: neighbor.0, y: neighbor.1, z: height }) {
+                    for k in 0..3 {
+                        let along = 0.19 + 0.62 * unit(world.seed, tx, ty, 80 + k + dx * 7 + dy * 3);
+                        let point = [a[0] + (b[0] - a[0]) * along - dx as f32 * 0.05, y + 0.5 + 0.31 * k as f32, a[1] + (b[1] - a[1]) * along - dy as f32 * 0.05];
+                        nugget(&mut out, point, 0.11, ore, (tx * 11 + ty * 17 + k) as u32);
+                    }
+                }
+        }
+    }
+    for (&(x, z), &height) in rubble {
+        let floor = f32::from(height);
+        let (cx, cz) = (x as f32, z as f32);
+        quad(&mut out, [[cx, floor, cz], [cx + 1.0, floor, cz], [cx + 1.0, floor, cz + 1.0], [cx, floor, cz + 1.0]], low, 0.0, 1.0);
+        for k in 0..7 {
+            let u = |salt| unit(world.seed, x, z, salt + 7 * k);
+            let radius = 0.15 + 0.18 * u(30);
+            let base_y = if k < 4 { 0.14 } else { 0.31 };
+            let color = mul(base, 0.98 + 0.51 * u(33));
+            rock(&mut out, [cx + 0.22 + 0.56 * u(31), floor + base_y + 0.10 * u(34), cz + 0.22 + 0.56 * u(32)], [radius, radius * 0.84, radius], color, (x * 31 + z * 17 + k) as u32);
+        }
+    }
+    // Coordinates already include the actual floor height.
+    for vertex in &mut out.verts {
+        vertex.kind = 1000.0;
     }
     out.verts
 }

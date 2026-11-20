@@ -243,7 +243,7 @@ fn tile_forest(seed: u32) -> Bmp {
         wput(&mut b, x, y, c);
         wput(&mut b, x + 1, y, mul(c, 0.8));
     }
-    if seed % 2 == 0 {
+    if seed.is_multiple_of(2) {
         // a fallen twig with a fork
         let (x, y) = (rng.below(12) as i32, rng.below(gt() as u32) as i32);
         for i in 0..7 {
@@ -285,7 +285,7 @@ fn tile_sand(seed: u32) -> Bmp {
         wput(&mut b, x, y, [176, 158, 128]);
         wput(&mut b, x, y + 1, [140, 120, 92]);
     }
-    if seed % 3 == 0 {
+    if seed.is_multiple_of(3) {
         // a shell
         let (x, y) = (rng.below(gt() as u32) as i32, rng.below(gt() as u32) as i32);
         wput(&mut b, x, y, [242, 232, 218]);

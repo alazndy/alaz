@@ -26,7 +26,7 @@ pub fn render_icon(k: ItemKind, size: u32) -> Vec<u8> {
     let mut canvas = vec![[0.0f32; 4]; dim * dim];
     for prim in &prims {
         let Primitive::Mesh(mesh) = &prim.primitive else { continue };
-        for tri in mesh.indices.chunks_exact(3) {
+        for tri in mesh.indices.as_chunks::<3>().0 {
             let v: [_; 3] = std::array::from_fn(|i| mesh.vertices[tri[i] as usize]);
             let p: [[f32; 2]; 3] = std::array::from_fn(|i| [v[i].pos.x * SS as f32, v[i].pos.y * SS as f32]);
             let area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
@@ -126,7 +126,7 @@ mod tests {
     fn every_icon_paints_something() {
         for k in ItemKind::ALL {
             let px = render_icon(k, 32);
-            let covered = px.chunks_exact(4).filter(|p| p[3] > 0).count();
+            let covered = px.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
             assert!(covered > 32 * 32 / 50, "{k:?}: only {covered} of 1024 pixels painted");
         }
     }

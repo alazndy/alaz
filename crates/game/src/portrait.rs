@@ -105,10 +105,10 @@ fn figure(lk: &Look, ev: &Evo, o: u16, x: i32, y: i32) -> Option<Color32> {
         if fy > 2.0 && fy < 7.4 && ell(fx, fy, hx, 7.6, 5.6, 5.8) {
             return shade(steel);
         }
-        if fy >= 7.4 && fy < 8.4 && ell(fx, fy, hx, 8.0, 5.8, 3.0) {
+        if (7.4..8.4).contains(&fy) && ell(fx, fy, hx, 8.0, 5.8, 3.0) {
             return shade([steel[0] * 0.65, steel[1] * 0.65, steel[2] * 0.7]);
         }
-        if fx > hx - 0.6 && fx < hx + 0.6 && fy >= 8.4 && fy < 12.0 {
+        if fx > hx - 0.6 && fx < hx + 0.6 && (8.4..12.0).contains(&fy) {
             return shade(steel);
         }
         if fx > hx - 0.8 && fx < hx + 0.8 && fy > 0.2 && fy <= 2.0 {

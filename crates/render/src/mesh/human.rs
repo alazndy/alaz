@@ -801,12 +801,11 @@ fn file_outfit(out: &mut Mesh, x: f32, z: f32, pose: &Pose) -> u16 {
     const FILES: [(u16, &str); 10] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron"), (OUT_FELT, "outfit_felt_cloak"), (OUT_LEATHER, "outfit_leather_armor")];
     let mut done = 0;
     for (bit, name) in FILES {
-        if pose.outfit & bit != 0 {
-            if let Some(m) = assets::model(name, pose.id) {
+        if pose.outfit & bit != 0
+            && let Some(m) = assets::model(name, pose.id) {
                 m.place(out, &assets::Place::at(x, z).turned(pose.heading, 1.0));
                 done |= bit;
             }
-        }
     }
     out.set_anchor(x, z);
     done

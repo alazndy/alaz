@@ -150,7 +150,7 @@ impl Ctx<'_> {
         let image = tex.and_then(|t| self.texture(&t)).map(|i| (i.w, i.h, i.rgba.clone()));
         let nm = world.inverse().transpose();
         let mut out = Vec::with_capacity(idx.len());
-        for tri in idx.chunks_exact(3) {
+        for tri in idx.as_chunks::<3>().0 {
             let t = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
             if t.iter().any(|&i| i >= pos.len()) {
                 continue;
@@ -232,7 +232,7 @@ pub fn write_glb(parts: &[GlbPart]) -> Vec<u8> {
         let mut pos = Vec::with_capacity(v.len() * 3);
         let mut nor = Vec::with_capacity(v.len() * 3);
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-        for tri in v.chunks_exact(3) {
+        for tri in v.as_chunks::<3>().0 {
             let p = [rel(tri[0].pos), rel(tri[1].pos), rel(tri[2].pos)];
             let a = Vec3::from(p[1]) - Vec3::from(p[0]);
             let b = Vec3::from(p[2]) - Vec3::from(p[0]);
@@ -277,10 +277,10 @@ pub fn write_glb(parts: &[GlbPart]) -> Vec<u8> {
         "buffers": [{"byteLength": bin.len()}],
     });
     let mut js = serde_json::to_vec(&root).unwrap_or_default();
-    while js.len() % 4 != 0 {
+    while !js.len().is_multiple_of(4) {
         js.push(b' ');
     }
-    while bin.len() % 4 != 0 {
+    while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
     let total = 12 + 8 + js.len() + 8 + bin.len();

@@ -57,7 +57,7 @@ fn climate_at(p: vec2<f32>) -> vec2<f32> {
 
 // distance to the water's edge in tiles: positive out on the water, negative on land
 fn shore_at(p: vec2<f32>) -> f32 {
-    let q = p - globals.hwin.xy;
+    let q = p - globals.hwin.xy - vec2<f32>(0.5);
     let f = floor(q);
     let t = q - f;
     let i = vec2<i32>(f);
@@ -179,6 +179,10 @@ fn place(v0: VIn) -> vec3<f32> {
     var lift = 0.0;
     if (v0.kind > 500.0) {
         lift = v0.kind - 1000.0;
+    } else if (globals.cave.y > 0.5) {
+        let xz = select(v.pos.xz, v.off, anchored);
+        let tile = clamp(vec2<i32>(floor(xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
+        lift = textureLoad(hmap, tile, 0).r;
     } else {
         lift = ground_h(select(v.pos.xz, v.off, anchored)) + select(0.0, 0.02, anchored);
     }
@@ -481,16 +485,13 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     let tile = tile_of(tx);
     let tl = tx - tile * GT;
     let mine = tile_at(tile);
-    let q = vec2<f32>(tx) / GTF;
-    // near the shore, water or land is decided by the smooth shore field, not by whole tiles: a coast that runs
-    // across the grid is a curve, not a staircase of tile corners
-    let sh0 = shore_at(q);
-    if (select((mine.z < 0.5), (sh0 > 0.0), (abs(sh0) < 1.2))) { return r; }
-    var col = land_base(tx, tile, tl, mine);
-    // the ground right by the water is wet and dark, in a band that the waves keep washing
-    if (sh0 > -0.55) { col = col * mix(0.72, 1.0, smoothstep(-0.25, -0.55, sh0)); }
-    // the middle of the texel stands for the smooth fields below
+    // Sample at the texel centre so water, wet sand and foam agree on the same shoreline.
     let w = (vec2<f32>(tx) + 0.5) / GTF;
+    let q = vec2<f32>(tx) / GTF;
+    let beach = shore_at(w);
+    if (select((mine.z < 0.5), (beach > 0.0), (abs(beach) < 1.2))) { return r; }
+    var col = land_base(tx, tile, tl, mine);
+    col = col * mix(1.0, 0.72, smoothstep(-0.55, -0.25, beach));
     // the shape of the land: which way it faces, over two tiles so the light does not break at every tile edge
     let e = 1.0;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
@@ -542,7 +543,7 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     r.col = col;
     r.g = vec2<f32>(gx, gz);
     // puddles form on flat ground away from the shore, below the snow line; never on the sand of a water tile
-    let puddles = steep < 0.25 && sh0 < -0.7 && cap < 0.5 && mine.z > 0.5;
+    let puddles = steep < 0.25 && beach < -0.7 && cap < 0.5 && mine.z > 0.5;
     r.state = select(select(0.0, 1.0, puddles), 3.0, pooled);
     return r;
 }
@@ -688,7 +689,7 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
     if (g.state > 1.5 && g.state < 2.5) {
         // water, drawn on the ground's own texel grid: deep blue r in the open, turquoise in the shallows,
         // wave bands drifting with the wind, foam lapping at the shore and the sun sparkling on the ripples
-        let q = vec2<f32>(tx) / GTF;
+        let q = (vec2<f32>(tx) + 0.5) / GTF;
         let depth = shore_at(q);
         let deep = smoothstep(0.0, 3.5, depth);
         col = mix(vec3<f32>(0.22, 0.58, 0.62), vec3<f32>(0.13, 0.36, 0.56), smoothstep(0.0, 1.2, depth));
@@ -706,15 +707,12 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         let crest = sw.x / max(sw6[5], 0.01);
         // surf: breakers rolling in toward the beach, each a foam band that runs up the sand and drains back
         let surf_ph = fract(depth * 0.55 + clock * 0.12 + vnoise(q * 0.3) * 0.5);
-        if (depth < 2.2 && depth > 0.15 && surf_ph < 0.06 + 0.05 * wnd) {
-            col = mix(col, vec3<f32>(0.9, 0.96, 0.97), 0.75 * (1.0 - depth / 2.2));
-        }
+        let breaker = 0.06 + 0.05 * wnd;
+        let surf = (1.0 - smoothstep(breaker * 0.7, breaker, surf_ph))
+            * smoothstep(0.12, 0.24, depth) * (1.0 - smoothstep(0.24, 2.2, depth));
+        col = mix(col, vec3<f32>(0.9, 0.96, 0.97), 0.75 * surf);
         // the side of each wave facing the sun lighter, the far side darker: shows its shape
         col = col * (1.0 + 0.9 * clamp(globals.sun.w / 0.8, 0.2, 1.0) * dot(vec2<f32>(sw.y, sw.z), normalize(globals.sun.xz + vec2<f32>(0.001))));
-        // at night open water drinks the light: it faces straight up into the (blue, moonlit) sky, so without this
-        // it would read brighter than the land around it
-        let sea_night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
-        col = col * mix(1.0, 0.55, sea_night * sea_night);
         // whitecaps only on the highest crests, and only once the wind is fresh
         if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(vec2<f32>(tx) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
             col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);
@@ -724,14 +722,15 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         else if (band > 0.42) { col = col * 0.86; }
         // the sea floor shows through the shallows
         if (depth < 0.9 && vnoise(q * 3.0) > 0.62) { col = mix(col, vec3<f32>(0.46, 0.62, 0.52), 0.35 * (1.0 - depth / 0.9)); }
-        // foam: a line that runs up the shore and back, and a fainter one further r
+        // Feather the wash over one ground texel to keep wave fronts continuous across tile edges.
         let wave = sin(clock * 1.1 + vnoise(q * 0.6) * 6.0) * 0.5 + 0.5;
         let line1 = 0.06 + 0.32 * wave;
-        if (abs(depth - line1) < 0.07 || depth < line1 - 0.07) {
-            if (depth < line1 + 0.07) { col = mix(col, vec3<f32>(0.86, 0.94, 0.95), select(0.85, 0.55, depth < line1 - 0.07)); }
-        }
+        let wash = 0.50 * (1.0 - smoothstep(line1 - 0.09, line1 + 0.06, depth));
+        let rim = 0.30 * (1.0 - smoothstep(0.025, 0.10, abs(depth - line1)));
+        col = mix(col, vec3<f32>(0.86, 0.94, 0.95), wash + rim);
         let line2 = 0.55 + 0.35 * fract(clock * 0.16 + vnoise(q * 0.4) * 2.0);
-        if (abs(depth - line2) < 0.045 && hash21(vec2<f32>(tx)) > 0.35) { col = mix(col, vec3<f32>(0.75, 0.88, 0.92), 0.45 * (1.0 - deep)); }
+        let foam = 1.0 - smoothstep(0.02, 0.09, abs(depth - line2));
+        col = mix(col, vec3<f32>(0.75, 0.88, 0.92), 0.38 * foam * (1.0 - deep) * mix(0.4, 1.0, vnoise(q * 4.0)));
         // sun glitter: a ripple surface reflecting the sun toward the eye, cut to single bright texels
         let sd = normalize(globals.sun.xyz);
         let e = 0.12;
@@ -753,6 +752,9 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
                 if (dd < 0.035) { col = col + vec3<f32>(0.35, 0.40, 0.45) * (1.0 - phase); }
             }
         }
+        // Night light applies to the whole surface, including foam, whitecaps and rain.
+        let sea_night = clamp((1.0 - globals.light.r) / 0.7, 0.0, 1.0);
+        col = col * mix(1.0, 0.40, sea_night * sea_night);
     } else {
         n = normalize(vec3<f32>(-g.g.x, 1.0, -g.g.y));
         // the sparkle on a swamp pool
@@ -883,7 +885,11 @@ struct BakeOut {
 fn cave_open(src: vec3<f32>, dst: vec3<f32>) -> f32 {
     for (var i = 1; i < 14; i = i + 1) {
         let q = mix(src, dst, f32(i) / 14.0);
-        if (q.y < 2.2) {
+        if (globals.cave.y > 0.5) {
+            let t = clamp(vec2<i32>(floor(q.xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
+            let rock = textureLoad(hmap, t, 0);
+            if (rock.g > 0.5 || q.y < rock.r - 0.12) { return 0.0; }
+        } else if (q.y < 2.2) {
             let t = clamp(vec2<i32>(floor(q.xz)), vec2<i32>(0), vec2<i32>(255));
             if (textureLoad(hmap, t, 0).g > 0.5) { return 0.0; }
         }
@@ -906,7 +912,8 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             let ndl = max(dot(n, dir), 0.0) * 0.75 + 0.25;
             let flick = 0.90 + 0.06 * sin(globals.env.x * 13.0) + 0.04 * sin(globals.env.x * 29.0 + 1.3);
             // (the tops of the rock are far above the torch: dim, a dark mass against the lit floor)
-            let top = select(1.0, 0.35, v.world.y > 1.5 && n.y > 0.8);
+            let rock_top = select(v.world.y > 1.5, v.uv.x > 1.5, globals.cave.y > 0.5);
+            let top = select(1.0, 0.35, rock_top && n.y > 0.8);
             light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * 2.2 * vis * top;
         }
     }

@@ -216,13 +216,13 @@ impl World {
     /// Mud, ice and fire at work, once per tick.
     pub(crate) fn run_surface(&mut self) {
         let t = self.tick;
-        if t % 10 == 0 {
+        if t.is_multiple_of(10) {
             self.run_slips();
         }
-        if t % 60 == 0 {
+        if t.is_multiple_of(60) {
             self.run_sparks();
         }
-        if t % FIRE_STEP != 0 || self.burn.is_empty() {
+        if !t.is_multiple_of(FIRE_STEP) || self.burn.is_empty() {
             return;
         }
         let g = self.ground();
@@ -284,11 +284,11 @@ impl World {
             return;
         }
         let mut hurt: Vec<AgentId> = Vec::new();
-        for a in &mut self.agents {
+        for a in self.agents.iter_mut().filter(|a| a.cave.is_none()) {
             let k = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
             if self.burn.get(&k).is_some_and(|b| b.fire) {
                 a.health -= crate::rules::Gear::cut(FIRE_HURT, a.inventory.gear().fire);
-                if t % (FIRE_STEP * 4) == 0 {
+                if t.is_multiple_of(FIRE_STEP * 4) {
                     hurt.push(a.id);
                 }
             }
@@ -306,7 +306,7 @@ impl World {
         }
         let t = self.tick;
         let mut slipped: Vec<AgentId> = Vec::new();
-        for a in &mut self.agents {
+        for a in self.agents.iter_mut().filter(|a| a.cave.is_none()) {
             if !(a.sprint && a.stamina > 0 && matches!(a.task, Task::Move { .. } | Task::Walk { .. })) {
                 continue;
             }
@@ -357,7 +357,7 @@ impl World {
             }
         }
         // dry lightning: on summer days, near someone
-        if self.season() == 1 && t % (time::TICKS_PER_DAY / 12) == 0 {
+        if self.season() == 1 && t.is_multiple_of(time::TICKS_PER_DAY / 12) {
             let humans: Vec<(i64, i64)> = self.agents.iter().filter(|a| a.kind == crate::agents::AgentKind::Human).map(|a| (a.x, a.y)).collect();
             let h = crate::rng::hash2(self.seed ^ 0x1167, (t / (time::TICKS_PER_DAY / 12)) as i32, 0);
             if !humans.is_empty() && h % 100 < 6 {

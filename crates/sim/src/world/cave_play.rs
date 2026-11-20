@@ -13,7 +13,7 @@ pub const CAVE_MAX_DEPTH: u8 = 3;
 /// Ticks for one swing of a pick at an ore vein; bare rock takes a little less, rubble about a third.
 pub const CAVE_MINE_TICKS: u16 = 150;
 pub const ROCK_SWING_TICKS: u32 = 110;
-const RUBBLE_SWING_TICKS: u32 = 60;
+pub(super) const RUBBLE_SWING_TICKS: u32 = 60;
 /// How close the walker must be to a cave mouth's middle to step in (mm).
 pub(crate) const ENTER_REACH_MM: i64 = 1_500;
 /// A cave mouth can be entered from this far by command; further off the walker goes up to it first.
@@ -289,11 +289,10 @@ pub(crate) fn cave_task(a: &mut Agent, caves: &mut BTreeMap<u32, Cave>, events: 
                             let save = a.inventory.gear().tool_save as u64;
                             save > 0 && crate::rng::hash2(seed ^ 0xA9F0, a.id.0 as i32, (tick % 1_000_000) as i32) % 100 < save
                         };
-                        if let Some(t) = tool.filter(|_| human && life > 0 && !spared) {
-                            if a.add_wear(t.item) == life {
+                        if let Some(t) = tool.filter(|_| human && life > 0 && !spared)
+                            && a.add_wear(t.item) == life {
                                 events.push(Event::ToolBlunt { agent: a.id, item: t.item });
                             }
-                        }
                         // a vein with ore left is worked on; anything else opens up into floor
                         if left > 0 {
                             cave.set_tile(level, tx, ty, Cell::Rock, left);
@@ -318,6 +317,10 @@ impl World {
     pub fn pumped(&self, node: u32) -> bool {
         let Some(n) = self.nodes.get(node as usize) else { return false };
         let (mx, my) = n.center_mm();
+        self.pumped_at(mx, my)
+    }
+
+    pub(super) fn pumped_at(&self, mx: i64, my: i64) -> bool {
         self.buildings
             .iter()
             .enumerate()
@@ -327,6 +330,9 @@ impl World {
 
     /// The cave under a mouth, cut now if nobody has been in it yet. None if the node is not a cave mouth.
     pub fn cave_for(&mut self, node: u32) -> Option<&mut Cave> {
+        if crate::map::has_natural_caves(self.seed) {
+            return None;
+        }
         let n = self.nodes.get(node as usize).filter(|n| n.kind == NodeKind::CaveMouth)?;
         let (seed, tx, ty) = (self.seed, n.tx, n.ty);
         Some(self.caves.entry(node).or_insert_with(|| Cave::generate(seed, tx, ty)))
@@ -368,7 +374,8 @@ impl World {
         if self.agents[idx].cave.is_some() || self.agents[idx].kind != AgentKind::Human {
             return;
         }
-        if self.cave_for(node.0).is_none() {
+        let natural = self.natural_mouth(node.0);
+        if natural.is_none() && self.cave_for(node.0).is_none() {
             return;
         }
         let a = &mut self.agents[idx];
@@ -377,14 +384,24 @@ impl World {
             self.events.push(Event::CraftAbandoned(id));
         }
         let a = &mut self.agents[idx];
-        let lv = &self.caves[&node.0].levels[0];
-        let (lx, ly) = centre(lv.landing(lv.entry));
-        a.cave = Some(CaveSelf { node: node.0, level: 1, x: lx, y: ly, light, full: light, dark: 0, cool: STAIR_COOL, leaving: false });
+        let (lx, ly) = if let Some(mouth) = natural {
+            mouth.landing.center_mm()
+        } else {
+            let lv = &self.caves[&node.0].levels[0];
+            centre(lv.landing(lv.entry))
+        };
+        let mut cave = CaveSelf { node: node.0, level: 1, x: lx, y: ly, light, full: light, dark: 0, cool: STAIR_COOL, leaving: false };
+        if let Some(mouth) = natural {
+            cave.set_elevation(mouth.landing.z);
+            a.x = lx;
+            a.y = ly;
+        }
+        a.cave = Some(cave);
         a.task = Task::Idle;
         a.path.clear();
         a.path_goal = (-1, -1);
         a.seated = None;
-        self.refresh_sump(node.0);
+        if natural.is_none() { self.refresh_sump(node.0); }
         self.events.push(Event::CaveEntered(id));
     }
 
@@ -394,8 +411,12 @@ impl World {
         if a.kind != AgentKind::Human {
             return;
         }
-        let Some(lv) = self.caves.get(&c.node).and_then(|cv| cv.level(c.level)) else { return };
-        if !lv.diggable(tx, ty) {
+        let can_dig = if c.elevation_m().is_some() {
+            matches!(self.natural_cave_cell(c, tx, ty), Some(Cell::Rock | Cell::Rubble))
+        } else {
+            self.caves.get(&c.node).and_then(|cv| cv.level(c.level)).is_some_and(|l| l.diggable(tx, ty))
+        };
+        if !can_dig {
             return;
         }
         let id = a.id;
@@ -411,6 +432,10 @@ impl World {
 
     pub(crate) fn cave_leave_command(&mut self, idx: usize) {
         let Some(mut c) = self.agents[idx].cave else { return };
+        if c.elevation_m().is_some() {
+            self.natural_leave_command(idx, c);
+            return;
+        }
         let Some(lv) = self.caves.get(&c.node).and_then(|cv| cv.level(c.level)) else { return };
         let (x, y) = centre(lv.entry);
         c.leaving = true;
@@ -449,11 +474,11 @@ impl World {
     /// Time underground, a tick: the light burns, the dark is groped through, the water takes its toll and the stairs
     /// lead where they lead.
     pub(crate) fn run_caves(&mut self) {
-        if self.caves.is_empty() {
+        if self.caves.is_empty() && !self.agents.iter().any(|a| a.cave.is_some()) {
             return;
         }
-        if self.tick % 30 == 0 {
-            let mouths: std::collections::BTreeSet<u32> = self.agents.iter().filter_map(|a| a.cave).map(|c| c.node).collect();
+        if self.tick.is_multiple_of(30) {
+            let mouths: std::collections::BTreeSet<u32> = self.agents.iter().filter_map(|a| a.cave).filter(|c| c.elevation_m().is_none()).map(|c| c.node).collect();
             for m in mouths {
                 self.refresh_sump(m);
             }
@@ -488,6 +513,14 @@ impl World {
                 }
             }
             c.cool = c.cool.saturating_sub(1);
+            if c.elevation_m().is_some() {
+                if let Some(exit) = (c.cool == 0).then(|| self.natural_exit(c)).flatten() {
+                    self.leave_at(ai, &c, Some(exit));
+                } else {
+                    self.agents[ai].cave = Some(c);
+                }
+                continue;
+            }
             // the stairs
             let cell = self.caves.get(&c.node).and_then(|cv| cv.level(c.level)).map_or(Cell::Floor, |l| l.cell(c.tile().0, c.tile().1));
             let mut gone = false;
@@ -571,16 +604,20 @@ impl World {
 
     /// Out into the light: the surface, in front of the mouth.
     fn leave_cave(&mut self, ai: usize, c: &CaveSelf) {
+        let exit = self.nodes.get(c.node as usize).map(|n| n.center_mm()).map(|(x, y)| (x, y + 1_500));
+        self.leave_at(ai, c, exit);
+    }
+
+    fn leave_at(&mut self, ai: usize, c: &CaveSelf, exit: Option<(i64, i64)>) {
         let id = self.agents[ai].id;
-        let mouth = self.nodes.get(c.node as usize).map(|n| n.center_mm());
         let a = &mut self.agents[ai];
         a.cave = None;
         a.task = Task::Idle;
         a.path.clear();
         a.path_goal = (-1, -1);
-        if let Some((mx, my)) = mouth {
+        if let Some((mx, my)) = exit {
             a.x = mx;
-            a.y = my + 1_500;
+            a.y = my;
         }
         self.events.push(Event::CaveLeft { agent: id, dark: c.light == 0 });
     }
@@ -588,6 +625,17 @@ impl World {
     /// The wall a pick would best work from here: the nearest ore vein on the level, else the nearest bare wall.
     pub fn cave_dig_target(&self, id: AgentId) -> Option<(i32, i32)> {
         let c = self.agents.get(id.0 as usize)?.cave?;
+        if c.elevation_m().is_some() {
+            let (x, y) = c.tile();
+            return crate::cave_terrain::SIDES.into_iter().map(|(dx, dy)| (x + dx, y + dy))
+                .filter_map(|(x, y)| match self.natural_cave_cell(c, x, y) {
+                    Some(Cell::Rubble) => Some((0, (x, y))),
+                    Some(Cell::Rock) => Some((1 + u8::from(self.natural_cave_ore(c, x, y).is_none()), (x, y))),
+                    _ => None,
+                })
+                .min_by_key(|&(rank, _)| rank)
+                .map(|(_, tile)| tile);
+        }
         let lv = self.caves.get(&c.node)?.level(c.level)?;
         let (px, py) = (c.x, c.y);
         let mut best: Option<(i64, (i32, i32))> = None;
@@ -611,6 +659,9 @@ impl World {
     /// Where the stair down stands on the level, in mm.
     pub fn cave_down_spot(&self, id: AgentId) -> Option<(i64, i64)> {
         let c = self.agents.get(id.0 as usize)?.cave?;
+        if c.elevation_m().is_some() {
+            return self.natural_deeper_spot(c);
+        }
         let lv = self.caves.get(&c.node)?.level(c.level)?;
         lv.down.map(centre)
     }
@@ -620,6 +671,9 @@ impl World {
     pub fn cave_way_out(&self, id: AgentId) -> Option<((i64, i64), i32)> {
         let a = self.agents.get(id.0 as usize)?;
         let c = a.cave?;
+        if c.elevation_m().is_some() {
+            return self.natural_way_out(c, a);
+        }
         let lv = self.caves.get(&c.node)?.level(c.level)?;
         let route = lv.find_path(c.tile(), lv.entry)?;
         let wp = lv.smooth((c.x, c.y), &route);

@@ -1,19 +1,26 @@
 use super::DetMath;
 use super::*;
+use alaz_sim::cave_terrain::{CaveEntrance, CaveMouth};
 
-pub(crate) fn build_nodes(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32), level: u8) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeDetail {
+    Full,
+    Far,
+}
+
+pub(crate) fn build_nodes(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32), level: u8, tree_detail: TreeDetail) {
     for n in world.nodes_in(x0, y0, x1, y1) {
-        push_node(out, world, n, level);
+        push_node(out, world, n, level, tree_detail);
     }
 }
 
 /// The node under the pointer again, puffed out a little and in one bright colour, sitting just behind the real
 /// one: what shows around the real model is a glowing rim.
-pub(crate) fn push_hover_rim(out: &mut Mesh, world: &World, tile: (i32, i32), level: u8, cam: &Camera, t: f32) {
+pub(crate) fn push_hover_rim(out: &mut Mesh, world: &World, tile: (i32, i32), level: u8, cam: &Camera, t: f32, tree_detail: TreeDetail) {
     let Some(id) = world.node_at(tile.0, tile.1) else { return };
     let Some(n) = world.nodes.get(id.0 as usize) else { return };
     let mut verts = Mesh::new();
-    push_node(&mut verts, world, n, level);
+    push_node(&mut verts, world, n, level, tree_detail);
     out.set_anchor(0.0, 0.0);
     out.foliage = false;
     if verts.is_empty() {
@@ -40,6 +47,11 @@ pub(crate) fn push_hover_rim(out: &mut Mesh, world: &World, tile: (i32, i32), le
 
 /// Where a node stands (its model's anchor), and how wide and tall it is: used to tell what hides the player.
 pub(crate) fn node_shape(world: &World, n: &alaz_sim::world::Node) -> ([f32; 2], f32, f32) {
+    if n.kind == NodeKind::CaveMouth
+        && let Some(mouth) = world.map.natural_cave_mouth(n.tx, n.ty)
+    {
+        return ([mouth.threshold.x as f32 + 0.5, mouth.threshold.y as f32 + 0.5], 1.2, 2.2);
+    }
     let seed = alaz_sim::rng::hash2(world.seed ^ 0x51, n.tx, n.ty) as u32;
     let jit = |k: u32| ((seed.rotate_left(k) % 1000) as f32 / 1000.0 - 0.5) * 2.0;
     let at = [n.tx as f32 + 0.5 + 0.18 * jit(3), n.ty as f32 + 0.5 + 0.18 * jit(7)];
@@ -59,7 +71,137 @@ pub fn node_bounds(world: &World, n: &alaz_sim::world::Node) -> ([f32; 2], f32, 
     node_shape(world, n)
 }
 
-pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, level: u8) {
+fn push_natural_mouth(out: &mut Mesh, world: &World, mouth: CaveMouth, seed: u32) {
+    let origin = [
+        mouth.threshold.x as f32 + 0.5,
+        mouth.threshold.y as f32 + 0.5,
+    ];
+    let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
+    let xz = |along: f32, across: f32| {
+        [
+            origin[0] + along * dx + across * dz,
+            origin[1] + along * dz - across * dx,
+        ]
+    };
+    let surface = |along, across| {
+        let [x, z] = xz(along, across);
+        ground_height(world.seed, x, z)
+    };
+    let lift = surface(0.0, 0.0) + 0.02;
+    let point = |along, across, height| {
+        let [x, z] = xz(along, across);
+        [x, height - lift, z]
+    };
+    let sill = f32::from(mouth.threshold.z);
+    let back_floor = (sill + f32::from(mouth.landing.z)) / 2.0;
+    let approach = [surface(-0.5, -0.5), surface(-0.5, 0.5)];
+    let entrance = mouth.entrance(&world.map);
+    let sections = [(-0.5, approach), (0.0, [sill; 2]), (0.5, [back_floor; 2])];
+    out.set_anchor(origin[0], origin[1]);
+    let mut quad = |vertices: [[f32; 3]; 4], color: [f32; 3]| {
+        let [a, b, c, d] = vertices.map(|p| out.v(p, color, 0.0));
+        out.extend_from_slice(&[a, b, c, a, c, d]);
+    };
+    for (i, pair) in sections.windows(2).enumerate() {
+        let (front, [left, right]) = pair[0];
+        let (back, [back_left, back_right]) = pair[1];
+        let floor = if i == 0 {
+            [0.35, 0.32, 0.28]
+        } else {
+            [0.20, 0.19, 0.18]
+        };
+        quad(
+            [
+                point(front, -0.5, left),
+                point(front, 0.5, right),
+                point(back, 0.5, back_right),
+                point(back, -0.5, back_left),
+            ],
+            floor,
+        );
+        for (i, across) in [-0.5, 0.5].into_iter().enumerate() {
+            let floor = pair[0].1[i];
+            let back_floor = pair[1].1[i];
+            quad(
+                [
+                    point(front, across, floor),
+                    point(back, across, back_floor),
+                    point(back, across, surface(back, across).max(back_floor)),
+                    point(front, across, surface(front, across).max(floor)),
+                ],
+                [0.30, 0.27, 0.24],
+            );
+        }
+    }
+    // The far cut joins the terrain at the tile seam. Darkness hides the part of the gallery beyond it.
+    quad(
+        [
+            point(0.5, -0.5, back_floor),
+            point(0.5, 0.5, back_floor),
+            point(0.5, 0.5, surface(0.5, 0.5).max(back_floor)),
+            point(0.5, -0.5, surface(0.5, -0.5).max(back_floor)),
+        ],
+        [0.073, 0.068, 0.073],
+    );
+
+    if let CaveEntrance::Hillside { roof_mm } = entrance {
+        let roof = roof_mm as f32 / 1_000.0;
+        let arch = [
+            (-0.50, roof - 0.54),
+            (-0.31, roof - 0.24),
+            (0.0, roof),
+            (0.27, roof - 0.19),
+            (0.5, roof - 0.54),
+        ];
+        for arc in arch.windows(2) {
+            let (left, left_roof) = arc[0];
+            let (right, right_roof) = arc[1];
+            let left_rim = surface(0.5, left);
+            let right_rim = surface(0.5, right);
+            let a = point(0.15, left, left_roof + 0.25);
+            let b = point(0.15, right, right_roof + 0.25);
+            let c = point(0.15, right, right_roof);
+            let d = point(0.15, left, left_roof);
+            quad([a, b, c, d], [0.43, 0.40, 0.37]);
+            quad(
+                [
+                    a,
+                    b,
+                    point(0.5, right, right_rim),
+                    point(0.5, left, left_rim),
+                ],
+                [0.51, 0.48, 0.43],
+            );
+            quad(
+                [
+                    c,
+                    d,
+                    point(0.5, left, left_rim - 0.18),
+                    point(0.5, right, right_rim - 0.18),
+                ],
+                [0.19, 0.17, 0.16],
+            );
+        }
+    }
+
+    let flank = if entrance == CaveEntrance::Descent {
+        0.57
+    } else {
+        0.62
+    };
+    for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
+        let rock = point(0.24, flank * side, surface(0.24, flank * side) - 0.04);
+        shapes::rock(
+            out,
+            rock,
+            [0.27, 0.22, 0.31],
+            [0.43, 0.40, 0.36],
+            seed ^ i as u32,
+        );
+    }
+}
+
+pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, level: u8, tree_detail: TreeDetail) {
     use shapes::{limb, rock, sphere};
     {
         let seed = alaz_sim::rng::hash2(world.seed ^ 0x51, n.tx, n.ty) as u32;
@@ -67,7 +209,14 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
         // things you have never handled look like the ordinary thing they resemble
         let known = world.has_seen(n.kind.item());
         let (x, z) = (n.tx as f32 + 0.5 + 0.18 * jit(3), n.ty as f32 + 0.5 + 0.18 * jit(7));
-        if assets::has_models() && push_node_file(out, world, n, (x, z), seed, known) {
+        if n.kind == NodeKind::CaveMouth
+            && let Some(mouth) = world.map.natural_cave_mouth(n.tx, n.ty)
+        {
+            push_natural_mouth(out, world, mouth, seed);
+            return;
+        }
+        let far_tree = n.kind == NodeKind::Tree && tree_detail == TreeDetail::Far;
+        if !far_tree && assets::has_models() && push_node_file(out, world, n, (x, z), seed, known) {
             return;
         }
         out.set_anchor(x, z);
@@ -103,6 +252,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
             }
             NodeKind::Tree => {
                 // saplings, grown trees and a few giants; forests lean to pines. A person stands about 1.8 m tall.
+                let segments = |full, far| if far_tree { far } else { full };
                 let height = alaz_sim::map::tree_height_mm(world.seed, n.tx, n.ty) as f32 / 1000.0;
                 let (warm, wet) = alaz_sim::climate(world.seed, n.tx, n.ty);
                 let (warm, wet) = (warm as f32 / 1000.0, wet as f32 / 1000.0);
@@ -123,43 +273,43 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     let h = (height * 0.55).clamp(1.2, 3.4);
                     let col = [0.34 + 0.04 * jit(6), 0.52 + 0.05 * jit(8), 0.28];
                     let r = 0.16 + 0.03 * jit(3);
-                    limb(out, [x, 0.0, z], [x, h, z], r, r * 0.9, col, 8);
-                    sphere(out, [x, h, z], [r * 0.9, r * 0.6, r * 0.9], col, 8, 4, 0.0, 1);
+                    limb(out, [x, 0.0, z], [x, h, z], r, r * 0.9, col, segments(8, 5));
+                    sphere(out, [x, h, z], [r * 0.9, r * 0.6, r * 0.9], col, segments(8, 5), segments(4, 3), 0.0, 1);
                     let arms = 1 + (seed >> 9) % 2;
                     for k in 0..arms {
                         let a = k as f32 * std::f32::consts::PI + jit(5);
                         let (ax, az) = (a.dcos(), a.dsin());
                         let y0 = h * (0.4 + 0.15 * k as f32);
                         let out_p = [x + ax * 0.42, y0 + 0.05, z + az * 0.42];
-                        limb(out, [x, y0, z], out_p, r * 0.6, r * 0.6, col, 6);
+                        limb(out, [x, y0, z], out_p, r * 0.6, r * 0.6, col, segments(6, 4));
                         let top = [out_p[0], y0 + h * 0.35, out_p[2]];
-                        limb(out, out_p, top, r * 0.62, r * 0.55, col, 6);
-                        sphere(out, top, [r * 0.55, r * 0.4, r * 0.55], col, 6, 3, 0.0, 2);
+                        limb(out, out_p, top, r * 0.62, r * 0.55, col, segments(6, 4));
+                        sphere(out, top, [r * 0.55, r * 0.4, r * 0.55], col, segments(6, 4), segments(3, 2), 0.0, 2);
                     }
                     // a red flower on top of some
-                    if seed % 3 == 0 {
+                    if seed.is_multiple_of(3) {
                         sphere(out, [x, h + r * 0.55, z], [0.07, 0.05, 0.07], [0.86, 0.24, 0.3], 5, 3, 0.0, 3);
                     }
                 } else if swamp && !pine {
                     // a willow: a leaning trunk and a crown that hangs down in long strands
                     let lean = 0.2 * jit(4) * height;
                     let top = [x + lean, height * 0.62, z];
-                    limb(out, [x, 0.0, z], top, trunk_r * 1.2, trunk_r * 0.7, [0.30, 0.25, 0.17], 7);
+                    limb(out, [x, 0.0, z], top, trunk_r * 1.2, trunk_r * 0.7, [0.30, 0.25, 0.17], segments(7, 5));
                     let cr = height * 0.2 + 0.4;
                     let g = [0.42 + 0.04 * jit(6), 0.52 + 0.05 * jit(8), 0.22];
                     out.foliage = true;
-                    sphere(out, [top[0], top[1] + cr * 0.3, top[2]], [cr, cr * 0.55, cr], g, 10, 5, 0.12, seed);
-                    for k in 0..14u32 {
+                    sphere(out, [top[0], top[1] + cr * 0.3, top[2]], [cr, cr * 0.55, cr], g, segments(10, 6), segments(5, 4), 0.12, seed);
+                    for k in (0..14u32).step_by(segments(1, 3)) {
                         let a = k as f32 * 0.449 + jit(k + 7) * 0.3;
                         let (ax, az) = (a.dcos() * cr * 0.9, a.dsin() * cr * 0.9);
                         let len = height * (0.32 + 0.1 * jit(k + 11).abs());
-                        limb(out, [top[0] + ax, top[1] + cr * 0.2, top[2] + az], [top[0] + ax * 1.08, (top[1] - len).max(height * 0.3), top[2] + az * 1.08], 0.09, 0.04, [g[0] * 0.92, g[1] * 0.95, g[2]], 5);
+                        limb(out, [top[0] + ax, top[1] + cr * 0.2, top[2] + az], [top[0] + ax * 1.08, (top[1] - len).max(height * 0.3), top[2] + az * 1.08], 0.09, 0.04, [g[0] * 0.92, g[1] * 0.95, g[2]], segments(5, 4));
                     }
                     out.foliage = false;
                 } else if pine {
                     let g = if cold { [0.12 + 0.03 * jit(6), 0.36 + 0.05 * jit(8), 0.30] } else { [0.15 + 0.04 * jit(6), 0.42 + 0.06 * jit(8), 0.22 + 0.04 * jit(10)] };
                     // the trunk runs up into the crown and shows bare below the lowest tier
-                    limb(out, [x, 0.0, z], [x, height * 0.85, z], trunk_r, trunk_r * 0.35, bark, 7);
+                    limb(out, [x, 0.0, z], [x, height * 0.85, z], trunk_r, trunk_r * 0.35, bark, segments(7, 5));
                     // tiers of needles, widest at the bottom
                     out.foliage = true;
                     for tier in 0..4u32 {
@@ -167,19 +317,19 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                         let (y0, y1) = (height * (0.32 + 0.15 * f), height * (0.5 + 0.15 * f));
                         let rad = height * (0.19 - 0.035 * tier as f32);
                         let shade = 1.0 + 0.05 * tier as f32;
-                        limb(out, [x, y0, z], [x, y1, z], rad, 0.02, [g[0] * shade, g[1] * shade, g[2] * shade], 8);
+                        limb(out, [x, y0, z], [x, y1, z], rad, 0.02, [g[0] * shade, g[1] * shade, g[2] * shade], segments(8, 5));
                     }
-                    limb(out, [x, height * 0.82, z], [x, height, z], height * 0.1, 0.01, [g[0] * 1.2, g[1] * 1.2, g[2] * 1.1], 7);
+                    limb(out, [x, height * 0.82, z], [x, height, z], height * 0.1, 0.01, [g[0] * 1.2, g[1] * 1.2, g[2] * 1.1], segments(7, 5));
                     out.foliage = false;
                 } else if steppe {
                     // an acacia: a thin leaning trunk and one flat umbrella of leaves
                     let lean = 0.25 * jit(4) * height;
-                    limb(out, [x, 0.0, z], [x + lean, height * 0.62, z], trunk_r * 0.8, trunk_r * 0.5, [0.38, 0.3, 0.2], 6);
+                    limb(out, [x, 0.0, z], [x + lean, height * 0.62, z], trunk_r * 0.8, trunk_r * 0.5, [0.38, 0.3, 0.2], segments(6, 5));
                     let cr = height * 0.17 + 0.25;
                     let top = [0.58 + 0.06 * jit(6), 0.62 + 0.05 * jit(8), 0.24];
                     out.foliage = true;
-                    sphere(out, [x + lean, height * 0.68, z], [cr * 1.3, cr * 0.3, cr * 1.3], top, 10, 5, 0.06, seed);
-                    sphere(out, [x + lean + cr * 0.5, height * 0.62, z + cr * 0.3], [cr * 0.9, cr * 0.2, cr * 0.9], [top[0] * 0.9, top[1] * 0.92, top[2]], 8, 4, 0.06, seed ^ 3);
+                    sphere(out, [x + lean, height * 0.68, z], [cr * 1.3, cr * 0.3, cr * 1.3], top, segments(10, 6), segments(5, 3), 0.06, seed);
+                    sphere(out, [x + lean + cr * 0.5, height * 0.62, z + cr * 0.3], [cr * 0.9, cr * 0.2, cr * 0.9], [top[0] * 0.9, top[1] * 0.92, top[2]], segments(8, 5), segments(4, 3), 0.06, seed ^ 3);
                     out.foliage = false;
                 } else {
                     // leaves: green, golden-red in autumn country, deep and vivid in the jungle
@@ -196,24 +346,24 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     let height = if jungle { height * 1.25 } else { height };
                     let trunk_top = height * 0.5;
                     let bark = if birch { [0.88, 0.86, 0.8] } else { [0.34 + 0.04 * jit(4), 0.24, 0.15] };
-                    limb(out, [x, 0.0, z], [x + 0.03 * jit(4) * height, trunk_top, z], trunk_r, trunk_r * 0.6, bark, 7);
+                    limb(out, [x, 0.0, z], [x + 0.03 * jit(4) * height, trunk_top, z], trunk_r, trunk_r * 0.6, bark, segments(7, 5));
                     let cr = (height * 0.16 + 0.26) * if jungle { 1.3 } else { 1.0 };
                     // a few branches reaching out under the crown
-                    for k in 0..3u32 {
+                    for k in (0..3u32).step_by(segments(1, 2)) {
                         let a = k as f32 * 2.1 + jit(2);
-                        limb(out, [x, trunk_top * 0.8, z], [x + a.dcos() * cr * 0.8, trunk_top + cr * 0.3, z + a.dsin() * cr * 0.8], trunk_r * 0.45, trunk_r * 0.2, bark, 5);
+                        limb(out, [x, trunk_top * 0.8, z], [x + a.dcos() * cr * 0.8, trunk_top + cr * 0.3, z + a.dsin() * cr * 0.8], trunk_r * 0.45, trunk_r * 0.2, bark, segments(5, 4));
                     }
                     let g = if birch { [g[0] * 1.2, g[1] * 1.15, g[2] * 1.1] } else { g };
                     // the crown is a loose heap of leaf clusters, not one ball
                     out.foliage = true;
                     let lobes = 7 + (seed % 3);
-                    for k in 0..lobes {
+                    for k in (0..lobes).step_by(segments(1, 2)) {
                         let a = k as f32 * 2.4 + jit(20 + k % 5) * 0.7;
                         let ring = if k == 0 { 0.0 } else { 0.55 + 0.25 * jit(30 + k % 7).abs() };
                         let up = if k == 0 { 1.15 } else { 0.55 + 0.7 * ((k * 5) % 7) as f32 / 7.0 };
                         let lr = cr * (0.5 + 0.2 * jit(40 + k % 6).abs());
                         let shade = 0.9 + 0.15 * ((k * 3) % 5) as f32 / 4.0;
-                        sphere(out, [x + a.dcos() * cr * ring, trunk_top + cr * up, z + a.dsin() * cr * ring], [lr, lr * 0.8, lr], [g[0] * shade, g[1] * shade, g[2]], 7, 4, 0.18, seed ^ (k * 7 + 3));
+                        sphere(out, [x + a.dcos() * cr * ring, trunk_top + cr * up, z + a.dsin() * cr * ring], [lr, lr * 0.8, lr], [g[0] * shade, g[1] * shade, g[2]], segments(7, 6), segments(4, 3), 0.18, seed ^ (k * 7 + 3));
                     }
                     out.foliage = false;
                 }
@@ -348,4 +498,51 @@ fn push_node_file(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, (x, 
     let yaw = if m.opts.rotate { (seed >> 8) as f32 % 628.0 / 100.0 } else { 0.0 };
     m.place(out, &assets::Place::at(x, z).turned(yaw, scale));
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alaz_sim::map::tag_seed_natural;
+
+    #[test]
+    fn natural_portals_join_the_surface_and_reach_the_cave_floor() {
+        for (seed, (tx, ty)) in [(4, (38, 230)), (42, (222, 150))] {
+            let world = World::with_size(tag_seed_natural(seed, 256), 256, 256);
+            let node = &world.nodes[world.node_at(tx, ty).unwrap().0 as usize];
+            let mouth = world.map.natural_cave_mouth(tx, ty).unwrap();
+            let ([x, z], _, _) = node_bounds(&world, node);
+            let lift = ground_height(world.seed, x, z) + 0.02;
+            let mut mesh = Mesh::fixed();
+            push_node(&mut mesh, &world, node, 2, TreeDetail::Full);
+            let on_floor = |v: &Vertex, h: f32| (v.pos[1] + lift - h).abs() <= 0.001;
+            assert!(
+                mesh.iter()
+                    .any(|v| on_floor(v, f32::from(mouth.threshold.z)))
+            );
+            let back_floor = f32::from(mouth.threshold.z + mouth.landing.z) / 2.0;
+            assert!(mesh.iter().any(|v| on_floor(v, back_floor)));
+            let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
+            for side in [-0.5, 0.5] {
+                let front_x = x - dx * 0.5 + side * dz;
+                let front_z = z - dz * 0.5 - side * dx;
+                let surface = ground_height(world.seed, front_x, front_z);
+                assert!(
+                    mesh.iter().any(|v| v.pos[0] == front_x
+                        && v.pos[2] == front_z
+                        && on_floor(v, surface))
+                );
+            }
+            match mouth.entrance(&world.map) {
+                CaveEntrance::Hillside { roof_mm } => {
+                    assert!(
+                        mesh.iter()
+                            .any(|v| on_floor(v, roof_mm as f32 / 1_000.0 + 0.25))
+                    );
+                }
+                CaveEntrance::Descent => assert!(back_floor < f32::from(mouth.threshold.z)),
+                CaveEntrance::Open => panic!("expected a descent or hillside profile"),
+            }
+        }
+    }
 }

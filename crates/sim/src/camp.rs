@@ -224,15 +224,14 @@ impl World {
                     self.journal.record(day, minute, Entry::Sky(sky));
                 }
             }
-            if let Some(gs) = self.journal.goal {
-                if gs.done_day.is_none() && self.goal_met(&gs) {
+            if let Some(gs) = self.journal.goal
+                && gs.done_day.is_none() && self.goal_met(&gs) {
                     if let Some(g) = self.journal.goal.as_mut() {
                         g.done_day = Some(day);
                     }
                     self.journal.record(day, minute, Entry::GoalDone(gs.goal));
                     self.events.push(Event::GoalDone(gs.goal));
                 }
-            }
         }
     }
 }
