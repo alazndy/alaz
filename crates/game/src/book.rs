@@ -15,7 +15,7 @@ const PAD: f32 = 14.0;
 const HEADER_H: f32 = 58.0;
 const WELL_PAD: f32 = 10.0;
 const MAX_H: f32 = 720.0;
-const PAGES: [Icon; 3] = [Icon::Clock, Icon::Flame, Icon::Hammer];
+const PAGES: [Icon; 4] = [Icon::Clock, Icon::Flame, Icon::Hammer, Icon::Bag];
 
 fn open_id() -> egui::Id {
     egui::Id::NULL.with("book_open")
@@ -111,6 +111,11 @@ pub(crate) fn draw(ctx: &Context, w: &World, me: &Agent, st: &mut JournalState, 
         let inner = body.shrink(WELL_PAD);
         let mut pc = PageCx { me, machine: machine.map(|i| (i, w.buildings[i].kind)), acts };
         ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            if st.section == 1 {
+                ui.set_max_size(inner.size());
+                crate::journal_ui::page(ui, w, st, &mut pc);
+                return;
+            }
             egui::ScrollArea::vertical().id_salt(("book_page", st.section)).max_height(inner.height()).auto_shrink([false, false]).show(ui, |ui| {
                 ui.set_width(inner.width() - 12.0);
                 crate::journal_ui::page(ui, w, st, &mut pc);
@@ -150,7 +155,7 @@ mod tests {
             |ui, s: &mut State| {
                 let ui_ctx = UiCtx {
                     hints: &[], build_mode: None, grid_snap: false, selection: s.selection, recording: false, recorded: &[], me: AgentId(0),
-                    net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0,
+                    net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
                 };
                 crate::hud::draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
             },
@@ -224,6 +229,39 @@ mod tests {
         node.click();
         h.run();
         assert_eq!(crate::inv::info::recipe_pick(&h.ctx, furnace), Some(idx));
+    }
+
+    #[test]
+    fn goals_open_the_next_discovery_without_revealing_locked_names() {
+        let mut w = World::new(5);
+        let (x, y) = w.spawn_mm;
+        w.spawn_agent(x, y);
+        let next = alaz_sim::journal::Progression::new(w.rules()).next(&w).expect("an early discovery");
+        let next_name = crate::hud::discovery_name(next);
+        let mut h = harness(w, Some(Tab::Goals), None, 1, false, (1280.0, 720.0));
+        let locked = crate::hud::discovery_name(alaz_sim::Discovery::Computing);
+        assert!(h.query_by_label(locked).is_none());
+        h.get_by_label(next_name).click();
+        h.run();
+        assert!(h.state().knap.journal.book_open);
+        assert!(h.query_by_label("Ağaca dön").is_some());
+        h.get_by_label("Ağaca dön").click();
+        h.run();
+        assert!(h.query_all_by_label("?").next().is_some());
+        assert!(h.query_by_label(locked).is_none());
+    }
+
+    #[test]
+    fn known_discovery_links_to_its_recipe_page() {
+        let w = world();
+        let discovery = alaz_sim::Discovery::SharpStone;
+        let recipe = w.rules().recipes.iter().find(|r| r.discovery == discovery).expect("sharp stone recipe").name.clone();
+        let mut h = harness(w, None, None, 1, true, (1280.0, 720.0));
+        h.state_mut().knap.journal.show_discovery(discovery);
+        h.run();
+        h.get(egui_kittest::kittest::By::new().label(&recipe).role(egui::Role::Link)).click();
+        h.run();
+        assert_eq!(h.state().knap.journal.section, 3);
     }
 
     /// The book (every page) and the camp window must stay fully on screen in small windows.

@@ -108,6 +108,36 @@ fn spawn_on_land_and_nodes_exist() {
     assert!(w.nodes.len() > 500);
 }
 
+/// Farming starts from seed picked off dry-ground tall grass, so a new world has some of it close to the start.
+#[test]
+fn start_has_seed_grass_nearby() {
+    let mut tested = 0;
+    for plain in [7u64, 11, 23] {
+        let seed = crate::map::tag_seed_natural(plain, 2048);
+        let w = World::with_size(seed, 2048, 2048);
+        tested += 1;
+        let (sx, sy) = ((w.spawn_mm.0 / crate::map::TILE_MM) as i32, (w.spawn_mm.1 / crate::map::TILE_MM) as i32);
+        let n = (-30..=30)
+            .flat_map(|dy| (-30..=30).map(move |dx| (sx + dx, sy + dy)))
+            .filter(|&(x, y)| w.map.node_for(seed, x, y) == Some(NodeKind::FiberPlant) && crate::world::grass_gives_seed(seed, x, y))
+            .count();
+        assert!(n >= 8, "seed {seed}: only {n} seed tufts within 30 tiles of the start");
+    }
+    assert!(tested > 0, "no seed uses the newer generators");
+}
+
+/// The first shelter needs a clear patch near the start, even where the wood is thick.
+#[test]
+fn start_has_room_for_a_shelter() {
+    for plain in [7u64, 11, 23] {
+        let seed = crate::map::tag_seed_natural(plain, 2048);
+        let w = World::with_size(seed, 2048, 2048);
+        let (sx, sy) = ((w.spawn_mm.0 / crate::map::TILE_MM) as i32, (w.spawn_mm.1 / crate::map::TILE_MM) as i32);
+        let clear = (-14..=14).any(|cy| (-14..=14).any(|cx| (-2..=2).all(|dy| (-2..=2).all(|dx| w.map.node_for(seed, sx + cx + dx, sy + cy + dy).is_none()))));
+        assert!(clear, "seed {plain}: no clear 5x5 patch within 14 tiles of the start");
+    }
+}
+
 #[test]
 fn gather_fills_inventory_and_depletes_node() {
     let mut w = World::new(1);
@@ -1994,11 +2024,10 @@ fn survival_session(seed: u64, days: u64) -> (u64, u32) {
                 let n = nearest_node(&w, &[NodeKind::Tree]).unwrap();
                 commands.push(cmd(a, CommandKind::Gather { node: n }));
             } else if night && fire_alive && has(ItemKind::Wood) >= 2 {
-                if let Some(b) = w.buildings.iter().find(|b| b.kind == BuildingKind::Campfire) {
-                    if dist2(b.x, b.y, px, py) > 2500 * 2500 {
+                if let Some(b) = w.buildings.iter().find(|b| b.kind == BuildingKind::Campfire)
+                    && dist2(b.x, b.y, px, py) > 2500 * 2500 {
                         commands.push(cmd(a, CommandKind::MoveTo { x: b.x + 1500, y: b.y }));
                     }
-                }
             } else if has(ItemKind::Wood) < 6 && nearest_node(&w, &[NodeKind::Tree]).is_some() {
                 commands.push(cmd(a, CommandKind::Gather { node: nearest_node(&w, &[NodeKind::Tree]).unwrap() }));
             } else if let Some(n) = nearest_node(&w, &[NodeKind::BerryBush]) {
@@ -2176,7 +2205,9 @@ fn minigame_difficulty_is_reasonable_for_human_like_players() {
                 for (k, n) in [(ItemKind::Stone, 4), (ItemKind::SharpStone, 2), (ItemKind::Branch, 3), (ItemKind::Fiber, 4), (ItemKind::Herb, 3)] {
                     give(&mut w, k, n);
                 }
-                w.tick += noise.next().abs() as u64 * 0 + (t as u64 * 37) % 600;
+                // draw one value so the noise sequence the later steps use stays the same
+                let _ = noise.next();
+                w.tick += (t as u64 * 37) % 600;
                 match human_craft(&mut w, a, id, &mut noise, sloppy) {
                     0 => fail += 1,
                     1 => good += 1,
@@ -2684,7 +2715,7 @@ fn digging_a_cave_wall_gives_stone_and_ore_by_depth() {
         }
         assert!(!kinds.is_empty(), "level {level} has ore");
     }
-    assert!(cave.level(4).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_TIN) || cave.level(3).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_TIN) || cave.level(4).unwrap().vein.iter().any(|&v| v == crate::caves::ORE_COAL), "the deep levels hold tin or coal");
+    assert!(cave.level(4).unwrap().vein.contains(&crate::caves::ORE_TIN) || cave.level(3).unwrap().vein.contains(&crate::caves::ORE_TIN) || cave.level(4).unwrap().vein.contains(&crate::caves::ORE_COAL), "the deep levels hold tin or coal");
 }
 
 #[test]
@@ -3001,7 +3032,7 @@ fn seasons_turn_weather_is_shared_and_winter_is_harsh() {
     assert!((0..day).step_by(1000).all(|t| weather(3, t, SEASON_DAYS) == Weather::Clear));
     let sky: Vec<_> = (day..day * 13).step_by((day / 6) as usize).map(|t| weather(3, t, SEASON_DAYS)).collect();
     assert_eq!(sky, (day..day * 13).step_by((day / 6) as usize).map(|t| weather(3, t, SEASON_DAYS)).collect::<Vec<_>>());
-    assert!(sky.iter().any(|w| *w == Weather::Rain) && sky.iter().any(|w| *w == Weather::Snow) && sky.iter().any(|w| *w == Weather::Clear));
+    assert!(sky.contains(&Weather::Rain) && sky.contains(&Weather::Snow) && sky.contains(&Weather::Clear));
     // an unsheltered person in a winter night loses warmth, one by a fire does not
     let mut w = World::new(3);
     w.settings.season_days = SEASON_DAYS as u8; // the 3-day calendar this test counts in
@@ -3301,7 +3332,7 @@ fn a_rock_coming_down_strikes_whoever_is_below() {
     let mut hit = false;
     for _ in 0..120 {
         w.step(&[]);
-        hit |= w.take_events().iter().any(|e| *e == Event::RockHit(a));
+        hit |= w.take_events().contains(&Event::RockHit(a));
     }
     assert!(hit);
     assert!(w.agents[0].health < MAX_STAT);
@@ -5311,7 +5342,7 @@ fn the_sandbox_has_no_needs_gives_items_moves_the_clock_and_flies() {
     // everything is known, and a hand-craft needs no materials
     assert!(w.knows(crate::world::Discovery::SharpStone) && w.milestone_done(crate::world::Milestone::FirstFire));
     w.step(&[cmd(a, CommandKind::Craft { recipe: recipe("stone_axe") })]);
-    assert_eq!(count(&w, 0, ItemKind::StoneAxe) >= 1, true, "crafted from nothing, without the minigame");
+    assert!(count(&w, 0, ItemKind::StoneAxe) >= 1, "crafted from nothing, without the minigame");
     assert!(w.craft_view(a).is_none());
     // items can be given
     w.step(&[cmd(a, CommandKind::Give { item: ItemKind::Wood, n: 40 })]);
@@ -5996,7 +6027,7 @@ fn the_smokehouse_and_the_glass_furnace_stay_cold_without_fire() {
     let r = |id: &str| rules().recipes[recipe(id).0 as usize].heat;
     assert!(r("blow_glass") >= 1_100 && r("blow_window_pane") >= 1_100 && r("grind_lens") < r("blow_bottle"));
     assert!(r("smoke_meat") > 0 && r("smoke_meat") < 100, "smoke is warm, not hot");
-    assert!(rules().building(BuildingKind::GlassFurnace).heat_max > r("blow_glass") as i16);
+    assert!(rules().building(BuildingKind::GlassFurnace).heat_max > r("blow_glass"));
 }
 
 #[test]
@@ -6699,7 +6730,7 @@ fn an_accumulator_charges_from_the_dynamo_and_carries_the_grid_when_it_stops() {
         w.step(&[]);
     }
     let charged = w.buildings[acc as usize].fuel;
-    assert!(charged >= 30 && charged <= crate::world::ACCUMULATOR_CAP, "ten seconds of a live grid charge it: {charged}");
+    assert!((30..=crate::world::ACCUMULATOR_CAP).contains(&charged), "ten seconds of a live grid charge it: {charged}");
     // the wind stops (the windmill is taken away): the lamp stays lit on the accumulator, which runs down
     w.buildings.remove(windmill as usize);
     let (acc, lamp) = (acc as usize - 1, lamp as usize - 1);
@@ -6990,7 +7021,7 @@ fn fertiliser_lifts_a_field_above_its_best_and_the_crop_with_it() {
     // the harvest is half as big again as in plain soil
     let crop = rules().recipes.iter().find(|r| r.station == Some(BuildingKind::Field) && r.outputs[0].n >= 4).expect("a field recipe");
     let plain = crop.outputs[0].n as u32;
-    assert_eq!((plain * w.buildings[f as usize].fertility as u32 / 1000) as u32, plain * 3 / 2);
+    assert_eq!(((plain * w.buildings[f as usize].fertility as u32 / 1000)), plain * 3 / 2);
 }
 
 #[test]

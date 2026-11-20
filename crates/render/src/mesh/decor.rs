@@ -106,7 +106,7 @@ pub(crate) fn build_decor(out: &mut Mesh, world: &World, (x0, y0, x1, y1): (i32,
                         if file(out, "mushroom", x, z, seed) {
                             continue;
                         }
-                        let cap = if seed % 3 == 0 { [0.86, 0.22, 0.18] } else { [0.62, 0.44, 0.28] };
+                        let cap = if seed.is_multiple_of(3) { [0.86, 0.22, 0.18] } else { [0.62, 0.44, 0.28] };
                         out.set_anchor(x, z);
                         limb(out, [x, 0.0, z], [x, 0.09, z], 0.02, 0.016, [0.92, 0.9, 0.82], 4);
                         sphere(out, [x, 0.1, z], [0.06, 0.035, 0.06], cap, 7, 3, 0.0, 2);

@@ -180,6 +180,7 @@ pub fn icon_only(ui: &mut Ui, g: Glyph, name: &str, key: Option<&str>, selected:
         None => name.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &full));
+    crate::pilot::mark(ui.ctx(), || name.to_string(), resp.rect);
     resp.on_hover_text(name)
 }
 
@@ -196,6 +197,9 @@ pub fn icon_button(ui: &mut Ui, g: Glyph, text: &str, key: Option<&str>, selecte
         None => text.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
+    if !text.is_empty() {
+        crate::pilot::mark(ui.ctx(), || text.to_string(), rect);
+    }
     let hovered = resp.hovered() && enabled;
     let held = resp.is_pointer_button_down_on() && enabled;
     let p = ui.painter();

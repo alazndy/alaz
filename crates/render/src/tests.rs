@@ -35,7 +35,7 @@ mod vertex_census {
         let mut nodes: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
         for n in world.nodes_in(x0, y0, x1, y1) {
             let mut v = Mesh::fixed();
-            push_node(&mut v, &world, n, 0);
+            push_node(&mut v, &world, n, 0, TreeDetail::Full);
             let e = nodes.entry(format!("node {:?}", n.kind)).or_default();
             e.0 += 1;
             e.1 += v.len();
@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i % 3 == 0 { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i.is_multiple_of(3) { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -120,7 +120,7 @@ mod mesh_hashes {
             r.push((format!("decor {dx},{dy}"), fnv(&o)));
             for level in [0u8, 3, 5] {
                 let mut o = fresh(true);
-                build_nodes(&mut o, &world, b, level);
+                build_nodes(&mut o, &world, b, level, TreeDetail::Full);
                 pre_lift(&world, &mut o);
                 r.push((format!("nodes {dx},{dy} L{level}"), fnv(&o)));
             }
@@ -169,11 +169,11 @@ mod mesh_hashes {
         push_fish(&mut o, &world, (fx - 40.0, fz - 40.0, fx + 40.0, fz + 40.0), 12.0, 0.3);
         r.push(("fish".into(), fnv(&o)));
         let mut o = fresh(false);
-        push_hover_rim(&mut o, &world, (0, 0), 3, &Camera::default(), 2.0);
+        push_hover_rim(&mut o, &world, (0, 0), 3, &Camera::default(), 2.0, TreeDetail::Full);
         r.push(("rim-empty".into(), fnv(&o)));
         if let Some(n) = world.nodes.iter().find(|n| n.kind == NodeKind::Tree) {
             let mut o = fresh(false);
-            push_hover_rim(&mut o, &world, (n.tx, n.ty), 3, &Camera::default(), 2.0);
+            push_hover_rim(&mut o, &world, (n.tx, n.ty), 3, &Camera::default(), 2.0, TreeDetail::Full);
             r.push(("rim-tree".into(), fnv(&o)));
         }
         // a cave: its blocks on every level (corner, middle) and the torch in three states
@@ -194,26 +194,26 @@ mod mesh_hashes {
 
     /// Hashes of the vertex bytes of every model, taken before the builders lost their thread-local state.
     const EXPECTED: &[(&str, u64)] = &[
-        ("terrain 0,0", 0x9c9551babaec5875),
-        ("decor 0,0", 0xa620afd3f7ed5108),
-        ("nodes 0,0 L0", 0x241a1a3a7bbfa473),
-        ("nodes 0,0 L3", 0x3e44d76954f3710d),
-        ("nodes 0,0 L5", 0x3e44d76954f3710d),
-        ("terrain 1,0", 0xf4c4452c2230f795),
-        ("decor 1,0", 0x342de8029224578f),
-        ("nodes 1,0 L0", 0x88e0c11b5b663772),
-        ("nodes 1,0 L3", 0xe968fee166d4c4cc),
-        ("nodes 1,0 L5", 0xe968fee166d4c4cc),
-        ("terrain 0,1", 0x63daca5654c464e5),
-        ("decor 0,1", 0xb3afbe8ed1903b42),
-        ("nodes 0,1 L0", 0xa86cdf6def8a9c93),
-        ("nodes 0,1 L3", 0x8c2b448e6d67afe3),
-        ("nodes 0,1 L5", 0x8c2b448e6d67afe3),
-        ("terrain -1,-1", 0xe63140e8c7f056d1),
-        ("decor -1,-1", 0x4a389595c2b36e1d),
-        ("nodes -1,-1 L0", 0x954e09229d91dcf7),
-        ("nodes -1,-1 L3", 0x47a03ef0e09f6eb3),
-        ("nodes -1,-1 L5", 0x47a03ef0e09f6eb3),
+        ("terrain 0,0", 0x63daca5654c464e5),
+        ("decor 0,0", 0xb3afbe8ed1903b42),
+        ("nodes 0,0 L0", 0xa86cdf6def8a9c93),
+        ("nodes 0,0 L3", 0x8c2b448e6d67afe3),
+        ("nodes 0,0 L5", 0x8c2b448e6d67afe3),
+        ("terrain 1,0", 0xd70567431ae2c341),
+        ("decor 1,0", 0x960fe2a436292d83),
+        ("nodes 1,0 L0", 0x1c92c4062d8265bf),
+        ("nodes 1,0 L3", 0x8990dc757200654f),
+        ("nodes 1,0 L5", 0x8990dc757200654f),
+        ("terrain 0,1", 0x8bf3c60361402ed1),
+        ("decor 0,1", 0x0d8eaed176f30947),
+        ("nodes 0,1 L0", 0x6a1197918926bac9),
+        ("nodes 0,1 L3", 0xd5800efef959becf),
+        ("nodes 0,1 L5", 0xd5800efef959becf),
+        ("terrain -1,-1", 0x77484c3a413b0109),
+        ("decor -1,-1", 0xa794a5f546a1f1bb),
+        ("nodes -1,-1 L0", 0xe648e98d6615376e),
+        ("nodes -1,-1 L3", 0x63489a41b8e0ed52),
+        ("nodes -1,-1 L5", 0x63489a41b8e0ed52),
         ("building Campfire false false", 0xeafd7aa814c9d824),
         ("building Campfire true false", 0xeafd7aa814c9d824),
         ("building Campfire true true", 0xcd4eb31101aa821e),
@@ -526,8 +526,8 @@ mod mesh_hashes {
         ("creature Bot true", 0xa7a2bdd7e9f35c72),
         ("tracks false", 0xb831020fc0f2b825),
         ("tracks true", 0x20419d2ff88b7f95),
-        ("bodies", 0x8f98cf8bbcbcc498),
-        ("fish", 0x47ee7cb2e191bc12),
+        ("bodies", 0xbc1e114571de40dc),
+        ("fish", 0x9e6d7c69dc48f264),
         ("rim-empty", 0xcbf29ce484222325),
         ("rim-tree", 0xa1366b6a0db5bd77),
         ("cave L1 block 4,3", 0x1d906b027c1cc3e5),
@@ -775,5 +775,23 @@ mod evolution {
             assert!(summary(&o).1[1] < summary(&st).1[1] - 0.1, "sitting at {v}");
             assert!(o.iter().all(|p| p.pos.iter().all(|c| c.is_finite())));
         }
+    }
+}
+
+#[cfg(test)]
+mod far_tree_tests {
+    use super::*;
+
+    #[test]
+    fn a_far_tree_costs_fewer_vertices_than_a_near_one() {
+        let world = World::with_size(alaz_sim::map::tag_seed_v2(7), 512, 512);
+        let tree = world.nodes.iter().find(|n| n.kind == NodeKind::Tree).expect("a tree");
+        let count = |detail| {
+            let mut mesh = Mesh::fixed();
+            push_node(&mut mesh, &world, tree, 0, detail);
+            mesh.len()
+        };
+        let (near, far) = (count(TreeDetail::Full), count(TreeDetail::Far));
+        assert!(far > 0 && far < near, "far {far} near {near}");
     }
 }

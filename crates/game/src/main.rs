@@ -11,16 +11,20 @@ use hud::{Selection, UiAction, UiCtx};
 mod art;
 mod audio;
 mod book;
+mod cave_map;
 mod export;
 mod hud;
 mod icons;
 mod inv;
+mod item_book;
 mod journal_ui;
 mod keys;
 mod lang;
 mod menu;
 mod portrait;
 mod pxpanel;
+mod pilot;
+mod progression_view;
 mod pxui;
 mod fx;
 mod gfxcfg;
@@ -84,7 +88,7 @@ fn new_world_with(seed: u64, hardcore: bool, size: i32, settings: alaz_sim::worl
     // (its continents are kilometres across: a small world would sit inside one, so small worlds keep the second)
     // (the third's continents are kilometres across: below 32 km a world would sit inside one, mostly sea or
     // mostly plain without rock, so smaller worlds keep the second)
-    let tagged = if size > 4096 { alaz_sim::map::tag_seed_v3(seed) } else { alaz_sim::map::tag_seed_v2(seed) };
+    let tagged = alaz_sim::map::tag_seed_new_world(seed, size.clamp(alaz_sim::map::MIN_MAP_SIDE, alaz_sim::map::MAX_MAP_SIDE));
     let mut w = World::with_size(tagged, size, size);
     w.settings = settings;
     let (sx, sy) = w.spawn_mm;
@@ -273,11 +277,10 @@ fn demo_setup(w: &mut World) -> Selection {
             let mut best = None;
             for ty in (py - 60).max(1)..(py + 60).min(w.map.h - 1) {
                 for tx in (px - 60).max(1)..(px + 60).min(w.map.w - 1) {
-                    if w.map.terrain(tx, ty) == Some(alaz_sim::map::Terrain::Water) && w.map.terrain(tx, ty + 1).is_some_and(|t| t != alaz_sim::map::Terrain::Water) && w.node_at(tx, ty + 1).is_none() {
-                        if best.is_none_or(|(_, _, d)| d2(tx, ty) < d) {
+                    if w.map.terrain(tx, ty) == Some(alaz_sim::map::Terrain::Water) && w.map.terrain(tx, ty + 1).is_some_and(|t| t != alaz_sim::map::Terrain::Water) && w.node_at(tx, ty + 1).is_none()
+                        && best.is_none_or(|(_, _, d)| d2(tx, ty) < d) {
                             best = Some((tx, ty, d2(tx, ty)));
                         }
-                    }
                 }
             }
             if let Some((tx, ty, _)) = best {
@@ -390,8 +393,8 @@ fn demo_setup(w: &mut World) -> Selection {
     } else if std::env::var_os("ALAZ_DEMO_WORK").is_none() && std::env::var_os("ALAZ_DEMO_IDLE").is_none() {
         w.step(&[Command { agent: id, kind: CommandKind::Craft { recipe: RecipeId(0) } }]);
     }
-    if std::env::var("ALAZ_DEMO_CAVE").as_deref() == Ok("in") {
-        if let Some(n) = w.nodes.iter().find(|n| n.kind == alaz_sim::NodeKind::CaveMouth && n.tx > 12 && n.ty > 12).cloned() {
+    if std::env::var("ALAZ_DEMO_CAVE").as_deref() == Ok("in")
+        && let Some(n) = w.nodes.iter().find(|n| n.kind == alaz_sim::NodeKind::CaveMouth && n.tx > 12 && n.ty > 12).cloned() {
             w.agents[0].x = n.tx as i64 * 1000 + 500;
             w.agents[0].y = n.ty as i64 * 1000 + 1_500;
             w.agents[0].task = alaz_sim::world::Task::Idle;
@@ -404,8 +407,8 @@ fn demo_setup(w: &mut World) -> Selection {
             // dev aid: ALAZ_DEMO_CAVE_LEVEL=<1..4> stands the player at the entry of that level; `dig` starts a swing at the
             // nearest vein, `dark` puts the torch out, `deep` is the level of the flood
             let level: u8 = std::env::var("ALAZ_DEMO_CAVE_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
-            if level > 1 {
-                if let Some(lv) = w.caves.get(&node.0).and_then(|k| k.level(level)) {
+            if level > 1
+                && let Some(lv) = w.caves.get(&node.0).and_then(|k| k.level(level)) {
                     let (ex, ey) = lv.entry;
                     let lv_tile = lv.landing((ex, ey));
                     if let Some(c) = w.agents[0].cave.as_mut() {
@@ -414,7 +417,6 @@ fn demo_setup(w: &mut World) -> Selection {
                         c.y = lv_tile.1 as i64 * 1000 + 500;
                     }
                 }
-            }
             match std::env::var("ALAZ_DEMO_CAVE_DO").as_deref() {
                 Ok("dark") => {
                     if let Some(c) = w.agents[0].cave.as_mut() {
@@ -441,7 +443,6 @@ fn demo_setup(w: &mut World) -> Selection {
                 _ => {}
             }
         }
-    }
     if let Some(h) = std::env::var("ALAZ_DEMO_HOUR").ok().and_then(|v| v.parse::<u64>().ok()) {
         // dev aid: jump to that hour of the first day to look at the world in daylight
         let day = alaz_sim::time::TICKS_PER_DAY;
@@ -726,6 +727,7 @@ struct App {
     cave_fade: f32,
     /// The cave (mouth, level) the player was in last frame.
     cave_was: Option<(u32, u8)>,
+    cave_map: cave_map::CaveMap,
     /// Dev aid: `ALAZ_DEMO_EVO=0..9` draws everyone at this stage coordinate, whatever the world says.
     evo_force: Option<f32>,
     knap: hud::KnapState,
@@ -737,6 +739,10 @@ struct App {
     /// A debug script driving the player (`ALAZ_SCRIPT=file`), and where its log goes.
     script: Option<alaz_sim::debug::Script>,
     script_done: bool,
+    /// Dev aid: plays through real input events (`ALAZ_PILOT=file`).
+    pilot: Option<pilot::Pilot>,
+    /// Dev aid: the pilot froze the simulation.
+    paused: bool,
     audio: Option<audio::Audio>,
     /// Health last frame, to notice a blow.
     prev_hp: Option<i32>,
@@ -797,7 +803,7 @@ impl App {
         // a plain launch opens the start menu; any world-selecting flag skips it
         let show_menu = !(args.new_game || args.demo || args.host || args.join.is_some() || args.seed.is_some() || args.hardcore);
         if !args.new_game && joined.is_none() && !show_menu {
-            match saveio::load() {
+            match saveio::load(me) {
                 Ok(w) => loaded = w,
                 Err(e) => {
                     eprintln!("kayıt yüklenemedi: {e}");
@@ -805,22 +811,22 @@ impl App {
                 }
             }
         }
-        let world = match loaded {
-            _ if joined.is_some() => joined.take().unwrap(),
-            Some(w) => {
-                hints.push((format!("Kayıt yüklendi (gün {}).", w.day() + 1), hud::HINT_SECONDS));
-                w
+        let (world, seen) = match loaded {
+            _ if joined.is_some() => (joined.take().unwrap(), Default::default()),
+            Some(save) => {
+                hints.push((format!("Kayıt yüklendi (gün {}).", save.world.day() + 1), hud::HINT_SECONDS));
+                (save.world, save.seen)
             }
-            None if show_menu => new_world(1, false, 64),
+            None if show_menu => (new_world(1, false, 64), Default::default()),
             None => {
                 hints.push(("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.".into(), hud::HINT_SECONDS));
                 hints.push(("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.".into(), hud::HINT_SECONDS));
-                new_world_with(
+                (new_world_with(
                     args.seed.unwrap_or_else(random_seed),
                     args.hardcore,
                     args.size,
                     alaz_sim::world::WorldSettings { difficulty: if args.creative { alaz_sim::world::Difficulty::Creative } else { Default::default() }, ..Default::default() },
-                )
+                ), Default::default())
             }
         };
         let mut app = Self {
@@ -859,6 +865,7 @@ impl App {
             evo_pos: 9.0,
             cave_fade: 0.0,
             cave_was: None,
+            cave_map: cave_map::CaveMap::from_known(seen),
             evo_force: std::env::var("ALAZ_DEMO_EVO").ok().and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 9.0)),
             knap: hud::KnapState::default(),
             story: story::Story::default(),
@@ -868,6 +875,8 @@ impl App {
             facing: 0,
             turn_after: None,
             script_done: false,
+            pilot: pilot::Pilot::from_env(),
+            paused: false,
             script: std::env::var("ALAZ_SCRIPT").ok().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| alaz_sim::debug::Script::new(&t)),
             audio: audio::Audio::new(),
             prev_hp: None,
@@ -885,7 +894,7 @@ impl App {
             walk_cool: 0.0,
             tab: None,
             mid_drag: None,
-            no_save: matches!(net, Net::Client(_)),
+            no_save: show_menu || matches!(net, Net::Client(_)),
             perf: Perf::from_env(),
             net,
             me,
@@ -950,11 +959,10 @@ impl App {
         if args.demo {
             app.selected = Some(demo_setup(&mut app.world));
             // ALAZ_DEMO_SELECT=<building file name>: show that building's panel instead of the bot's
-            if let Ok(n) = std::env::var("ALAZ_DEMO_SELECT") {
-                if let Some(i) = app.world.buildings.iter().position(|b| alaz_render::assets::snake(&format!("{:?}", b.kind)) == n) {
+            if let Ok(n) = std::env::var("ALAZ_DEMO_SELECT")
+                && let Some(i) = app.world.buildings.iter().position(|b| alaz_render::assets::snake(&format!("{:?}", b.kind)) == n) {
                     app.selected = Some(hud::Selection::Building(i));
                 }
-            }
         }
         app.last_save_tick = app.world.tick;
         app.center_camera();
@@ -1020,7 +1028,11 @@ impl App {
             let (sx, sy) = w.spawn_mm;
             w.spawn_agent(sx, sy);
         }
+        if let Net::Host(host) = &mut self.net {
+            host.replace_world(&mut w);
+        }
         self.world = w;
+        self.cave_map = cave_map::CaveMap::default();
         self.pending.clear();
         self.build_mode = None;
         self.selected = None;
@@ -1049,8 +1061,228 @@ impl App {
         self.story.resume(&self.world);
     }
 
+    fn restore_saved_world(&mut self, save: saveio::LoadedSave) {
+        self.replace_world(save.world);
+        self.cave_map = cave_map::CaveMap::from_known(save.seen);
+    }
+
     fn toggle_tab(&mut self, t: hud::Tab) {
         self.tab = if self.tab == Some(t) { None } else { Some(t) };
+    }
+
+    // The window's input, one method per kind, so the pilot's made-up events take the same path as real ones.
+    fn input_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        if pressed {
+            let used = self.menu.as_mut().is_some_and(|m| if m.capturing() { m.on_key(code, &mut self.binds) } else { false });
+            if !repeat && !used {
+                for action in self.binds.actions_for(code) {
+                    self.on_action(action);
+                }
+            }
+            if !used {
+                self.keys.insert(code);
+            }
+        } else {
+            self.keys.remove(&code);
+        }
+    }
+
+    fn input_cursor(&mut self, now: (f32, f32)) {
+        let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+        if let (Some(from), false) = (self.mid_drag, shift) {
+            // middle drag orbits: across turns the camera, up and down tilts it from low and wide to straight down
+            self.cam.yaw_deg -= (now.0 - from.0) * 0.35;
+            self.pitch_goal = (self.pitch_goal + (now.1 - from.1) * 0.25).clamp(Camera::PITCH_MIN, Camera::PITCH_TOP);
+            self.cam.pitch_deg = self.pitch_goal;
+            self.mid_drag = Some(now);
+        } else if let (Some(from), Some(g)) = (self.mid_drag, self.gfx.as_ref()) {
+            // shift + middle drag: drag the ground under the cursor along with it
+            let (w, h) = g.renderer.size();
+            let at = |c: (f32, f32)| self.cam.ground_at(2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32, g.renderer.aspect());
+            if let (Some(a), Some(b)) = (at(from), at(now)) {
+                self.cam.target.x += a.x - b.x;
+                self.cam.target.z += a.z - b.z;
+                self.follow = false;
+            }
+            self.mid_drag = Some(now);
+        }
+        self.cursor = now;
+    }
+
+    fn input_button(&mut self, button: MouseButton, pressed: bool, ui_consumed: bool) {
+        match button {
+            MouseButton::Middle => self.mid_drag = pressed.then_some(self.cursor),
+            MouseButton::Left | MouseButton::Right if pressed => {
+                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
+                if !ui_consumed && !over_ui {
+                    self.click(button == MouseButton::Left);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn input_wheel(&mut self, lines: f32) {
+        if self.menu.is_none() {
+            self.cam.zoom = (self.cam.zoom * 1.1f32.powf(lines)).clamp(0.2, 8.0);
+        }
+    }
+
+    /// How many sim ticks run per real tick. Creative worlds choose it in the UI; for tests `ALAZ_TIME_SCALE` works in
+    /// any solo world.
+    fn sim_scale(&self) -> u32 {
+        let solo = matches!(self.net, Net::Solo);
+        let free = self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative || std::env::var_os("ALAZ_TIME_SCALE").is_some();
+        if self.paused {
+            0
+        } else if solo && free {
+            self.time_scale.max(1)
+        } else {
+            1
+        }
+    }
+
+    /// The pilot's turn: it gets game time, and what it does reaches the game as ordinary input.
+    fn pilot_tick(&mut self, raw_dt: f32) {
+        let Some(mut pilot) = self.pilot.take() else { return };
+        if let Some(g) = self.gfx.as_ref() {
+            // a paused game still lets the pilot work, in real time
+            let scale = self.sim_scale().max(1) as f64;
+            let sim_s = self.world.tick as f64 / TICKS_PER_SECOND as f64;
+            let ctx = g.renderer.egui_context().clone();
+            let ppp_now = ctx.pixels_per_point();
+            // a point under a HUD panel or window cannot be clicked in the world
+            let pick = |x: f32, y: f32| {
+                let covered = ctx.layer_id_at(alaz_render::egui::pos2(x / ppp_now, y / ppp_now)).is_some_and(|l| l.order != alaz_render::egui::Order::Background);
+                if covered { None } else { self.node_under((x, y)) }
+            };
+            let view = pilot::View { signal: pilot::read_signal(g.renderer.egui_context()), craft: self.world.craft_view(self.me), pick: &pick, world: &self.world, me: self.me, cam: self.cam, win: g.renderer.size(), ppp: g.renderer.egui_context().pixels_per_point(), marks: pilot::marks(g.renderer.egui_context()), sim_s };
+            let inputs = pilot.tick(raw_dt.min(0.25) as f64 * 1000.0 * scale, raw_dt, &view);
+            let wants: Vec<pilot::Want> = std::mem::take(&mut pilot.wants);
+            let mut shots: Vec<String> = Vec::new();
+            let ppp = view.ppp;
+            for want in wants {
+                match want {
+                    pilot::Want::State => {
+                        let line = self.pilot_state();
+                        pilot.say(sim_s, line);
+                    }
+                    pilot::Want::Look => {
+                        for l in pilot.look(&view) {
+                            pilot.say(sim_s, l);
+                        }
+                    }
+                    pilot::Want::Shot(name) => {
+                        let dir = std::path::PathBuf::from(std::env::var_os("ALAZ_PILOT").unwrap_or_default());
+                        let file = dir.with_file_name(format!("{name}.ppm"));
+                        shots.push(file.display().to_string());
+                        pilot.say(sim_s, format!("shot {}", file.display()));
+                    }
+                    pilot::Want::Marks => {
+                        let names: Vec<String> = view.marks.iter().map(|(l, r)| format!("{l} @{:.0},{:.0}", r.center().x * view.ppp, r.center().y * view.ppp)).collect();
+                        pilot.say(sim_s, format!("marks: {}", names.join(" | ")));
+                    }
+                }
+            }
+            if let Some(g) = self.gfx.as_mut() {
+                for s in shots {
+                    g.renderer.request_shot(s);
+                }
+            }
+            if let Some(n) = pilot.speed_req.take() {
+                self.paused = n == 0;
+                if n > 0 {
+                    self.time_scale = n.clamp(1, 10);
+                }
+                pilot.say(sim_s, format!("speed {}", if n == 0 { "paused".to_string() } else { format!("x{}", n.clamp(1, 10)) }));
+            }
+            self.pilot = Some(pilot);
+            self.pilot_apply(inputs, ppp);
+        } else {
+            self.pilot = Some(pilot);
+        }
+    }
+
+    fn pilot_apply(&mut self, inputs: Vec<pilot::Input>, ppp: f32) {
+        use alaz_render::egui;
+        for input in inputs {
+            let mut events = Vec::new();
+            let at = |c: (f32, f32)| egui::pos2(c.0 / ppp, c.1 / ppp);
+            match input {
+                pilot::Input::Cursor(x, y) => {
+                    events.push(egui::Event::PointerMoved(at((x, y))));
+                    self.input_cursor((x, y));
+                }
+                pilot::Input::Button(b, pressed) => {
+                    let button = match b {
+                        pilot::Btn::Left => MouseButton::Left,
+                        pilot::Btn::Right => MouseButton::Right,
+                        pilot::Btn::Middle => MouseButton::Middle,
+                    };
+                    let eb = match b {
+                        pilot::Btn::Left => egui::PointerButton::Primary,
+                        pilot::Btn::Right => egui::PointerButton::Secondary,
+                        pilot::Btn::Middle => egui::PointerButton::Middle,
+                    };
+                    events.push(egui::Event::PointerButton { pos: at(self.cursor), button: eb, pressed, modifiers: self.pilot_mods() });
+                    // the egui pass of the next frame decides whether the UI took it; the game asks that pass's answer
+                    self.input_button(button, pressed, false);
+                }
+                pilot::Input::Key(code, pressed) => {
+                    if let Some(key) = pilot::egui_key(code) {
+                        events.push(egui::Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: self.pilot_mods() });
+                    }
+                    self.input_key(code, pressed, false);
+                }
+                pilot::Input::Wheel(n) => {
+                    events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Line,
+                        delta: egui::vec2(0.0, n),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Wheel,
+                        modifiers: self.pilot_mods(),
+                    });
+                    if !self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui()) {
+                        self.input_wheel(n);
+                    }
+                }
+            }
+            if let Some(g) = self.gfx.as_mut() {
+                g.renderer.inject_ui_events(events);
+            }
+        }
+    }
+
+    fn pilot_mods(&self) -> alaz_render::egui::Modifiers {
+        let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+        let ctrl = self.keys.contains(&KeyCode::ControlLeft);
+        alaz_render::egui::Modifiers { shift, ctrl, command: ctrl, ..Default::default() }
+    }
+
+    /// One line about the player and the world, for the pilot's log.
+    fn pilot_state(&self) -> String {
+        let Some(a) = self.me_agent() else { return "no player".into() };
+        let w = &self.world;
+        let pack: Vec<String> = alaz_sim::ItemKind::ALL.iter().filter(|k| a.inventory.get(**k) > 0).map(|k| format!("{} {}", alaz_sim::debug::snake(&format!("{k:?}")), a.inventory.get(*k))).collect();
+        let day = w.tick / alaz_sim::time::TICKS_PER_DAY;
+        let craft = self.world.craft_view(self.me).map(|c| format!(" | CRAFT {:?} step {}/{} done {} pos {} center {} half {} span {} power {}+-{} t({},{}) stack {}", c.kind, c.step, c.steps, c.done, c.pos, c.center, c.half, c.span, c.power, c.power_half, c.tx, c.ty, c.stack_n)).unwrap_or_default();
+        format!(
+            "STATE day {day}{craft} | {} | perception {} ({}) | at ({:.0},{:.0}) m | hp {} food {} water {} warm {} stam {} | task {:?} | tab {:?} | selected {} | pack: {}",
+            hud::era_name(w),
+            w.perception_permille(),
+            w.perception_level(),
+            a.x as f64 / 1000.0,
+            a.y as f64 / 1000.0,
+            a.health,
+            a.hunger,
+            a.thirst,
+            a.warmth,
+            a.stamina,
+            a.task,
+            self.tab,
+            self.selected.is_some(),
+            pack.join(", ")
+        )
     }
 
     fn on_action(&mut self, action: keys::Action) {
@@ -1132,6 +1364,10 @@ impl App {
             A::Build => self.toggle_tab(hud::Tab::Build),
             A::Goals => self.toggle_tab(hud::Tab::Goals),
             A::Journal => self.knap.journal.toggle_book(),
+            A::ItemGuide => {
+                let item = self.gfx.as_ref().and_then(|g| inv::hovered_item(g.renderer.egui_context()));
+                self.knap.journal.open_reference(item.map_or(item_book::Page::Index, item_book::Page::Item));
+            }
             // while placing, R turns the building; otherwise it opens the routes
             A::Routes if self.build_mode.is_some() => self.facing = (self.facing + 1) & 3,
             A::Routes => self.toggle_tab(hud::Tab::Routes),
@@ -1268,10 +1504,12 @@ impl App {
         if self.menu.as_ref().is_some_and(|m| m.paused) {
             self.save_game(false); // keep the current game before swapping
         }
-        saveio::set_slot(n);
-        match saveio::load() {
-            Ok(Some(w)) => {
-                self.replace_world(w);
+        let player = AgentId(0);
+        match saveio::load_in(&saveio::slot_dir(n), player) {
+            Ok(Some(save)) => {
+                saveio::set_slot(n);
+                self.me = player;
+                self.restore_saved_world(save);
                 self.no_save = false;
                 self.menu = None;
                 self.fx.enter_world(&self.world);
@@ -1289,6 +1527,7 @@ impl App {
         }
         saveio::set_slot(nw.slot);
         let w = new_world_with(nw.seed.unwrap_or_else(random_seed), nw.hardcore, nw.size, nw.settings);
+        self.me = AgentId(0);
         self.replace_world(w);
         self.story.begin(&self.world);
         self.no_save = false;
@@ -1322,9 +1561,9 @@ impl App {
                 m.connecting = false;
                 match done {
                     Ok((client, world)) => {
-                        self.replace_world(world);
                         self.me = client.agent;
                         self.net = Net::Client(client);
+                        self.replace_world(world);
                         self.no_save = true;
                         self.menu = None;
                         self.finder = None;
@@ -1375,11 +1614,17 @@ impl App {
         if self.no_save {
             return;
         }
-        match saveio::save(&self.world) {
-            Ok(()) => {
+        self.cave_map.observe(&self.world, self.me);
+        match saveio::save(&self.world, self.me, self.cave_map.known()) {
+            Ok(outcome) => {
                 self.last_save_tick = self.world.tick;
-                if announce {
-                    self.say("Kaydedildi.");
+                match outcome {
+                    saveio::SaveOutcome::WorldOnly(e) => {
+                        eprintln!("mağara haritası kaydedilemedi ({e})");
+                        self.say("Dünya kaydedildi. Mağara haritası kaydedilemedi.");
+                    }
+                    saveio::SaveOutcome::Complete if announce => self.say("Kaydedildi."),
+                    saveio::SaveOutcome::Complete => {}
                 }
             }
             Err(e) => self.say(format!("Kaydedilemedi: {e}")),
@@ -1387,9 +1632,9 @@ impl App {
     }
 
     fn load_game(&mut self) -> bool {
-        match saveio::load() {
-            Ok(Some(w)) => {
-                self.replace_world(w);
+        match saveio::load(self.me) {
+            Ok(Some(save)) => {
+                self.restore_saved_world(save);
                 true
             }
             Ok(None) => false,
@@ -1423,18 +1668,18 @@ impl App {
         let dt = (now - self.last).as_secs_f32().min(0.25);
         self.fx.update(dt);
         // a building ordered turned: once it stands, turn it
-        if let Some((x, y, q)) = self.turn_after {
-            if let Some(i) = self.world.buildings.iter().position(|b| b.x == x && b.y == y) {
+        if let Some((x, y, q)) = self.turn_after
+            && let Some(i) = self.world.buildings.iter().position(|b| b.x == x && b.y == y) {
                 self.turn_after = None;
                 for _ in 0..q {
                     self.issue(CommandKind::Turn { building: i as u32 });
                 }
             }
-        }
         self.last = now;
         if let Some(g) = self.gfx.as_ref() {
             self.cam.win = g.renderer.size();
         }
+        self.pilot_tick(raw_dt);
 
         let bench_pose = self.perf.as_ref().and_then(|p| p.bench_secs.map(|_| p.t0.elapsed().as_secs_f32()));
         if let Some(t) = bench_pose {
@@ -1486,8 +1731,8 @@ impl App {
         let walk_ok = self.menu.is_none() && !crafting;
         self.walk_cool -= dt;
         if walk_ok && (wr != 0.0 || wf != 0.0) {
-            if self.walk_cool <= 0.0 {
-                if let Some((ax, ay)) = self.me_pos() {
+            if self.walk_cool <= 0.0
+                && let Some((ax, ay)) = self.me_pos() {
                     let y = self.cam.yaw_deg.to_radians();
                     let (dx, dz) = (wr * y.cos() - wf * y.sin(), -wr * y.sin() - wf * y.cos());
                     let len = (dx * dx + dz * dz).sqrt().max(1e-3);
@@ -1497,7 +1742,6 @@ impl App {
                     self.issue(CommandKind::Walk { x: tx, y: ty });
                     self.walk_cool = 0.2;
                 }
-            }
             self.walking = true;
             self.follow = true;
         } else if self.walking {
@@ -1509,13 +1753,15 @@ impl App {
             }
         }
         // going into a cave, down its stairs or back out: the picture goes black for a moment and the camera is there already
-        let cave_now = self.me_agent().and_then(|a| a.cave).map(|c| (c.node, c.level));
+        let cave_state = self.me_agent().and_then(|a| a.cave);
+        let cave_now = cave_state.map(|c| (c.node, if c.elevation_m().is_some() { 0 } else { c.level }));
         if cave_now != self.cave_was {
             self.cave_was = cave_now;
             self.cave_fade = 1.0;
             if let Some((x, y)) = self.me_pos() {
                 self.cam.target.x = x as f32 / 1000.0;
                 self.cam.target.z = y as f32 / 1000.0;
+                self.cam.target.y = cave_state.map_or_else(|| alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z), |c| f32::from(c.elevation_m().unwrap_or(0)));
             }
         }
         self.cave_fade = (self.cave_fade - dt * 3.0).max(0.0);
@@ -1530,7 +1776,7 @@ impl App {
             }
         }
         // the camera rides the hills with the ground under its target
-        let gh = if self.in_cave() { 0.0 } else { alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z) };
+        let gh = cave_state.map_or_else(|| alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z), |c| f32::from(c.elevation_m().unwrap_or(0)));
         self.cam.target.y += (gh - self.cam.target.y) * (1.0 - (-8.0 * dt).exp());
         let d = self.pitch_goal - self.cam.pitch_deg;
         self.cam.pitch_deg += d * (1.0 - (-10.0 * dt).exp());
@@ -1540,8 +1786,14 @@ impl App {
         // fixed-step simulation
         if let Net::Client(client) = &mut self.net {
             // the host owns the clock: apply whatever turns arrived, catching up when behind
+            let previous_generation = client.world_generation();
             client.poll();
             if let Some(w) = client.take_fresh_world() {
+                self.me = client.agent;
+                if client.world_generation() != previous_generation {
+                    self.pending.clear();
+                    self.cave_map = cave_map::CaveMap::default();
+                }
                 self.world = w;
                 self.recording = false;
                 self.recorded.clear();
@@ -1571,7 +1823,7 @@ impl App {
             self.accum = 0.0;
             self.pending.clear();
         } else {
-            let scale = if matches!(self.net, Net::Solo) && self.world.settings.difficulty == alaz_sim::world::Difficulty::Creative { self.time_scale.max(1) } else { 1 };
+            let scale = self.sim_scale();
             self.accum += dt * scale as f32;
             let mut steps = 0;
             while self.accum >= STEP && steps < 5 * scale {
@@ -1705,8 +1957,8 @@ impl App {
             }
         }
         // the first time the ground turns to mud, ice or flames underfoot (or beside it), say what it does
-        if self.world.tick % 15 == 0 && self.surf_hinted != 0b11_1111 {
-            if let Some(a) = self.me_agent() {
+        if self.world.tick.is_multiple_of(15) && self.surf_hinted != 0b11_1111
+            && let Some(a) = self.me_agent() {
                 use alaz_sim::Surface;
                 let (tx, ty) = (a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32);
                 let here = self.world.surface_at(tx, ty);
@@ -1727,9 +1979,8 @@ impl App {
                     self.say(text);
                 }
             }
-        }
-        if !self.wolf_hinted {
-            if let Some(a) = self.me_agent() {
+        if !self.wolf_hinted
+            && let Some(a) = self.me_agent() {
                 let wolf_near = self
                     .world
                     .wild
@@ -1740,21 +1991,17 @@ impl App {
                     self.say("Yakınlarda bir kurt var! Ateşin yanında güvendesin. Mızrağın varsa ona sağ tıkla.");
                 }
             }
-        }
-        if !self.wild_hinted {
-            if let Some(a) = self.me_agent() {
-                if self.world.wild_at(a.x, a.y, 12_000).is_some() {
+        if !self.wild_hinted
+            && let Some(a) = self.me_agent()
+                && self.world.wild_at(a.x, a.y, 12_000).is_some() {
                     self.wild_hinted = true;
                     self.say("Yabani bir hayvan var. Yanında yemişin varsa ona sağ tıkla: güvenini kazanabilirsin.");
                 }
-            }
-        }
         for e in &events {
-            if let alaz_sim::Event::Struck { agent, hit } = e {
-                if *agent == self.me {
+            if let alaz_sim::Event::Struck { agent, hit } = e
+                && *agent == self.me {
                     self.last_strike = Some((*hit, 0.35));
                 }
-            }
             if let Some(a) = &self.audio {
                 use alaz_sim::Event as E;
                 match e {
@@ -1793,20 +2040,17 @@ impl App {
         self.hints.retain(|h| h.1 > 0.0);
 
         // dev aid: keep the demo drinker thirsty, so the drinking goes on
-        if std::env::var("ALAZ_DEMO_WORK").as_deref() == Ok("drink") {
-            if let Some(a) = self.world.agents.get_mut(self.me.0 as usize) {
+        if std::env::var("ALAZ_DEMO_WORK").as_deref() == Ok("drink")
+            && let Some(a) = self.world.agents.get_mut(self.me.0 as usize) {
                 a.thirst = a.thirst.min(2_000);
             }
-        }
         // dev aid: hold the walk keys, as a player would ("dx,dy" in metres: the way to keep walking)
-        if let Some(d) = std::env::var("ALAZ_DEMO_WALK").ok().map(|v| v.split(',').filter_map(|n| n.trim().parse::<i64>().ok()).collect::<Vec<_>>()) {
-            if d.len() == 2 && self.world.tick % 12 == 0 {
-                if let Some((ax, ay)) = self.me_agent().map(|a| (a.x, a.y)) {
+        if let Some(d) = std::env::var("ALAZ_DEMO_WALK").ok().map(|v| v.split(',').filter_map(|n| n.trim().parse::<i64>().ok()).collect::<Vec<_>>())
+            && d.len() == 2 && self.world.tick.is_multiple_of(12)
+                && let Some((ax, ay)) = self.me_agent().map(|a| (a.x, a.y)) {
                     let len = ((d[0] * d[0] + d[1] * d[1]) as f64).sqrt().max(1.0);
                     self.issue(CommandKind::Walk { x: ax + (d[0] as f64 / len * 4_000.0) as i64, y: ay + (d[1] as f64 / len * 4_000.0) as i64 });
                 }
-            }
-        }
         // dev aid: gravity at work around the player, over and over, to look at it
         if let Ok(v) = std::env::var("ALAZ_DEMO_PHYS") {
             self.demo_phys(&v);
@@ -1814,22 +2058,20 @@ impl App {
         // dev aid: a blow a few seconds in, to look at the hurt effects
         if std::env::var_os("ALAZ_DEMO_HURT").is_some() && self.demo_hurt_t < 4.0 {
             self.demo_hurt_t += dt;
-            if self.demo_hurt_t >= 4.0 {
-                if let Some(a) = self.world.agents.get_mut(self.me.0 as usize) {
+            if self.demo_hurt_t >= 4.0
+                && let Some(a) = self.world.agents.get_mut(self.me.0 as usize) {
                     a.health -= 1500;
                 }
-            }
         }
         // getting hurt: any real drop in health (a bite, a fall, a blow), not the slow drain of hunger or cold
         let hp = self.me_agent().map(|a| a.health);
-        if let (Some(now_hp), Some(before)) = (hp, self.prev_hp) {
-            if before - now_hp >= 150 {
+        if let (Some(now_hp), Some(before)) = (hp, self.prev_hp)
+            && before - now_hp >= 150 {
                 self.hurt_flash = 1.0;
                 if let Some(a) = &self.audio {
                     a.play(audio::Sfx::Hurt);
                 }
             }
-        }
         self.prev_hp = hp;
         self.hurt_flash = (self.hurt_flash - dt * 1.8).max(0.0);
         self.follow_machine();
@@ -1862,10 +2104,16 @@ impl App {
             let me = self.me_agent()?;
             self.world.nodes.iter().filter(|n| n.kind == alaz_sim::NodeKind::Tree).min_by_key(|n| dist2(me.x, me.y, n.center_mm().0, n.center_mm().1)).map(|n| (n.tx, n.ty))
         });
-        let pointer_text = if pointer_active { self.pointer_text(surface, picked) } else { None };
+        let pointer_text = if pointer_active {
+            self.pointer_text(surface, picked)
+        } else {
+            // placing a building on a spot that will not do: say why, instead of only turning the ghost red
+            self.build_mode.zip(ghost_mm).filter(|&(kind, (x, y))| !self.placement_ok(kind, x, y)).and_then(|(kind, (x, y))| self.placement_why(kind, x, y))
+        };
         let Some(g) = self.gfx.as_mut() else { return };
         g.renderer.hover_node = hover;
         let (world, hints) = (&self.world, &self.hints);
+        self.cave_map.observe(world, self.me);
         let net_status = match &self.net {
             Net::Solo => String::new(),
             Net::Host(h) => format!("Coop: sunucu, {} oyuncu", h.players()),
@@ -1894,6 +2142,7 @@ impl App {
             evo: self.evo_pos,
             yaw: self.cam.yaw_deg,
             fade: self.cave_fade,
+            cave_tiles: Some(self.cave_map.known()),
         };
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
@@ -2081,6 +2330,18 @@ impl App {
         PointerRay::from_camera(&cam, ndc)
     }
 
+    /// The node the pointer would pick if it stood at `c` (pixels).
+    fn node_under(&self, c: (f32, f32)) -> Option<u32> {
+        let g = self.gfx.as_ref()?;
+        let mut cam = self.cam;
+        let (w, h) = g.renderer.size();
+        cam.win = (w, h);
+        let ray = PointerRay::from_camera(&cam, (2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32))?;
+        let seed = self.world.seed;
+        let ground = ray.terrain_hit(|x, z| alaz_sim::elevation_mm(seed, x, z) as f32 / 1000.0);
+        self.pick_node(ray, ground).map(|id| id.0)
+    }
+
     fn pointer_surface(&self) -> Option<(PointerRay, Vec3)> {
         let ray = self.pointer_ray()?;
         let seed = self.world.seed;
@@ -2090,8 +2351,19 @@ impl App {
 
     /// Ground point (meters) under the mouse cursor.
     fn cursor_ground(&self) -> Option<Vec3> {
-        if self.in_cave() {
-            return Some(self.pointer_ray()?.at(0.0));
+        if let Some(c) = self.me_agent().and_then(|a| a.cave) {
+            let ray = self.pointer_ray()?;
+            if let Some(z) = c.elevation_m() {
+                let renderer = &self.gfx.as_ref()?.renderer;
+                for h in (z - 24..=z + 24).rev() {
+                    let p = ray.at(f32::from(h));
+                    if renderer.natural_cave_floor(p.x.floor() as i32, p.z.floor() as i32) == Some(h) {
+                        return Some(p);
+                    }
+                }
+                return Some(ray.at(f32::from(z)));
+            }
+            return Some(ray.at(0.0));
         }
         self.pointer_surface().map(|(_, ground)| ground)
     }
@@ -2105,7 +2377,7 @@ impl App {
         let t = self.world.tick;
         let w = &mut self.world;
         match what {
-            "tree" if t % 420 == 0 && !w.bodies.iter().any(|b| b.kind != alaz_sim::physics::BodyKind::Rock) => {
+            "tree" if t.is_multiple_of(420) && !w.bodies.iter().any(|b| b.kind != alaz_sim::physics::BodyKind::Rock) => {
                 // a tall tree with open ground to its east: stand west of it and send it over toward the camera's right
                 let (px, py) = ((ax / 1000) as i32, (ay / 1000) as i32);
                 let open = |w: &alaz_sim::World, tx: i32, ty: i32| (1..=7).all(|k| w.node_at(tx + k, ty).is_none() && w.map.terrain(tx + k, ty).is_some_and(|t| t != alaz_sim::map::Terrain::Water));
@@ -2138,7 +2410,7 @@ impl App {
                 w.air.retain(|f| f.agent != me);
                 w.air.push(alaz_sim::physics::Air { agent: me, x: ax * q, y: ay * q, z: g + 1_200 * q, vx: 0, vy: 0, vz: vz + alaz_sim::physics::G, top: g + 1_200 * q });
             }
-            "rock" if t % 150 == 0 => {
+            "rock" if t.is_multiple_of(150) => {
                 let (ox, oy) = (ax + 3_000, ay - 2_000);
                 w.loose_rock(ox, oy, -6, 5, t);
                 if let Some(b) = w.bodies.last_mut() {
@@ -2167,7 +2439,7 @@ impl App {
                     best.map(|(tx, ty, dx, dy, _)| (tx, ty, dx, dy)).unwrap_or((px, py, 1, 0))
                 });
                 let (tx, ty, dx, dy) = start;
-                if t % 300 == 0 {
+                if t.is_multiple_of(300) {
                     let (x, y) = (tx as i64 * 1000 - dx as i64 * 1_200, ty as i64 * 1000 - dy as i64 * 1_200);
                     if let Some(a) = w.agents.get_mut(me.0 as usize) {
                         a.x = x;
@@ -2244,7 +2516,8 @@ impl App {
         }
         if let Some(id) = picked {
             let n = w.nodes.get(id.0 as usize)?;
-            return Some(format!("{}  ·  sağ tık: topla", hud::node_label(w, n)));
+            let action = if n.kind == alaz_sim::NodeKind::CaveMouth { "gir" } else { "topla" };
+            return Some(format!("{}  ·  sağ tık: {action}", hud::node_label(w, n)));
         }
         let (x, y) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
         match self.body_at(x, y) {
@@ -2299,8 +2572,11 @@ impl App {
     fn cave_tile_under_pointer(&self) -> Option<((i32, i32), alaz_sim::caves::Cell)> {
         let p = self.cursor_ground()?;
         let c = self.me_agent()?.cave?;
-        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
         let t = (p.x.floor() as i32, p.z.floor() as i32);
+        if c.elevation_m().is_some() {
+            return self.world.natural_cave_cell(c, t.0, t.1).map(|cell| (t, cell));
+        }
+        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
         alaz_sim::caves::Level::inside(t.0, t.1).then(|| (t, lv.cell(t.0, t.1)))
     }
 
@@ -2308,8 +2584,14 @@ impl App {
     fn cave_pointer_text(&self) -> Option<String> {
         use alaz_sim::caves::Cell;
         let c = self.me_agent()?.cave?;
-        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
         let ((tx, ty), cell) = self.cave_tile_under_pointer()?;
+        if c.elevation_m().is_some() {
+            if cell == Cell::Rubble { return Some("Çöken taşlar  ·  sağ tık: temizle".into()); }
+            if cell != Cell::Rock { return None; }
+            return Some(self.world.natural_cave_ore(c, tx, ty).and_then(alaz_sim::caves::ore_item)
+                .map_or_else(|| "Kaya  ·  sağ tık: kaz".to_string(), |ore| format!("{} damarı  ·  sağ tık: kaz", crate::lang::item_word(&self.world, ore))));
+        }
+        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
         Some(match cell {
             Cell::Rock | Cell::Rubble if !lv.diggable(tx, ty) => return None,
             Cell::Rock => match lv.ore_at(tx, ty) {
@@ -2354,6 +2636,20 @@ impl App {
 
     /// Find the closest resource model before the ray reaches the ground.
     fn pick_node(&self, ray: PointerRay, ground: Vec3) -> Option<alaz_sim::NodeId> {
+        let (id, via_crown) = self.pick_node_with(ray, ground, true)?;
+        if !via_crown {
+            return Some(id);
+        }
+        // only a crown is in the way: a small resource showing through it (the crown opens up around it) is what the
+        // pointer is on; the trunk and the crown itself still take the click when nothing else is there
+        match self.pick_node_with(ray, ground, false) {
+            Some((small, _)) if self.world.nodes[small.0 as usize].kind != alaz_sim::NodeKind::Tree => Some(small),
+            _ => Some(id),
+        }
+    }
+
+    /// The node under a ray and whether it was hit through a tree's crown; with `crowns` false a crown is no hit.
+    fn pick_node_with(&self, ray: PointerRay, ground: Vec3, crowns: bool) -> Option<(alaz_sim::NodeId, bool)> {
         let mut top = PointerRay::MAX_MODEL_Y;
         while top > ground.y {
             // Query the node index in short sections along the ray. Even the widest tree has a radius under 4 m.
@@ -2367,24 +2663,41 @@ impl App {
                     let (anchor, radius, height) = alaz_render::node_bounds(&self.world, n);
                     let at = Vec2::from_array(anchor);
                     let base = ray.model_base(self.world.seed, at, radius, bottom)?;
-                    let y = if n.kind == alaz_sim::NodeKind::Tree {
+                    let (y, crown_hit) = if n.kind == alaz_sim::NodeKind::Tree {
                         let crown = base + height * 0.45;
-                        ray.column_hit(at, radius, bottom.max(crown), top.min(base + height))
-                            .or_else(|| ray.column_hit(at, 0.32, bottom.max(base), top.min(crown)))
+                        let in_crown = if crowns { ray.column_hit(at, radius, bottom.max(crown), top.min(base + height)) } else { None };
+                        match in_crown {
+                            Some(y) => (y, true),
+                            None => (ray.column_hit(at, 0.32, bottom.max(base), top.min(crown))?, false),
+                        }
                     } else {
-                        ray.column_hit(at, radius, bottom.max(base), top.min(base + height))
-                    }?;
-                    Some((n, y))
+                        (ray.column_hit(at, radius, bottom.max(base), top.min(base + height))?, false)
+                    };
+                    Some((n, y, crown_hit))
                 })
                 .max_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((n, _)) = hit {
-                return self.world.node_at(n.tx, n.ty);
+            if let Some((n, _, via_crown)) = hit {
+                return self.world.node_at(n.tx, n.ty).map(|id| (id, via_crown));
             }
             top = bottom;
         }
+        // A natural opening is cut into the tile next to its interaction anchor.
+        let (x, y) = (ground.x.floor() as i32, ground.z.floor() as i32);
+        if self.world.map.surface_cave_gap(x, y)
+            && let Some(mouth) = [(0, 1), (1, 0), (0, -1), (-1, 0)].into_iter().find_map(|(dx, dy)| {
+                let anchor = (x + dx, y + dy);
+                let mouth = self.world.map.natural_cave_mouth(anchor.0, anchor.1)?;
+                (mouth.threshold.xy() == (x, y))
+                    .then(|| self.world.node_at(anchor.0, anchor.1))
+                    .flatten()
+            })
+        {
+            return Some((mouth, false));
+        }
         // Small resources are also selectable anywhere on the tile where they grow.
-        self.world.node_at(ground.x.floor() as i32, ground.z.floor() as i32)
+        self.world.node_at(x, y)
             .filter(|id| self.world.nodes[id.0 as usize].kind != alaz_sim::NodeKind::Tree)
+            .map(|id| (id, false))
     }
 
     /// Where a building would go (mm), optionally snapped to tile centers.
@@ -2408,6 +2721,45 @@ impl App {
             && rules().building(kind).cost_for(|c| a.inventory.has(c)).is_some()
             && rules().building(kind).needs.iter().all(|&k| a.inventory.get(k) > 0)
             && self.world.knows(rules().building(kind).discovery)
+    }
+
+    /// Why a building cannot go at (x, y) mm, in the player's words (None when it can).
+    fn placement_why(&self, kind: BuildingKind, x: i64, y: i64) -> Option<String> {
+        let a = self.me_agent()?;
+        let def = rules().building(kind);
+        if !self.world.knows(def.discovery) {
+            return None;
+        }
+        if dist2(a.x, a.y, x, y) > BUILD_RADIUS_MM * BUILD_RADIUS_MM {
+            return Some("Çok uzak: önce yaklaş.".to_string());
+        }
+        match self.world.can_place(kind, x, y) {
+            Err(alaz_sim::world::Reject::NeedsWater) => return Some("Suya yakın olmalı.".to_string()),
+            Err(alaz_sim::world::Reject::WetGround) => return Some("Islak zemin: ateş tutmaz.".to_string()),
+            Err(_) => {
+                let r = def.radius_mm + 400;
+                let (tx, ty) = (x.div_euclid(alaz_sim::map::TILE_MM) as i32, y.div_euclid(alaz_sim::map::TILE_MM) as i32);
+                let near = self.world.nodes_in(tx - 4, ty - 4, tx + 5, ty + 5).filter(|n| {
+                    let (nx, ny) = n.center_mm();
+                    dist2(nx, ny, x, y) < r * r
+                }).min_by_key(|n| {
+                    let (nx, ny) = n.center_mm();
+                    dist2(nx, ny, x, y)
+                });
+                if let Some(n) = near {
+                    return Some(format!("Yer dar: yakında {} var. Önce onu kes ya da topla, ya da açıklığa geç.", hud::node_label(&self.world, n).to_lowercase()));
+                }
+                if self.world.buildings.iter().any(|b| dist2(b.x, b.y, x, y) < (def.radius_mm + rules().building(b.kind).radius_mm + 200).pow(2)) {
+                    return Some("Başka bir yapıya çok yakın.".to_string());
+                }
+                return Some("Zemin uygun değil (su, kaya ya da yarık).".to_string());
+            }
+            Ok(()) => {}
+        }
+        if def.cost_for(|c| a.inventory.has(c)).is_none() {
+            return Some("Malzeme eksik.".to_string());
+        }
+        None
     }
 
     /// Send a command as the player; while recording, harvest/deposit/collect also become route steps.
@@ -2553,8 +2905,8 @@ impl App {
         if let Some(i) = self.pick_worker(ray, p) {
             // your own dog, close by: a right click pets it
             let me = self.me_agent().map(|m| (m.x, m.y));
-            if let (Some(d), Some((mx, my))) = (self.world.agents.get(i), me) {
-                if d.kind == alaz_sim::AgentKind::Dog && (d.x - mx).pow(2) + (d.y - my).pow(2) <= 2_500i64.pow(2) {
+            if let (Some(d), Some((mx, my))) = (self.world.agents.get(i), me)
+                && d.kind == alaz_sim::AgentKind::Dog && (d.x - mx).pow(2) + (d.y - my).pow(2) <= 2_500i64.pow(2) {
                     if let Some(a) = self.audio.as_mut() {
                         a.play(audio::Sfx::Bark);
                         a.play(audio::Sfx::Tame);
@@ -2564,7 +2916,6 @@ impl App {
                     self.say(line[self.pets as usize % line.len()].to_string());
                     return;
                 }
-            }
             self.selected = Some(Selection::Agent(i));
             return;
         }
@@ -2582,21 +2933,12 @@ impl App {
         }
         let picked = self.pick_node(ray, p).or_else(|| self.world.node_at(p.x.floor() as i32, p.z.floor() as i32));
         if let Some(node) = picked {
-            if self.world.nodes[node.0 as usize].kind == alaz_sim::NodeKind::CaveMouth {
-                // a cave is entered, not harvested from outside: walk up to it, then step in with a torch
-                let (nx, ny) = self.world.nodes[node.0 as usize].center_mm();
-                let near = self.me_agent().is_some_and(|a| dist2(a.x, a.y, nx, ny) <= 2_800 * 2_800);
-                if near {
-                    self.issue(CommandKind::EnterCave { node });
-                } else {
-                    self.say("Mağaranın ağzına yaklaş, sonra tekrar sağ tıkla. Girmek için meşale gerek.");
-                    self.issue(CommandKind::MoveTo { x: nx + 1_200, y: ny + 1_800 });
-                }
-                return;
-            }
-        }
-        if let Some(node) = picked {
-            self.issue(CommandKind::Gather { node });
+            let command = if self.world.nodes[node.0 as usize].kind == alaz_sim::NodeKind::CaveMouth {
+                CommandKind::EnterCave { node }
+            } else {
+                CommandKind::Gather { node }
+            };
+            self.issue(command);
             return;
         }
         // water with fish in it: cast there
@@ -2648,66 +2990,17 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if event.state == ElementState::Pressed {
-                        let used = self.menu.as_mut().is_some_and(|m| {
-                            if m.capturing() { m.on_key(code, &mut self.binds) } else { false }
-                        });
-                        if !event.repeat && !used {
-                            for action in self.binds.actions_for(code) {
-                                self.on_action(action);
-                            }
-                        }
-                        if !used {
-                            self.keys.insert(code);
-                        }
-                    } else {
-                        self.keys.remove(&code);
-                    }
+                    self.input_key(code, event.state == ElementState::Pressed, event.repeat);
                 }
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                let now = (position.x as f32, position.y as f32);
-                let shift = self.keys.contains(&winit::keyboard::KeyCode::ShiftLeft) || self.keys.contains(&winit::keyboard::KeyCode::ShiftRight);
-                if let (Some(from), false) = (self.mid_drag, shift) {
-                    // middle drag orbits: across turns the camera, up and down tilts it from low and wide to straight down
-                    self.cam.yaw_deg -= (now.0 - from.0) * 0.35;
-                    self.pitch_goal = (self.pitch_goal + (now.1 - from.1) * 0.25).clamp(Camera::PITCH_MIN, Camera::PITCH_TOP);
-                    self.cam.pitch_deg = self.pitch_goal;
-                    self.mid_drag = Some(now);
-                } else if let (Some(from), Some(g)) = (self.mid_drag, self.gfx.as_ref()) {
-                    // shift + middle drag: drag the ground under the cursor along with it
-                    let (w, h) = g.renderer.size();
-                    let at = |c: (f32, f32)| self.cam.ground_at(2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32, g.renderer.aspect());
-                    if let (Some(a), Some(b)) = (at(from), at(now)) {
-                        self.cam.target.x += a.x - b.x;
-                        self.cam.target.z += a.z - b.z;
-                        self.follow = false;
-                    }
-                    self.mid_drag = Some(now);
-                }
-                self.cursor = now;
-            }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
-                if !ui_consumed && !over_ui {
-                    self.click(true);
-                }
-            }
-            WindowEvent::MouseInput { button: MouseButton::Middle, state, .. } => {
-                self.mid_drag = (state == ElementState::Pressed).then_some(self.cursor);
-            }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
-                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
-                if !ui_consumed && !over_ui {
-                    self.click(false);
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } if !ui_consumed && self.menu.is_none() => {
+            WindowEvent::CursorMoved { position, .. } => self.input_cursor((position.x as f32, position.y as f32)),
+            WindowEvent::MouseInput { state, button, .. } => self.input_button(button, state == ElementState::Pressed, ui_consumed),
+            WindowEvent::MouseWheel { delta, .. } if !ui_consumed => {
                 let s = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                self.cam.zoom = (self.cam.zoom * 1.1f32.powf(s)).clamp(0.2, 8.0);
+                self.input_wheel(s);
             }
             WindowEvent::RedrawRequested => {
                 self.frame();

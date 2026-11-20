@@ -22,14 +22,13 @@ pub fn texture(ctx: &egui::Context, path: &str) -> Option<(TextureHandle, [usize
     let current = assets::generation();
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if let Some((g, t)) = c.get(path) {
-            if *g == current {
+        if let Some((g, t)) = c.get(path)
+            && *g == current {
                 return t.clone().map(|t| {
                     let s = t.size();
                     (t, s)
                 });
             }
-        }
         let tex = assets::image(path).map(|img| {
             let size = [img.w as usize, img.h as usize];
             ctx.load_texture(format!("asset:{path}"), egui::ColorImage::from_rgba_unmultiplied(size, &img.rgba), TextureOptions::NEAREST)

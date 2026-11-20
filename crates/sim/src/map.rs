@@ -622,6 +622,7 @@ pub struct Map {
     pub h: i32,
     pub tiles: Vec<Terrain>,
     pub seed: u64,
+    small_caves: Option<crate::cave_terrain::SmallWorldCaves>,
 }
 
 /// Run `f(y0, y1)` over horizontal bands of rows on several threads and join the results in row order,
@@ -653,10 +654,13 @@ pub fn elevation_mm(seed: u64, tx: i32, ty: i32) -> i32 {
 /// The top 16 bits of a seed that marks a world made by the second generator (rivers and lakes). Older worlds, whose
 /// seeds never carry it (clock-based or typed), keep the land they were made with.
 const GEN_V2_TAG: u64 = 0xA1A2;
+const GEN_V2_CAVES_TAG: u64 = 0xA1A4;
+const GEN_V3_CAVES_TAG: u64 = 0xA1A5;
+const GEN_SMALL_CAVES_TAG: u64 = 0xA1A6;
 
 /// Does this world have rivers and lakes (the second generator, or the third)?
 pub fn gen_v2(seed: u64) -> bool {
-    seed >> 48 == GEN_V2_TAG || gen_v3(seed)
+    matches!(seed >> 48, GEN_V2_TAG | GEN_V2_CAVES_TAG | GEN_SMALL_CAVES_TAG) || gen_v3(seed)
 }
 
 /// The third generator's mark: continents and oceans, mountain ranges, climate belts.
@@ -664,7 +668,24 @@ const GEN_V3_TAG: u64 = 0xA1A3;
 
 /// Was this world made by the third generator?
 pub fn gen_v3(seed: u64) -> bool {
-    seed >> 48 == GEN_V3_TAG
+    matches!(seed >> 48, GEN_V3_TAG | GEN_V3_CAVES_TAG)
+}
+
+pub fn has_natural_caves(seed: u64) -> bool {
+    matches!(seed >> 48, GEN_V2_CAVES_TAG | GEN_V3_CAVES_TAG | GEN_SMALL_CAVES_TAG)
+}
+
+/// A separate tag keeps saved node indices stable when entrance generation changes.
+pub fn tag_seed_new_world(seed: u64, size: i32) -> u64 {
+    if (128..=256).contains(&size) {
+        return (seed & 0xFFFF_FFFF_FFFF) | GEN_SMALL_CAVES_TAG << 48;
+    }
+    tag_seed_natural(seed, size)
+}
+
+pub fn tag_seed_natural(seed: u64, size: i32) -> u64 {
+    let tag = if size > 4096 { GEN_V3_CAVES_TAG } else { GEN_V2_CAVES_TAG };
+    (seed & 0xFFFF_FFFF_FFFF) | tag << 48
 }
 
 /// The seed a new world gets: the third generator's mark.
@@ -892,7 +913,7 @@ impl Map {
     pub fn generate(seed: u64, w: i32, h: i32) -> Self {
         // a very large world keeps no tile table: every tile is worked out from the seed when it is asked for
         if w as i64 * h as i64 > EAGER_MAX_TILES {
-            return Self { w, h, tiles: Vec::new(), seed };
+            return Self { w, h, tiles: Vec::new(), seed, small_caves: None };
         }
         let tiles = par_rows(w, h, |y0, y1| {
             let mut tiles = Vec::with_capacity(((y1 - y0) * w) as usize);
@@ -903,7 +924,11 @@ impl Map {
             }
             tiles
         });
-        Self { w, h, tiles, seed }
+        let mut map = Self { w, h, tiles, seed, small_caves: None };
+        if seed >> 48 == GEN_SMALL_CAVES_TAG && (128..=256).contains(&w) && (128..=256).contains(&h) {
+            map.small_caves = crate::cave_terrain::SmallWorldCaves::generate(&map);
+        }
+        map
     }
 
     /// Made in chunks (no tile table)?
@@ -931,11 +956,43 @@ impl Map {
         (-r..=r).any(|dy| (-r..=r).any(|dx| self.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
     }
 
+    pub fn surface_cave_gap(&self, tx: i32, ty: i32) -> bool {
+        if let Some(caves) = &self.small_caves {
+            return caves.gaps.contains(&(tx, ty));
+        }
+        has_natural_caves(self.seed) && crate::cave_terrain::SIDES.into_iter().any(|(dx, dy)| {
+            self.natural_cave_mouth(tx + dx, ty + dy).is_some_and(|mouth| mouth.threshold.xy() == (tx, ty))
+        })
+    }
+
+    pub fn natural_cave_mouth(&self, tx: i32, ty: i32) -> Option<crate::cave_terrain::CaveMouth> {
+        if let Some(caves) = &self.small_caves {
+            return caves.mouths.get(&(tx, ty)).copied();
+        }
+        has_natural_caves(self.seed).then(|| crate::cave_terrain::cave_mouth(self, tx, ty))?
+    }
+
+    pub(crate) fn cave_field(&self) -> crate::cave_terrain::CaveTerrain {
+        self.small_caves.as_ref().map_or_else(|| crate::cave_terrain::CaveTerrain::new(self.seed), |caves| caves.field)
+    }
+
+    pub(crate) fn cave_accessible_spawn(&self, x: i32, y: i32) -> bool {
+        self.small_caves.as_ref().is_none_or(|caves| caves.connected_to_entrance(self, x, y))
+    }
+
+    pub(crate) fn cave_spawn_fallback(&self) -> Option<(i32, i32)> {
+        self.small_caves.as_ref().map(|caves| caves.anchor)
+    }
+
     /// Deterministic resource node spawn for a tile, if any.
     pub fn node_for(&self, seed: u64, tx: i32, ty: i32) -> Option<NodeKind> {
+        let natural = has_natural_caves(seed);
+        if natural && self.natural_cave_mouth(tx, ty).is_some() {
+            return Some(NodeKind::CaveMouth);
+        }
         let r = hash2(seed ^ 0x3333, tx, ty) % 1000;
         match self.terrain(tx, ty)? {
-            Terrain::Rock if (69..73).contains(&r) && base_elevation_mm(seed, tx, ty) >= 3600 => Some(NodeKind::CaveMouth),
+            Terrain::Rock if !natural && (69..73).contains(&r) && base_elevation_mm(seed, tx, ty) >= 3600 => Some(NodeKind::CaveMouth),
             Terrain::Rock if r < 50 => Some(NodeKind::StoneOutcrop),
             Terrain::Rock if r < 58 => Some(NodeKind::IronOutcrop),
             Terrain::Rock if r < 66 => Some(NodeKind::CopperOutcrop),

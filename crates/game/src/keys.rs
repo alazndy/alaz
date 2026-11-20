@@ -26,6 +26,7 @@ pub enum Action {
     Build,
     Goals,
     Journal,
+    ItemGuide,
     Routes,
     Help,
     Save,
@@ -41,7 +42,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 29] = [
+    pub const ALL: [Action; 30] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -61,6 +62,7 @@ impl Action {
         Action::Build,
         Action::Goals,
         Action::Journal,
+        Action::ItemGuide,
         Action::Routes,
         Action::Help,
         Action::Save,
@@ -94,6 +96,7 @@ impl Action {
             Action::Build => "İnşa",
             Action::Goals => "Hedefler",
             Action::Journal => "Günlük",
+            Action::ItemGuide => "Bu ne?",
             Action::Routes => "Rotalar",
             Action::Help => "Yardım",
             Action::Save => "Kaydet",
@@ -128,6 +131,7 @@ impl Action {
             Action::Build => "build",
             Action::Goals => "goals",
             Action::Journal => "journal",
+            Action::ItemGuide => "item_guide",
             Action::Routes => "routes",
             Action::Help => "help",
             Action::Save => "save",
@@ -163,6 +167,7 @@ impl Action {
             Action::Build => (K::KeyB, None),
             Action::Goals => (K::KeyH, None),
             Action::Journal => (K::KeyJ, None),
+            Action::ItemGuide => (K::KeyU, None),
             Action::Routes => (K::KeyR, None),
             Action::Help => (K::F1, None),
             Action::Save => (K::F5, None),
@@ -298,11 +303,10 @@ impl Keybinds {
             return PathBuf::from(d).join("keys.cfg");
         }
         // Windows: next to the saves, in %APPDATA%\ALAZ
-        if cfg!(windows) {
-            if let Some(d) = std::env::var_os("APPDATA") {
+        if cfg!(windows)
+            && let Some(d) = std::env::var_os("APPDATA") {
                 return PathBuf::from(d).join("ALAZ").join("keys.cfg");
             }
-        }
         let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| {
             std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join(".config")
         });

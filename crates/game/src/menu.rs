@@ -387,15 +387,14 @@ fn scene(p: &Painter, screen: Rect, t: f32, fire_x: f32) {
 /// The big extruded title, letters dropping in one after another, sparks between them. A logo picture
 /// (`assets/ui/logo.png`) takes its place, fading in.
 fn title(p: &Painter, at: Pos2, size: f32, intro: f32, t: f32) {
-    if crate::art::any() {
-        if let Some((tex, dim)) = crate::art::texture(p.ctx(), "ui/logo.png") {
+    if crate::art::any()
+        && let Some((tex, dim)) = crate::art::texture(p.ctx(), "ui/logo.png") {
             let a = (ease(intro / 0.8) * 255.0) as u8;
             let h = size * 1.5;
             let r = Rect::from_min_size(at, vec2(h * dim[0] as f32 / dim[1] as f32, h));
             p.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::from_white_alpha(a));
             return;
         }
-    }
     let letters = ["A", "L", "A", "Z"];
     let mut x = at.x;
     for (i, l) in letters.iter().enumerate() {
@@ -866,7 +865,13 @@ impl Menu {
                         // a hexagon with the slot number; lit when a world lives there
                         let hc = pos2(rect.left() + 32.0, rect.center().y);
                         let full = matches!(self.slots[i], Some(Ok(_)));
-                        let hex: Vec<Pos2> = (0..6).map(|k| hc + vec2((k as f32 * 1.0472 + 0.5236).cos(), (k as f32 * 1.0472 + 0.5236).sin()) * 17.0).collect();
+                        let hex: Vec<Pos2> = (0..6)
+                            .map(|k| {
+                                let angle = k as f32 * std::f32::consts::FRAC_PI_3 + std::f32::consts::FRAC_PI_6;
+                                let (sin, cos) = angle.sin_cos();
+                                hc + vec2(cos, sin) * 17.0
+                            })
+                            .collect();
                         p.add(Shape::convex_polygon(hex, if full { Color32::from_rgb(120, 62, 28) } else { Color32::from_rgb(22, 18, 14) }, Stroke::new(1.5, if full { EMBER } else { LINE })));
                         p.text(hc, Align2::CENTER_CENTER, n.to_string(), FontId::proportional(22.0), if full { Color32::from_rgb(255, 226, 170) } else { Color32::from_rgb(140, 124, 100) });
                         let (head, sub, sub_col) = match &self.slots[i] {

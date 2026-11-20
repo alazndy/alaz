@@ -134,7 +134,7 @@ pub fn wind(seed: u64, tick: u64, days: u64) -> (i32, i32) {
     let into = tick % block;
     let stormy = |t: u64| if weather(seed, t, days) != Weather::Clear { 380 } else { 0 };
     let now = stormy(tick);
-    let before = if tick >= into + 1 { stormy(tick - into - 1) } else { now };
+    let before = if tick > into { stormy(tick - into - 1) } else { now };
     let ramp = (into as i64 * 1000 / 1800).min(1000);
     let storm = before + (now - before) * ramp / 1000;
     (heading, (120 + calm + gust + storm).clamp(0, 1000) as i32)

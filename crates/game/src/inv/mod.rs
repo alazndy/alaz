@@ -165,6 +165,7 @@ pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look:
     let name = item.map_or_else(|| "boş".to_string(), |k| crate::lang::item_word(w, crate::lang::looks_like(w, k)));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, look != SlotLook::Disabled, &name));
     let Some(k) = item else { return resp };
+    crate::pilot::mark(ui.ctx(), || format!("slot:{}", alaz_sim::debug::snake(&format!("{k:?}"))), rect);
     // dev aid for screenshots: ALAZ_DEMO_TIP keeps the cloak's tooltip open
     if k == ItemKind::HideCloak && std::env::var_os("ALAZ_DEMO_TIP").is_some() {
         let tip = hud::item_tip(w, k);
@@ -228,13 +229,14 @@ pub(crate) fn open_machine_of(w: &World, me: &Agent, selection: Option<Selection
     }
 }
 
-/// A dragged item let go outside the window. A bag item goes on the ground; a held item leaves the hand.
-pub(crate) fn drop_outside(cx: &mut Cx, c: Carry) {
+/// Puts a carried item on the ground (let go outside the window or on the drop box); a held item leaves the hand. A bag heap goes ten at a time, or whole with `all` (shift held).
+pub(crate) fn drop_carry(cx: &mut Cx, c: Carry, all: bool) {
     match c {
         Carry::Bag(k) => {
             let have = cx.me.inventory.get(k);
             if have > 0 {
-                cx.acts.push(UiAction::Cmd(CommandKind::Drop { item: k, n: have.min(DROP_MAX) }));
+                let n = if all { have } else { have.min(DROP_MAX) };
+                cx.acts.push(UiAction::Cmd(CommandKind::Drop { item: k, n }));
             }
         }
         Carry::Hand(i) => {
@@ -306,6 +308,7 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
             Top::Bag | Top::Machine(_) => {}
         });
         // the whole bag area takes back what was carried out of it (machine output, a held item)
+        crate::pilot::mark(ui.ctx(), || "bag".to_string(), regs.bag);
         let zone = ui.interact(regs.bag, egui::Id::NULL.with("inv_bag_zone"), egui::Sense::hover());
         if hovering(&zone).is_some_and(|c| !matches!(c, Carry::Bag(_))) {
             crate::style::highlight(&p, regs.bag, crate::style::palette(era).good);
@@ -320,7 +323,7 @@ pub(crate) fn draw_window(ctx: &Context, cx: &mut Cx) -> Option<egui::Rect> {
         match pos {
             Some(p) if released && !area.response.rect.contains(p) => {
                 egui::DragAndDrop::clear_payload(ctx);
-                drop_outside(cx, c);
+                drop_carry(cx, c, ctx.input(|i| i.modifiers.shift));
             }
             Some(p) if !released => ghost(ctx, cx, c, p),
             _ => {}
@@ -434,10 +437,21 @@ fn bag_grid(ui: &mut Ui, cx: &mut Cx, top: Top, era: crate::style::Era, click: B
         let (r, _) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::hover());
         crate::style::icons::icon(ui.painter(), r, crate::style::icons::Icon::Bag, crate::style::icons::icon_colour(era));
         ui.label(format!("{}/{}", inv.load(), cx.me.capacity())).on_hover_text(format!(
-            "Çanta: {}/{} yer dolu. Bırakmak için eşyaya sağ tıkla ya da pencerenin dışına sürükle.",
+            "Çanta: {}/{} yer dolu. Bırakmak için eşyaya sağ tıkla ya da «Yere bırak» kutusuna sürükle. Shift basılıysa yığının hepsi gider.",
             inv.load(),
             cx.me.capacity()
         ));
+        // a target that is always in the window: the wide window leaves almost no empty margin to drop into
+        let (zone, resp) = ui.allocate_exact_size(egui::vec2(200.0, 26.0), egui::Sense::hover());
+        let pal = crate::style::palette(era);
+        let live = hovering(&resp).is_some_and(|c| matches!(c, Carry::Bag(_) | Carry::Hand(_)));
+        crate::style::slot_frame(ui.painter(), zone, era, if live { SlotLook::Target } else { SlotLook::Empty });
+        ui.painter().text(zone.center(), Align2::CENTER_CENTER, "Yere bırak (Shift: hepsi)", egui::FontId::proportional(18.0), pal.ink);
+        crate::pilot::mark(ui.ctx(), || "dropzone".to_string(), zone);
+        if let Some(c) = dropped_on(&resp) {
+            let all = ui.input(|i| i.modifiers.shift);
+            drop_carry(cx, c, all);
+        }
     });
     if items.is_empty() {
         ui.label("Çanta boş. Etraftan taş, odun ve yemiş topla: bir şeye sağ tıkla.");
@@ -518,6 +532,7 @@ mod tests {
             evo: 9.0,
             yaw: 0.0,
             fade: 0.0,
+            cave_tiles: None,
         }
     }
 
@@ -577,7 +592,7 @@ mod tests {
             let mut hands = [255u8; 4];
             let mut acts = Vec::new();
             let mut cx = Cx { w: &w, me: &w.agents[0], ui_ctx: &ui_ctx, hands: &mut hands, acts: &mut acts };
-            drop_outside(&mut cx, Carry::Bag(ItemKind::Stone));
+            drop_carry(&mut cx, Carry::Bag(ItemKind::Stone), false);
             assert!(
                 matches!(acts.as_slice(), [UiAction::Cmd(CommandKind::Drop { item: ItemKind::Stone, n })] if *n == want),
                 "{have} stones: expected one Drop of {want}"

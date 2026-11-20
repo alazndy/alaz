@@ -136,14 +136,7 @@ fn puddles_stand_in_flat_hollows_and_freeze_to_ice() {
 #[test]
 fn runners_slip_on_ice_and_grip_helps() {
     let w0 = world(SEED);
-    // a moment that stays cold and wet through the whole run
-    let t0 = (TICKS_PER_DAY..TICKS_PER_DAY * 400)
-        .step_by(300)
-        .find(|&t| [0, 9000, 18000].iter().all(|d| {
-            let g = Ground::at(SEED, t + d, DAYS);
-            g.wet >= 900 && g.freezing()
-        }))
-        .expect("a long frost");
+    let t0 = long_frost();
     let g = Ground::at(SEED, t0, DAYS);
     let ice = grass_tiles(&w0).into_iter().find(|&(x, y)| g.weather_surface(&w0.map, x, y) == Surface::Ice).expect("ice");
     let slips = |boots: bool| {
@@ -170,6 +163,16 @@ fn runners_slip_on_ice_and_grip_helps() {
     eprintln!("slips bare {bare} booted {booted}");
     assert!(bare > 20, "runners slip: {bare}");
     assert!(booted < bare, "soles with grip slip less: {booted} vs {bare}");
+}
+
+fn long_frost() -> u64 {
+    (TICKS_PER_DAY..TICKS_PER_DAY * 400)
+        .step_by(300)
+        .find(|&t| [0, 9000, 18000].iter().all(|d| {
+            let g = Ground::at(SEED, t + d, DAYS);
+            g.wet >= 900 && g.freezing()
+        }))
+        .expect("a long frost")
 }
 
 /// Burn a patch for a while, with only the fire step running; returns (peak burning, tiles that ever burned).
@@ -324,7 +327,7 @@ fn flames_hurt_and_fire_gear_helps() {
     let hurt = |gear: bool| {
         let mut w = world(SEED);
         let a = with_agent(&mut w);
-        w.tick = 600 - 600 % 30;
+        w.tick = 600;
         let (tx, ty) = ((w.agents[0].x / 1000) as i32, (w.agents[0].y / 1000) as i32);
         w.burn.insert((tx, ty), Burn { fire: true, born: w.tick, until: w.tick + 1000 });
         w.agents[a.0 as usize].inventory.counts[ItemKind::HideCloak as usize] = gear as u16;
@@ -334,6 +337,43 @@ fn flames_hurt_and_fire_gear_helps() {
     };
     let (bare, cloaked) = (hurt(false), hurt(true));
     assert!(bare > 0 && cloaked < bare, "{cloaked} vs {bare}");
+}
+
+#[test]
+fn surface_fire_and_ice_pass_over_underground_agents() {
+    let mut w = world(SEED);
+    let t = long_frost();
+    let ice = strip(&w, &Ground::at(SEED, t, DAYS), Surface::Ice, 1);
+    let (x, y) = (i64::from(ice.0) * 1_000 + 500, i64::from(ice.1) * 1_000 + 500);
+    let surface = w.spawn_agent(x, y);
+    let underground = w.spawn_agent(x, y);
+    w.agents[1].cave = Some(crate::CaveSelf {
+        node: 0, level: 90, x, y, light: 60, full: 60, dark: 0, cool: 0, leaving: false,
+    });
+    w.tick = 600;
+    w.burn.insert(ice, Burn { fire: true, born: w.tick, until: w.tick + 1_000 });
+    let health = w.agents[1].health;
+    w.run_surface();
+    assert!(w.agents[0].health < health);
+    assert_eq!(w.agents[1].health, health);
+
+    w.burn.clear();
+    let walk = crate::world::Task::Walk { x: x + 2_000, y };
+    let mut surface_slipped = false;
+    for tick in (t..t + 6_000).step_by(30) {
+        w.tick = tick;
+        for a in &mut w.agents {
+            a.sprint = true;
+            a.stamina = 10_000;
+            a.task = walk;
+        }
+        w.run_surface();
+        surface_slipped |= w.events.iter().any(|e| matches!(e, Event::Slipped(id) if *id == surface));
+        assert!(!w.events.iter().any(|e| matches!(e, Event::Slipped(id) if *id == underground)));
+        assert_eq!(w.agents[1].task, walk);
+        w.events.clear();
+    }
+    assert!(surface_slipped);
 }
 
 #[test]

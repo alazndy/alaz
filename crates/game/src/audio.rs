@@ -318,13 +318,11 @@ fn mixer(rx: Receiver<Msg>, mut sink: Sink) {
                     }
                 }
                 Ok(Msg::Play(s)) => {
-                    if !muted {
-                        if let Some(i) = bank.iter().position(|(b, _)| *b == s) {
-                            if voices.len() < 16 {
+                    if !muted
+                        && let Some(i) = bank.iter().position(|(b, _)| *b == s)
+                            && voices.len() < 16 {
                                 voices.push((i, 0));
                             }
-                        }
-                    }
                 }
                 Ok(Msg::Scene(sc)) => amb.set(sc),
                 Ok(Msg::Mute(m)) => {
@@ -700,7 +698,7 @@ impl Ambience {
     }
 
     fn frame(&mut self) -> (f32, f32) {
-        if self.n % 256 == 0 {
+        if self.n.is_multiple_of(256) {
             self.tick();
         }
         self.n += 1;

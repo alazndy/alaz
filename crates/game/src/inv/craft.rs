@@ -127,9 +127,10 @@ fn arrow(p: &egui::Painter, rect: egui::Rect, col: Color32) {
 
 fn hand_slot(ui: &mut Ui, cx: &mut Cx, i: usize) {
     let item = ItemKind::ALL.get(cx.hands[i] as usize).copied();
-    let resp = slot(ui, cx.w, item, 1, if item.is_some() { SlotLook::Normal } else { SlotLook::Empty });
+    let resp = crate::pilot::scoped("hands", || slot(ui, cx.w, item, 1, if item.is_some() { SlotLook::Normal } else { SlotLook::Empty }));
     let name = item.map_or_else(|| "boş el".to_string(), |k| crate::lang::item_word(cx.w, crate::lang::looks_like(cx.w, k)));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("El {}: {name}", i + 1)));
+    crate::pilot::mark(ui.ctx(), || format!("hand:{}", i + 1), resp.rect);
     if item.is_some() {
         super::drag_source(&resp, Carry::Hand(i));
         if resp.clicked() {

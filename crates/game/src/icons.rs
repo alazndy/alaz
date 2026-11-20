@@ -10,13 +10,12 @@ fn c(r: u8, g: u8, b: u8) -> Color32 {
 /// Draw `k` inside `rect`. Coordinates below are in a unit square (0..1, y down).
 pub fn draw_item(p: &Painter, rect: Rect, k: ItemKind) {
     // a picture file (`assets/icons/<item>.png`) replaces the painted icon
-    if crate::art::any() {
-        if let Some(t) = crate::art::item_icon(p.ctx(), k) {
+    if crate::art::any()
+        && let Some(t) = crate::art::item_icon(p.ctx(), k) {
             let s = rect.width().min(rect.height());
             p.image(t.id(), Rect::from_center_size(rect.center(), alaz_render::egui::vec2(s, s)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
             return;
         }
-    }
     let s = rect.width().min(rect.height());
     let o = rect.center() - alaz_render::egui::vec2(s / 2.0, s / 2.0);
     let pt = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
@@ -680,7 +679,9 @@ pub fn draw_item(p: &Painter, rect: Rect, k: ItemKind) {
         ItemKind::Rope => {
             for k in 0..6 {
                 let t = k as f32 / 6.0;
-                let (x, y) = (0.5 + (t * 6.28).cos() * (0.34 - 0.05 * t), 0.5 + (t * 6.28).sin() * (0.34 - 0.05 * t));
+                let (sin, cos) = (t * std::f32::consts::TAU).sin_cos();
+                let radius = 0.34 - 0.05 * t;
+                let (x, y) = (0.5 + cos * radius, 0.5 + sin * radius);
                 dot(x, y, 0.09, if k % 2 == 0 { c(198, 170, 104) } else { c(166, 138, 78) });
             }
             ring(0.5, 0.5, 0.15, c(190, 160, 96), 0.08);

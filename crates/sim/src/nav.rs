@@ -105,7 +105,7 @@ impl Nav<'_> {
     fn passable(&self, tx: i32, ty: i32) -> bool {
         match self.map.terrain(tx, ty) {
             None | Some(Terrain::Water) => false,
-            _ => !self.obstacles.tiles.contains(&tile_key(tx, ty)),
+            _ => !self.obstacles.tiles.contains(&tile_key(tx, ty)) && !self.map.surface_cave_gap(tx, ty),
         }
     }
 
@@ -359,6 +359,11 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
     }
     let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
     let (nx, ny) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
+    let next_tile = (nx.div_euclid(TILE_MM) as i32, ny.div_euclid(TILE_MM) as i32);
+    let current_tile = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
+    if next_tile != current_tile && !a.fly && nav.map.surface_cave_gap(next_tile.0, next_tile.1) {
+        return Step::Blocked;
+    }
     match nav.map.terrain_mm(nx, ny) {
         None => return Step::Blocked,
         // people may go into water; nothing else does
@@ -383,11 +388,10 @@ pub(crate) fn advance(a: &mut Agent, nav: &mut Nav, tx: i64, ty: i64) -> Step {
     }
     let center = |t: (i32, i32)| (t.0 as i64 * TILE_MM + TILE_MM / 2, t.1 as i64 * TILE_MM + TILE_MM / 2);
     // a waypoint that has become blocked (a building went up) means the plan is stale
-    if let Some(&next) = a.path.last() {
-        if !nav.passable(next.0, next.1) && next != goal {
+    if let Some(&next) = a.path.last()
+        && !nav.passable(next.0, next.1) && next != goal {
             a.path.clear();
         }
-    }
     if a.path.is_empty() {
         // caught inside a building footprint (it went up on top of us, or a worker came out of its door):
         // there is no route from a blocked tile, so just walk straight out

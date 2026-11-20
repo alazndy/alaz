@@ -11,6 +11,9 @@ use crate::map::ItemKind;
 use crate::world::{Discovery, Milestone};
 use serde::{Deserialize, Serialize};
 
+mod progression;
+pub use progression::{Progression, ProgressionNode, ProgressionState};
+
 /// Days that keep every entry; older days keep only their highlights.
 pub const RECENT_DAYS: usize = 12;
 /// Days kept at all (the oldest are dropped).
@@ -189,12 +192,11 @@ impl Journal {
     /// Write something on `day`'s page. Hazards of one kind are added up; a full page keeps only highlights.
     pub(crate) fn record(&mut self, day: u32, minute: u16, e: Entry) {
         let page = self.page(day);
-        if let Entry::Hazard { kind, n } = e {
-            if let Some((_, Entry::Hazard { n: m, .. })) = page.entries.iter_mut().find(|(_, x)| matches!(x, Entry::Hazard { kind: k, .. } if *k == kind)) {
+        if let Entry::Hazard { kind, n } = e
+            && let Some((_, Entry::Hazard { n: m, .. })) = page.entries.iter_mut().find(|(_, x)| matches!(x, Entry::Hazard { kind: k, .. } if *k == kind)) {
                 *m = m.saturating_add(n);
                 return;
             }
-        }
         if page.entries.len() >= MAX_ENTRIES {
             if !e.highlight() {
                 return;

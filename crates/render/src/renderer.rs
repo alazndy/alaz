@@ -42,6 +42,7 @@ pub(crate) struct Chunk {
     /// What had been seen when the nodes were built (unknown things look plain).
     pub(crate) seen: (u128, u128),
     pub(crate) level: u8,
+    pub(crate) far: bool,
     pub(crate) used: u64,
     /// Which build of the meshes this is (unique per build): the static shadow map is redrawn when it differs.
     pub(crate) build: u64,
@@ -57,10 +58,15 @@ pub(crate) struct BuiltChunk {
     pub(crate) nodes_version: (u64, u64),
     pub(crate) seen: (u128, u128),
     pub(crate) level: u8,
+    /// Trees were built with fewer segments because the chunk lay far from the camera.
+    pub(crate) far: bool,
 }
 
+/// Chunks whose centre lies further than this many tiles from the camera target build their trees with less detail.
+pub(crate) const FAR_TREE_TILES: f32 = 40.0;
+
 /// Build one chunk's meshes and put them on the GPU. Reads the world only, so it can run beside the frame.
-pub(crate) fn build_chunk(device: &wgpu::Device, art: &Art, world: &World, key: (i32, i32), with_terrain: bool) -> BuiltChunk {
+pub(crate) fn build_chunk(device: &wgpu::Device, art: &Art, world: &World, key: (i32, i32), with_terrain: bool, far: bool) -> BuiltChunk {
     let buffer = |v: &Mesh| (device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&v[..]), usage: wgpu::BufferUsages::VERTEX }), v.len() as u32);
     let upload = |v: &Mesh| (!v.is_empty()).then(|| buffer(v));
     let (x0, y0) = (key.0 * CHUNK_TILES, key.1 * CHUNK_TILES);
@@ -75,10 +81,10 @@ pub(crate) fn build_chunk(device: &wgpu::Device, art: &Art, world: &World, key: 
     pre_lift(world, &mut v);
     let decor = upload(&v);
     let mut v = Mesh::fixed();
-    build_nodes(&mut v, world, (x0, y0, x1, y1), world.perception_level());
+    build_nodes(&mut v, world, (x0, y0, x1, y1), world.perception_level(), if far { TreeDetail::Far } else { TreeDetail::Full });
     pre_lift(world, &mut v);
     let nodes = upload(&v);
-    BuiltChunk { key, terrain, nodes, decor, nodes_version: world.node_stamp(x0, y0), seen: world.seen_bits(), level: world.perception_level() }
+    BuiltChunk { key, terrain, nodes, decor, nodes_version: world.node_stamp(x0, y0), seen: world.seen_bits(), level: world.perception_level(), far }
 }
 
 /// The sun's shadow of what stands still (chunk models), kept between frames. It is drawn into a box 1.5 times as
@@ -259,6 +265,7 @@ pub struct Renderer {
     pub(crate) cloud_off: [f32; 2],
     /// The mesh of the cave the player is in, cut in blocks: (node, level, cave version, wet) it was built for.
     pub(crate) cave_blocks: Option<((u32, u8, u64, bool), Vec<Vec<Vertex>>)>,
+    natural_cave_view: Option<frame::NaturalCaveView>,
     /// Where the player was last frame underground (node, level): a change drops the walking animations.
     pub(crate) cave_was: Option<(u32, u8)>,
     /// The torch's strength as drawn (it eases toward the sim's value, so a dying torch dims instead of jumping).
@@ -266,6 +273,7 @@ pub struct Renderer {
     pub(crate) prof: Option<GpuProf>,
     /// `ALAZ_SHOT`: where to write the picture, and how many frames to wait first
     pub(crate) shot: Option<(String, u32)>,
+    pub(crate) shot_once: Option<String>,
 }
 
 impl Renderer {
@@ -296,7 +304,7 @@ impl Renderer {
         config.present_mode =
             if std::env::var_os("ALAZ_NOVSYNC").is_some() { wgpu::PresentMode::AutoNoVsync } else { wgpu::PresentMode::AutoVsync };
         // ALAZ_SHOT copies the finished frame out of the swapchain
-        if std::env::var_os("ALAZ_SHOT").is_some() && surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
+        if (std::env::var_os("ALAZ_SHOT").is_some() || std::env::var_os("ALAZ_PILOT").is_some()) && surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
         surface.configure(&device, &config);
@@ -571,9 +579,11 @@ impl Renderer {
             shadow_dir: [0.0, 1.0, 0.0],
             cloud_off: [0.0, 0.0],
             cave_blocks: None,
+            natural_cave_view: None,
             cave_was: None,
             cave_light: 1.0,
             prof,
+            shot_once: None,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,
             view: std::env::var("ALAZ_DEMO_VIEW").ok().filter(|v| !v.is_empty()).map(crate::assets::View::new),
@@ -874,6 +884,7 @@ impl Renderer {
     /// Drop cached scene buffers (call when the world is replaced).
     pub fn reset_scene(&mut self) {
         self.chunks.clear();
+        self.natural_cave_view = None;
         self.wild_track_steps.clear();
         self.wild_tracks.clear();
     }
@@ -885,7 +896,7 @@ impl Renderer {
         let walk = self.wild_anim.remove(&id);
         let heading = walk.map_or((id as f32 * 2.399) % std::f32::consts::TAU, |w| w.heading);
         let stride = walk.map_or(0.3, |w| w.stride);
-        let side = if id % 2 == 0 { 1.0 } else { -1.0 };
+        let side = if id.is_multiple_of(2) { 1.0 } else { -1.0 };
         self.falls.push(Fall { id, species, x, z, heading, stride, side, at: std::time::Instant::now() });
     }
 
@@ -918,6 +929,20 @@ impl Renderer {
         let rain = if self.weather_kind < 1.5 { self.weather_amount } else { 0.0 };
         let snow = if self.weather_kind > 1.5 { self.weather_amount } else { 0.0 };
         (rain, snow, self.wind)
+    }
+
+    /// Dev aid (the game's pilot): input events as if the window had received them, seen by the next pass.
+    pub fn inject_ui_events(&mut self, events: Vec<egui::Event>) {
+        self.egui_state.egui_input_mut().events.extend(events);
+    }
+
+    /// Dev aid (the game's pilot): saves the next finished frame as a PPM and carries on.
+    pub fn request_shot(&mut self, path: String) {
+        self.shot_once = Some(path);
+    }
+
+    pub fn egui_context(&self) -> &egui::Context {
+        &self.egui_ctx
     }
 
     pub fn pointer_over_ui(&self) -> bool {

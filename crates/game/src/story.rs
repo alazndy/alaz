@@ -146,11 +146,10 @@ impl Story {
             }
             return;
         }
-        if let Some((title, body)) = self.page {
-            if card(ctx, "story_age", &format!("Yeni bir çağ: {title}"), body, "Devam", None).is_some() {
+        if let Some((title, body)) = self.page
+            && card(ctx, "story_age", &format!("Yeni bir çağ: {title}"), body, "Devam", None).is_some() {
                 self.page = None;
             }
-        }
         if !panel_open {
             self.checklist(ctx, w, me, binds);
         }
@@ -212,11 +211,15 @@ fn card(ctx: &egui::Context, id: &str, title: &str, body: &str, go: &str, skip: 
                 ui.label(RichText::new(body).size(22.0).color(Color32::from_rgb(236, 226, 206)));
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new(go).size(22.0)).clicked() {
+                    let go_btn = ui.button(RichText::new(go).size(22.0));
+                    crate::pilot::mark(ctx, || go.to_string(), go_btn.rect);
+                    if go_btn.clicked() {
                         out = Some(true);
                     }
                     if let Some(s) = skip {
-                        if ui.button(RichText::new(s).size(22.0)).clicked() {
+                        let skip_btn = ui.button(RichText::new(s).size(22.0));
+                        crate::pilot::mark(ctx, || s.to_string(), skip_btn.rect);
+                        if skip_btn.clicked() {
                             out = Some(false);
                         }
                     }

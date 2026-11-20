@@ -10,12 +10,11 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, PathBuf)>) {
     for p in entries {
         if p.is_dir() {
             walk(&p, root, out);
-        } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-            if matches!(ext.to_ascii_lowercase().as_str(), "vox" | "glb" | "png" | "toml") {
+        } else if let Some(ext) = p.extension().and_then(|e| e.to_str())
+            && matches!(ext.to_ascii_lowercase().as_str(), "vox" | "glb" | "png" | "toml") {
                 let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
                 out.push((rel, p));
             }
-        }
     }
 }
 

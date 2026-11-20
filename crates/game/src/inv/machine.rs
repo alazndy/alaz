@@ -230,7 +230,7 @@ fn input_zone(ui: &mut Ui, cx: &mut Cx, i: usize, id: &str, cells: &[(Option<Ite
                     Some(_) => SlotLook::Empty,
                     None => SlotLook::Empty,
                 };
-                let resp = super::slot(ui, cx.w, item, count, look);
+                let resp = crate::pilot::scoped("machine", || super::slot(ui, cx.w, item, count, look));
                 if let (Some(k), true) = (item, gives_back && near) {
                     output_slot(cx, i, k, &resp);
                 }
@@ -310,7 +310,7 @@ fn station(ui: &mut Ui, cx: &mut Cx, i: usize, b: &Building, near: bool, art: Re
                     Some(_) => SlotLook::Disabled,
                     None => SlotLook::Empty,
                 };
-                let resp = super::slot(ui, cx.w, item, count, look);
+                let resp = crate::pilot::scoped("machine", || super::slot(ui, cx.w, item, count, look));
                 if let (Some(k), true) = (item, near) {
                     output_slot(cx, i, k, &resp);
                 }

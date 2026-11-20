@@ -3,7 +3,7 @@
 
 use crate::hud::{discovery_name, item_name, kind_name, milestone_name, panel, UiAction};
 use alaz_render::egui::{self, Align2, Color32, RichText};
-use alaz_sim::journal::{Entry, Goal, Hazard, UNKNOWN_DAY};
+use alaz_sim::journal::{Entry, Goal, Hazard};
 use alaz_sim::rules::rules;
 use alaz_sim::world::{Agent, Inventory};
 use alaz_sim::{BuildingKind, CommandKind, Discovery, ItemKind, RecipeId, World};
@@ -11,9 +11,11 @@ use alaz_sim::{BuildingKind, CommandKind, Discovery, ItemKind, RecipeId, World};
 /// UI state of the journal and the camp window.
 #[derive(Default)]
 pub struct JournalState {
-    /// 0 days, 1 discoveries, 2 recipes.
+    /// Days, discoveries, recipes, or the item guide.
     pub section: u8,
     pub search: String,
+    reference: crate::item_book::ItemBook,
+    pub(crate) progression: crate::progression_view::ProgressionView,
     /// The camp window was closed with its button (it comes back with the next sitting down).
     pub camp_closed: bool,
     /// The book lies open beside the inventory window; it is its own window, not a tab.
@@ -21,12 +23,24 @@ pub struct JournalState {
 }
 
 impl JournalState {
+    pub(crate) fn open_reference(&mut self, page: crate::item_book::Page) {
+        self.reference.open(page);
+        self.section = 3;
+        self.book_open = true;
+    }
+
+    pub(crate) fn show_discovery(&mut self, discovery: Discovery) {
+        self.progression.select(discovery);
+        self.section = 1;
+        self.book_open = true;
+    }
+
     pub fn toggle_book(&mut self) {
         self.book_open = !self.book_open;
     }
 }
 
-pub const SECTIONS: [&str; 3] = ["Günler", "Keşifler", "Tarifler"];
+pub const SECTIONS: [&str; 4] = ["Günler", "Keşifler", "Tarifler", "Eşyalar"];
 
 pub fn building_name(k: BuildingKind) -> String {
     rules().buildings.iter().find(|b| b.kind == k).map(|b| b.name.clone()).unwrap_or_else(|| format!("{k:?}"))
@@ -59,7 +73,7 @@ fn hazard_text(h: Hazard, n: u16) -> String {
 }
 
 /// A place from a sketch, only written when there was paper to sketch it on.
-fn place(at: Option<(i32, i32)>) -> String {
+pub(crate) fn place(at: Option<(i32, i32)>) -> String {
     match at {
         Some((x, y)) => format!("  [haritada: {x}, {y}]"),
         None => String::new(),
@@ -117,8 +131,13 @@ pub struct PageCx<'a> {
 pub fn page(ui: &mut egui::Ui, w: &World, st: &mut JournalState, pc: &mut PageCx) {
     match st.section {
         0 => section_days(ui, w),
-        1 => section_finds(ui, w),
-        _ => section_recipes(ui, w, st, pc),
+        1 => {
+            if let Some(page) = st.progression.draw(ui, w, pc.me.id) {
+                st.open_reference(page);
+            }
+        }
+        2 => section_recipes(ui, w, st, pc),
+        _ => st.reference.draw(ui, w, pc),
     }
 }
 
@@ -156,42 +175,16 @@ fn section_days(ui: &mut egui::Ui, w: &World) {
     }
 }
 
-fn section_finds(ui: &mut egui::Ui, w: &World) {
-    let j = &w.journal;
-    let mut found: Vec<Discovery> = alaz_sim::journal::DISCOVERY_ORDER.iter().copied().filter(|d| w.knows(*d)).collect();
-    ui.label(RichText::new(format!("Keşifler ({}/{})", found.len(), alaz_sim::journal::DISCOVERY_ORDER.len())).strong());
-    // newest first: what was found most recently is what people look for
-    found.sort_by_key(|d| std::cmp::Reverse(j.find(*d).map_or(0, |f| if f.day == UNKNOWN_DAY { 0 } else { f.day as u64 * 1440 + f.minute as u64 + 1 })));
-    for d in found {
-        let when = match j.find(d) {
-            Some(f) if f.day != UNKNOWN_DAY => format!("{}, {}{}", day_name(f.day), clock(f.minute), place(f.at)),
-            _ => "baştan beri".to_string(),
-        };
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(discovery_name(d)).color(Color32::from_rgb(190, 214, 170)));
-            ui.label(RichText::new(when).weak());
-        });
-        let made: Vec<String> = rules().recipes.iter().filter(|r| r.discovery == d && r.spawns.is_none()).filter_map(|r| r.outputs.first()).map(|o| item_name(o.item).to_string()).take(4).collect();
-        let built: Vec<String> = rules().buildings.iter().filter(|b| b.discovery == d).map(|b| b.name.clone()).take(3).collect();
-        let mut opens: Vec<String> = Vec::new();
-        for n in built.into_iter().chain(made) {
-            if !opens.contains(&n) {
-                opens.push(n);
-            }
-        }
-        if !opens.is_empty() {
-            ui.add(egui::Label::new(RichText::new(format!("  açtığı: {}", opens.join(", "))).weak().small()).wrap());
-        }
+pub(crate) fn section_firsts(ui: &mut egui::Ui, w: &World) {
+    ui.heading("İlk yapılanlar");
+    if w.journal.firsts.is_empty() {
+        ui.label("İlk yaptığın eşyalar burada görünür.");
     }
-    if !j.firsts.is_empty() {
-        ui.separator();
-        ui.label(RichText::new("İlk yapılanlar").strong());
-        for f in j.firsts.iter().rev().take(24) {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(item_name(f.item)).color(Color32::from_rgb(220, 196, 160)));
-                ui.label(RichText::new(format!("{}, {}{}", day_name(f.day), clock(f.minute), place(f.at))).weak());
-            });
-        }
+    for f in w.journal.firsts.iter().rev().take(24) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(item_name(f.item)).color(Color32::from_rgb(220, 196, 160)));
+            ui.label(RichText::new(format!("{}, {}{}", day_name(f.day), clock(f.minute), place(f.at))).weak());
+        });
     }
 }
 
@@ -218,7 +211,7 @@ fn clues(ui: &mut egui::Ui, w: &World) {
         Discovery::Milling => w.has_seen(ItemKind::Grain),
         _ => true,
     };
-    for r in rules().recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))) {
+    for r in w.rules().recipes.iter().filter(|r| r.station.is_none() && r.ticks == 0 && !w.knows(r.discovery) && era_ready(r.discovery) && !r.inputs.is_empty() && r.inputs.iter().all(|c| w.has_seen(c.item))) {
         egui::Frame::new().fill(Color32::from_black_alpha(60)).inner_margin(8).corner_radius(0).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -251,7 +244,7 @@ fn recipe_tip(w: &World, me: &Agent, r: &alaz_sim::rules::RecipeDef) -> String {
 type Group<'a> = (Option<BuildingKind>, Vec<(usize, &'a alaz_sim::rules::RecipeDef)>);
 
 fn section_recipes(ui: &mut egui::Ui, w: &World, st: &mut JournalState, pc: &mut PageCx) {
-    let defs = rules();
+    let defs = w.rules();
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut st.search).hint_text("Tarif ara...").desired_width(220.0));
         if !st.search.is_empty() && ui.small_button("Temizle").clicked() {
@@ -304,6 +297,9 @@ fn section_recipes(ui: &mut egui::Ui, w: &World, st: &mut JournalState, pc: &mut
                         _ if makeable => pc.acts.push(UiAction::Cmd(CommandKind::Craft { recipe: RecipeId(i as u16) })),
                         _ => {}
                     }
+                }
+                if ui.small_button("Tarif ayrıntısı").clicked() {
+                    st.open_reference(crate::item_book::Page::Recipe(i));
                 }
                 ui.add(egui::Label::new(RichText::new(recipe_line(r)).weak().small()).wrap());
             }

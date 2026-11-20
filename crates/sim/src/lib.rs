@@ -4,8 +4,10 @@
 pub mod agents;
 pub mod buildings;
 pub mod camp;
+pub mod cave_terrain;
 pub mod caves;
 pub mod debug;
+pub mod item_guide;
 pub mod journal;
 pub mod command;
 pub mod map;

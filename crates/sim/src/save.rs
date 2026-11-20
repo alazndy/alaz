@@ -10,7 +10,11 @@ use crate::world::{Agent, World, WorldSettings};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 4] = b"ALAZ";
+/// File version for worlds with the original walkable caves.
 pub const FORMAT_VERSION: u32 = 30;
+/// Natural caves save excavated voxels by their world coordinates.
+const NATURAL_CAVE_VERSION: u32 = 32;
+const PRE_RUBBLE_VERSION: u32 = 31;
 /// The format before caves could be walked in: the extension block without them. Still read (a miner inside a chamber is put back outside).
 const PRE_CAVE_VERSION: u32 = 29;
 /// The format before the journal: the extension block without it. Still read (formats 27 and 28 share it).
@@ -78,7 +82,7 @@ fn decode(version: u32, payload: &[u8]) -> Result<SaveData, SaveError> {
 }
 
 fn readable(version: u32) -> bool {
-    matches!(version, FORMAT_VERSION | PRE_CAVE_VERSION | PRE_JOURNAL_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
+    matches!(version, NATURAL_CAVE_VERSION | PRE_RUBBLE_VERSION | FORMAT_VERSION | PRE_CAVE_VERSION | PRE_JOURNAL_VERSION | PRE_GRID_VERSION | PRE_INDUSTRY_VERSION | PRE_BURN_VERSION | PRE_FACING_VERSION | PRE_CHUNK_VERSION | PRE_NUTRITION_VERSION | PRE_WEAR_VERSION | PRE_EXT_VERSION | PRE_LOG_VERSION | PRE_PHYSICS_VERSION | LEGACY_VERSION)
 }
 const HEADER_LEN: usize = 4 + 4 + 8;
 
@@ -433,6 +437,23 @@ struct SaveData {
     ext: SaveExt,
 }
 
+#[derive(Default, Deserialize)]
+struct NaturalCaveEdits {
+    dug: Vec<crate::cave_terrain::CaveTile>,
+    rubble: Vec<crate::cave_terrain::CaveTile>,
+}
+
+fn decode_with_caves(version: u32, payload: &[u8]) -> Result<(SaveData, NaturalCaveEdits), SaveError> {
+    match version {
+        NATURAL_CAVE_VERSION => postcard::from_bytes(payload).map_err(|_| SaveError::Decode),
+        PRE_RUBBLE_VERSION => {
+            let (data, dug) = postcard::from_bytes(payload).map_err(|_| SaveError::Decode)?;
+            Ok((data, NaturalCaveEdits { dug, rubble: Vec::new() }))
+        }
+        _ => decode(version, payload).map(|data| (data, NaturalCaveEdits::default())),
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn checksum_for_tests(data: &[u8]) -> u64 {
     checksum(data)
@@ -475,7 +496,7 @@ pub fn peek(bytes: &[u8]) -> Result<SaveInfo, SaveError> {
     if checksum(payload) != sum {
         return Err(SaveError::ChecksumMismatch);
     }
-    let data = decode(version, payload)?.core;
+    let data = decode_with_caves(version, payload)?.0.core;
     Ok(SaveInfo {
         seed: data.seed,
         tick: data.tick,
@@ -529,10 +550,15 @@ impl World {
             cave_agents: self.agents.iter().map(|a| a.cave).collect(),
         };
         let data = SaveData { core, air: self.air.clone(), bodies: self.bodies.clone(), ext };
-        let payload = postcard::to_allocvec(&data).expect("serialize save");
+        let (version, payload) = if crate::map::has_natural_caves(self.seed) {
+            (NATURAL_CAVE_VERSION, postcard::to_allocvec(&(&data, (&self.dug_cave, &self.cave_rubble))))
+        } else {
+            (FORMAT_VERSION, postcard::to_allocvec(&data))
+        };
+        let payload = payload.expect("serialize save");
         let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
         out.extend_from_slice(MAGIC);
-        out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        out.extend_from_slice(&version.to_le_bytes());
         out.extend_from_slice(&checksum(&payload).to_le_bytes());
         out.extend_from_slice(&payload);
         out
@@ -554,7 +580,7 @@ impl World {
         if checksum(payload) != sum {
             return Err(SaveError::ChecksumMismatch);
         }
-        let SaveData { core: data, air, bodies, ext } = decode(version, payload)?;
+        let (SaveData { core: data, air, bodies, ext }, edits) = decode_with_caves(version, payload)?;
         // the save's recipe indexes must mean the same recipes: the rules it loads under (its own, or the base
         // rules) must start with the recipes it knew. Rules that only grew at the end, or retuned a recipe, are fine.
         // A save from an older format carries no list; its rules have only grown since, so it carries over.
@@ -573,6 +599,23 @@ impl World {
             return Err(SaveError::WorldMismatch);
         }
         let mut w = World::for_loading(data.seed, data.map_w, data.map_h);
+        if crate::map::has_natural_caves(data.seed) != matches!(version, NATURAL_CAVE_VERSION | PRE_RUBBLE_VERSION) {
+            return Err(SaveError::WorldMismatch);
+        }
+        for tile in edits.dug {
+            if !w.map.in_bounds(tile.x, tile.y) || !(-95..=70).contains(&tile.z) {
+                return Err(SaveError::WorldMismatch);
+            }
+            w.load_cave_edit(tile);
+        }
+        for tile in edits.rubble {
+            if !w.map.in_bounds(tile.x, tile.y) || !(-95..=70).contains(&tile.z)
+                || !crate::cave_terrain::CaveNav::new(&w.map, &w.dug_cave).floor(tile)
+            {
+                return Err(SaveError::WorldMismatch);
+            }
+            w.load_cave_rubble(tile);
+        }
         // a world made in chunks: make them again in the order they were made (animals come from the save)
         for &(cx, cy) in &ext.chunks {
             w.make_chunk(cx, cy, false);
@@ -660,7 +703,14 @@ impl World {
             }
             for (i, c) in ext.cave_agents.iter().enumerate() {
                 if let Some(c) = c {
-                    if w.cave_for(c.node).is_none() {
+                    let valid = if let Some(tile) = c.natural_tile() {
+                        w.natural_mouth(c.node).is_some()
+                            && !w.natural_cave_rubble_at(tile)
+                            && crate::cave_terrain::CaveNav::new(&w.map, &w.dug_cave).floor(tile)
+                    } else {
+                        w.cave_for(c.node).is_some()
+                    };
+                    if !valid {
                         return Err(SaveError::WorldMismatch);
                     }
                     w.agents[i].cave = Some(*c);
@@ -669,7 +719,7 @@ impl World {
         }
         // the hash covers every item slot and every falling thing, so an upgraded save cannot match the one it was
         // written with
-        if version == FORMAT_VERSION && w.hash() != data.state_hash {
+        if matches!(version, FORMAT_VERSION | PRE_RUBBLE_VERSION | NATURAL_CAVE_VERSION) && w.hash() != data.state_hash {
             return Err(SaveError::HashMismatch);
         }
         Ok(w)
@@ -855,6 +905,17 @@ mod tests {
         assert!(b.has_seen(late) && b.has_seen(ItemKind::Beam));
         assert_eq!(b.hash(), w.hash());
         assert_eq!(b.buildings.len(), w.buildings.len());
+    }
+
+    #[test]
+    fn a_natural_cave_format_31_save_is_upgraded() {
+        let w = World::with_size(crate::map::tag_seed_natural(42, 256), 256, 256);
+        let bytes = w.to_bytes();
+        let (data, edits) = decode_with_caves(NATURAL_CAVE_VERSION, &bytes[HEADER_LEN..]).unwrap();
+        let old = postcard::to_allocvec(&(&data, &edits.dug)).unwrap();
+        let loaded = World::from_bytes(&framed(PRE_RUBBLE_VERSION, &old)).unwrap();
+        assert_eq!(loaded.hash(), w.hash());
+        assert!(loaded.cave_rubble.is_empty());
     }
 
     /// A format-24 save (no building facing) loads with everything facing the same way.

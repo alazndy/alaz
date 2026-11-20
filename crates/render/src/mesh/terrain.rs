@@ -2,50 +2,51 @@ use super::*;
 
 pub(crate) const HWIN: u32 = 256;
 
-/// Ground height in metres at a point, bilinear between tile corners (what the shader lifts everything by).
-/// Distance to the shore at every tile corner of the height window, in tiles: positive out on the water (how deep
-/// it is, as far as the eye can tell), negative on land, 0 along the water's edge. Two chamfer passes over the window.
+/// Distance from the centre of each tile to the shore, positive in water.
 pub(crate) fn shore_field(world: &World, hx: i32, hy: i32) -> Vec<f32> {
-    const CAP: f32 = 6.0;
-    let n = HWIN as i32 + 1;
-    let wet = |tx: i32, ty: i32| world.map.terrain(tx, ty).is_none_or(|t| t == Terrain::Water);
-    // per tile (one wider than the window, so every corner has its four tiles): distance to the other kind
+    shore_distances(hx, hy, |tx, ty| world.map.terrain(tx, ty).is_none_or(|t| t == Terrain::Water))
+}
+
+fn shore_distances(hx: i32, hy: i32, wet: impl Fn(i32, i32) -> bool) -> Vec<f32> {
+    // Compute the whole distance range outside the window as well so that shifting it never moves the shore.
+    const PAD: i32 = 6;
+    const CAP: f32 = PAD as f32 - 0.5;
+    let size = HWIN as i32;
+    let n = size + 2 * PAD;
     let mut d = vec![CAP; (n * n) as usize];
-    let water: Vec<bool> = (0..n * n).map(|i| wet(hx - 1 + i % n, hy - 1 + i / n)).collect();
+    let water: Vec<bool> = (0..n * n).map(|i| wet(hx - PAD + i % n, hy - PAD + i / n)).collect();
     let idx = |x: i32, y: i32| (y * n + x) as usize;
     for y in 0..n {
         for x in 0..n {
             let me = water[idx(x, y)];
-            let edge = [(-1, 0), (1, 0), (0, -1), (0, 1)].iter().any(|&(dx, dy)| {
+            let edge = [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().any(|(dx, dy)| {
                 let (a, b) = (x + dx, y + dy);
                 a >= 0 && b >= 0 && a < n && b < n && water[idx(a, b)] != me
             });
             if edge {
-                d[idx(x, y)] = 1.0;
+                d[idx(x, y)] = 0.5;
             }
         }
     }
-    let pass = |d: &mut Vec<f32>, order: &mut dyn Iterator<Item = (i32, i32)>, back: bool| {
+    let pass = |d: &mut [f32], order: &mut dyn Iterator<Item = (i32, i32)>, back: bool| {
         let s = if back { 1 } else { -1 };
         for (x, y) in order {
             let mut best = d[idx(x, y)];
-            for (dx, dy, c) in [(s, 0, 1.0), (0, s, 1.0), (s, s, 1.414), (-s, s, 1.414)] {
+            for (dx, dy, c) in [(s, 0, 1.0), (0, s, 1.0), (s, s, std::f32::consts::SQRT_2), (-s, s, std::f32::consts::SQRT_2)] {
                 let (a, b) = (x + dx, y + dy);
                 if a >= 0 && b >= 0 && a < n && b < n {
                     best = best.min(d[idx(a, b)] + c);
                 }
             }
-            d[idx(x, y)] = best.min(CAP);
+            d[idx(x, y)] = best;
         }
     };
     pass(&mut d, &mut (0..n).flat_map(|y| (0..n).map(move |x| (x, y))), false);
     pass(&mut d, &mut (0..n).rev().flat_map(|y| (0..n).rev().map(move |x| (x, y))), true);
-    let signed = |x: i32, y: i32| if water[idx(x, y)] { d[idx(x, y)] - 0.5 } else { -(d[idx(x, y)] - 0.5) };
-    (0..HWIN as i32 * HWIN as i32)
+    (0..size * size)
         .map(|i| {
-            let (x, y) = (i % HWIN as i32 + 1, i / HWIN as i32 + 1);
-            // a corner sits between four tiles
-            (signed(x - 1, y - 1) + signed(x, y - 1) + signed(x - 1, y) + signed(x, y)) * 0.25
+            let at = idx(i % size + PAD, i / size + PAD);
+            if water[at] { d[at] } else { -d[at] }
         })
         .collect()
 }
@@ -69,6 +70,9 @@ pub(crate) fn tile_spr(art: &Art, t: Terrain, h: u32) -> Spr {
 pub(crate) fn build_terrain(out: &mut Mesh, art: &Art, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
     for ty in y0..y1 {
         for tx in x0..x1 {
+            if world.map.surface_cave_gap(tx, ty) {
+                continue;
+            }
             let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
             let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
             let s = tile_spr(art, t, h);
@@ -114,5 +118,28 @@ pub(crate) fn edge_blend(out: &mut Mesh, art: &Art, world: &World, tx: i32, ty: 
         let (fx, fz) = (tx as f32 + 0.5, ty as f32 + 0.5);
         let k = if n == Terrain::Water { 1.0 } else { tile_shade(world, tx, ty) };
         decal_sized(out, art.edge[rank(n) as usize * 8 + dir], fx, fz, 1.0, 1.0, [k, k, k], 0.0);
+    }
+}
+
+#[cfg(test)]
+mod shore_tests {
+    use super::*;
+
+    #[test]
+    fn a_one_tile_stream_keeps_a_wet_centre() {
+        let field = shore_distances(-2, 0, |x, _| x == 0);
+        assert_eq!(&field[..5], &[-1.5, -0.5, 0.5, -0.5, -1.5]);
+    }
+
+    #[test]
+    fn shoreline_distance_agrees_where_windows_overlap() {
+        let wet = |x, y| x > y;
+        let left = shore_distances(-12, -18, wet);
+        let right = shore_distances(0, 0, wet);
+        for y in 0..28 {
+            for x in 0..28 {
+                assert_eq!(left[(y + 18) * HWIN as usize + x + 12], right[y * HWIN as usize + x]);
+            }
+        }
     }
 }

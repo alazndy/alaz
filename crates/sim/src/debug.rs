@@ -177,7 +177,7 @@ impl Script {
                 } else if w.tick >= give_up {
                     self.fail(w, format!("gather {node:?}: only {} of {target} {item:?} in time", a.inventory.get(item)));
                     self.wait = Wait::None;
-                } else if matches!(a.task, crate::world::Task::Idle) && w.tick % 30 == 0 {
+                } else if matches!(a.task, crate::world::Task::Idle) && w.tick.is_multiple_of(30) {
                     // the node ran out or the pick-up is done: the next nearest
                     return match nearest(w, &a, node) {
                         Some(id) => vec![cmd(CommandKind::Gather { node: id })],
@@ -199,7 +199,7 @@ impl Script {
                         return vec![cmd(CommandKind::Walk { x: a.x + 1, y: a.y })];
                     }
                     // a perfect hand, every few ticks
-                    if w.tick % 4 != 0 {
+                    if !w.tick.is_multiple_of(4) {
                         return Vec::new();
                     }
                     let k = match v.kind {
@@ -219,7 +219,7 @@ impl Script {
                 if w.tick >= until {
                     self.wait = Wait::None;
                 } else {
-                    if w.tick % 12 == 0 {
+                    if w.tick.is_multiple_of(12) {
                         let len = ((dx * dx + dy * dy) as f64).sqrt().max(1.0);
                         return vec![cmd(CommandKind::Walk { x: a.x + (dx as f64 / len * 4_000.0) as i64, y: a.y + (dy as f64 / len * 4_000.0) as i64 })];
                     }

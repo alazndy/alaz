@@ -117,8 +117,8 @@ impl Wild {
                 .iter()
                 .map(|&(px, py)| ((px - self.x).pow(2) + (py - self.y).pow(2), px, py))
                 .min();
-            if let Some((d2, px, py)) = nearest {
-                if d2 < FLEE_RADIUS_MM * FLEE_RADIUS_MM {
+            if let Some((d2, px, py)) = nearest
+                && d2 < FLEE_RADIUS_MM * FLEE_RADIUS_MM {
                     // run straight away from the closest person, stop at water or the map edge
                     let (dx, dy) = (self.x - px, self.y - py);
                     let len = ((dx * dx + dy * dy) as u64).isqrt().max(1) as i64;
@@ -131,10 +131,9 @@ impl Wild {
                     self.ty = self.y;
                     return;
                 }
-            }
         }
         if self.trust > 0 {
-            if tick % 300 == 0 {
+            if tick.is_multiple_of(300) {
                 self.trust -= 1;
             }
             return;

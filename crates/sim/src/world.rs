@@ -82,6 +82,14 @@ fn node_contrib(index: u32, n: &Node) -> u64 {
 /// Nodes by chunk: for each chunk, the indexes of its nodes sorted by (row, column).
 pub(crate) type NodeChunks = std::collections::BTreeMap<(i32, i32), Vec<u32>>;
 
+/// Visit only the perimeter, in the same row order as a filled square.
+fn square_ring(r: i32) -> impl Iterator<Item = (i32, i32)> {
+    (-r..=r).flat_map(move |dy| {
+        let step = if dy.abs() == r { 1 } else { 2 * r };
+        (-r..=r).step_by(step as usize).map(move |dx| (dx, dy))
+    })
+}
+
 fn node_chunk(tx: i32, ty: i32) -> (i32, i32) {
     (tx.div_euclid(crate::map::CHUNK), ty.div_euclid(crate::map::CHUNK))
 }
@@ -174,8 +182,6 @@ const CRAFT_IDLE_LIMIT: u16 = 3600;
 /// Luck: a good craft may turn out fine, a failed one may be saved.
 const LUCK_UPGRADE_PERCENT: u64 = 25;
 const LUCK_RESCUE_PERCENT: u64 = 20;
-/// A water wheel powers stations this close; powered jobs run twice as fast.
-
 const TAME_TICKS: u32 = 120;
 const TAME_GAIN: i32 = 34;
 const TAME_RANGE_MM: i64 = 1_500;
@@ -238,6 +244,7 @@ const SPRINT_REGEN: i32 = 5;
 pub const BREAK_TICKS: i32 = 7_200;
 const INFECTION_PCT: u64 = 35;
 mod cave_play;
+mod cave_natural;
 pub use cave_play::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1284,6 +1291,17 @@ pub struct World {
     pub(crate) journal_cursor: usize,
     /// The caves people have been in, by the node index of their mouth (cut from the seed when first needed).
     pub caves: std::collections::BTreeMap<u32, crate::caves::Cave>,
+    /// Excavated rock in natural caves, shared by every entrance and player.
+    pub(crate) dug_cave: std::collections::BTreeSet<crate::cave_terrain::CaveTile>,
+    pub(crate) cave_rubble: std::collections::BTreeSet<crate::cave_terrain::CaveTile>,
+    pub(crate) dug_cave_digest: u64,
+}
+
+/// Whether picking tall grass on this tile can drop grain seed: not where the tufts are flax (wet) or lentil
+/// (warm and dry). Cotton tufts, a rarer pick, are not told apart here.
+pub(crate) fn grass_gives_seed(seed: u64, tx: i32, ty: i32) -> bool {
+    let (warm, wet) = crate::map::climate(seed, tx, ty);
+    wet <= 550 && !(warm > 580 && wet < 480)
 }
 
 impl World {
@@ -1394,6 +1412,9 @@ impl World {
             journal: Default::default(),
             journal_cursor: 0,
             caves: Default::default(),
+            dug_cave: Default::default(),
+            cave_rubble: Default::default(),
+            dug_cave_digest: 0,
         };
         w.spawn_mm = w.find_spawn();
         let spawn_tile = ((w.spawn_mm.0 / TILE_MM) as i32, (w.spawn_mm.1 / TILE_MM) as i32);
@@ -1435,60 +1456,91 @@ impl World {
                         shore += (95..108).contains(&v) as i32;
                         sea += (v < 95) as i32;
                     }
+                    if rock >= 40 && shore >= 6 && sea >= 2 {
+                        return true;
+                    }
                 }
             }
-            rock >= 40 && shore >= 6 && sea >= 2
+            false
         };
         let good = |tx: i32, ty: i32| -> bool {
-            if !matches!(self.map.terrain(tx, ty), Some(Terrain::Grass | Terrain::Forest)) || self.map.node_for(seed, tx, ty).is_some() {
+            if !self.map.cave_accessible_spawn(tx, ty)
+                || !matches!(self.map.terrain(tx, ty), Some(Terrain::Grass | Terrain::Forest))
+                || self.map.node_for(seed, tx, ty).is_some()
+            {
                 return false;
             }
-            let mut n = [0u32; 11];
-            for dy in -20..=20 {
+            let (warm, wet) = crate::map::climate(seed, tx, ty);
+            if wet < 350 || warm > 650
+                || !(-30..=30).step_by(3).any(|dy| (-30..=30).step_by(3).any(|dx| self.map.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
+            {
+                return false;
+            }
+
+            let mut needed = [0u32; NodeKind::CaveMouth as usize + 1];
+            for (kind, count) in [(NodeKind::Tree, 4), (NodeKind::StoneOutcrop, 3), (NodeKind::BerryBush, 1), (NodeKind::Deadwood, 1), (NodeKind::FiberPlant, 2)] {
+                needed[kind as usize] = count;
+            }
+            let mut remaining = needed.iter().sum::<u32>();
+            'resources: for dy in -20..=20 {
                 for dx in -20..=20 {
-                    if let Some(k) = self.map.node_for(seed, tx + dx, ty + dy) {
-                        n[k as usize] += 1;
+                    if let Some(kind) = self.map.node_for(seed, tx + dx, ty + dy) {
+                        let need = &mut needed[kind as usize];
+                        if *need > 0 {
+                            *need -= 1;
+                            remaining -= 1;
+                            if remaining == 0 {
+                                break 'resources;
+                            }
+                        }
                     }
                 }
             }
-            let has = |k: NodeKind, m: u32| n[k as usize] >= m;
-            has(NodeKind::Tree, 4) && has(NodeKind::StoneOutcrop, 3) && has(NodeKind::BerryBush, 1) && has(NodeKind::Deadwood, 1) && has(NodeKind::FiberPlant, 2)
-                && (-30..=30).step_by(3).any(|dy| (-30..=30).step_by(3).any(|dx| self.map.terrain(tx + dx, ty + dy) == Some(Terrain::Water)))
-        };
-        // clay for the first pots within 150 m, and (newer worlds, whose rock can lie farther off) copper, the first
-        // metal, within 200 m: looked up in lists gathered once per searched cell, not by scanning round each spot
-        let finds = |x0: i32, y0: i32, x1: i32, y1: i32| -> (Vec<(i32, i32)>, Vec<(i32, i32)>) {
-            let (mut clay, mut copper) = (Vec::new(), Vec::new());
-            for ty in y0..=y1 {
-                for tx in x0..=x1 {
-                    match self.map.node_for(seed, tx, ty) {
-                        Some(NodeKind::ClayDeposit) => clay.push((tx, ty)),
-                        Some(NodeKind::CopperOutcrop) => copper.push((tx, ty)),
-                        _ => {}
-                    }
-                }
+            if remaining > 0 {
+                return false;
             }
-            (clay, copper)
+            // Dry-enough grass drops the first farm seeds. The shelter also needs a clear patch near camp.
+            let seed_tufts = (-30..=30).flat_map(|dy| (-30..=30).map(move |dx| (dx, dy))).filter(|&(dx, dy)| {
+                self.map.node_for(seed, tx + dx, ty + dy) == Some(NodeKind::FiberPlant)
+                    && grass_gives_seed(seed, tx + dx, ty + dy)
+            });
+            seed_tufts.take(8).count() >= 8
+                && (-12..=12).step_by(2).any(|cy| (-12..=12).step_by(2).any(|cx| {
+                    self.map.terrain(tx + cx, ty + cy) != Some(Terrain::Water)
+                        && (-2..=2).all(|dy| (-2..=2).all(|dx| self.map.node_for(seed, tx + cx + dx, ty + cy + dy).is_none() && self.map.terrain(tx + cx + dx, ty + cy + dy) != Some(Terrain::Water)))
+                }))
         };
-        let within = |list: &[(i32, i32)], tx: i32, ty: i32, r: i32| list.iter().any(|&(x, y)| (x - tx).pow(2) + (y - ty).pow(2) <= r * r);
+        // Stop at the first matching deposit in the same radius. Most spots need only a few nearby rows.
+        let has_deposit = |tx: i32, ty: i32, radius: i32, kind: NodeKind| {
+            (0..=2 * radius).any(|row| {
+                let dy = if row % 2 == 0 { row / 2 } else { -(row + 1) / 2 };
+                let y = ty + dy;
+                if y < 0 || y >= self.map.h {
+                    return false;
+                }
+                let half = (radius * radius - dy * dy).isqrt();
+                ((tx - half).max(0)..=(tx + half).min(self.map.w - 1))
+                    .any(|x| self.map.node_for(seed, x, y) == Some(kind))
+            })
+        };
         // the third generator's land comes in continents: first find a 160 m cell that sits in good country, then a
         // spot inside it; the second's is everywhere, so it is searched spot by spot from the middle
-        let (cell, step) = if crate::map::gen_v3(seed) { (160, 16) } else { (12, 12) };
+        let continents = crate::map::gen_v3(seed);
+        let (cell, step) = if continents { (160, 16) } else { (12, 12) };
         // one cell: the first spot in it (in a fixed order) that passes everything
         let eval_cell = |bx: i32, by: i32| -> Option<(i64, i64)> {
-            if !self.map.in_bounds(bx, by) || (crate::map::gen_v3(seed) && !country(bx, by)) {
+            if !self.map.in_bounds(bx, by) || (continents && !country(bx, by)) {
                 return None;
             }
-            let mut lists: Option<(Vec<(i32, i32)>, Vec<(i32, i32)>)> = None;
             for oy in (0..cell).step_by(step as usize) {
                 for ox in (0..cell).step_by(step as usize) {
                     let (tx, ty) = (bx - cell / 2 + ox, by - cell / 2 + oy);
                     if !self.map.in_bounds(tx, ty) || !good(tx, ty) {
                         continue;
                     }
-                    // the lists for this cell, gathered the first time a spot in it passes the rest
-                    let (clay, copper) = lists.get_or_insert_with(|| finds(bx - cell / 2 - 200, by - cell / 2 - 200, bx + cell / 2 + 200, by + cell / 2 + 200));
-                    if within(clay, tx, ty, 150) && (!crate::map::gen_v3(seed) || within(copper, tx, ty, 200)) {
+                    if has_deposit(tx, ty, 150, NodeKind::ClayDeposit)
+                        && (!continents || has_deposit(tx, ty, 200, NodeKind::CopperOutcrop))
+                    {
                         return Some((tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2));
                     }
                 }
@@ -1499,24 +1551,19 @@ impl World {
         // them in ring order that has a spot wins, so every machine picks the same start
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
         for r in 0..(self.map.w.max(self.map.h) / 2 / cell).min(700) {
-            let mut ring = Vec::new();
-            for dy in -r..=r {
-                for dx in -r..=r {
-                    if dx.abs().max(dy.abs()) == r {
-                        ring.push((cx + dx * cell, cy + dy * cell));
-                    }
-                }
-            }
-            let found: Vec<Option<(i64, i64)>> = if threads <= 1 || ring.len() < 4 {
-                ring.iter().map(|&(bx, by)| eval_cell(bx, by)).collect()
+            let ring: Vec<_> = square_ring(r).map(|(dx, dy)| (cx + dx * cell, cy + dy * cell)).collect();
+            let found = if threads <= 1 || ring.len() < 4 {
+                ring.iter().find_map(|&(bx, by)| eval_cell(bx, by))
             } else {
                 let per = ring.len().div_ceil(threads);
                 std::thread::scope(|sc| {
-                    let parts: Vec<_> = ring.chunks(per).map(|part| sc.spawn(|| part.iter().map(|&(bx, by)| eval_cell(bx, by)).collect::<Vec<_>>())).collect();
-                    parts.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+                    let parts: Vec<_> = ring.chunks(per)
+                        .map(|part| sc.spawn(|| part.iter().find_map(|&(bx, by)| eval_cell(bx, by))))
+                        .collect();
+                    parts.into_iter().find_map(|part| part.join().expect("spawn search worker"))
                 })
             };
-            if let Some(p) = found.into_iter().flatten().next() {
+            if let Some(p) = found {
                 return Some(p);
             }
         }
@@ -1553,13 +1600,12 @@ impl World {
                     idx.push(self.nodes.len() as u32);
                     self.nodes.push(Node { kind, tx, ty, amount: kind.initial_amount() });
                 }
-                if wild && (tx - spawn_tile.0).abs().max((ty - spawn_tile.1).abs()) >= 15 {
-                    if let Some(species) = wildlife::wild_at(seed, &self.map, tx, ty, spawn_tile) {
+                if wild && (tx - spawn_tile.0).abs().max((ty - spawn_tile.1).abs()) >= 15
+                    && let Some(species) = wildlife::wild_at(seed, &self.map, tx, ty, spawn_tile) {
                         let id = self.wild.iter().map(|w| w.id + 1).max().unwrap_or(0);
                         let (x, y) = (tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2);
                         self.wild.push(Wild::new(id, species, x, y));
                     }
-                }
             }
         }
         if !idx.is_empty() {
@@ -1582,25 +1628,22 @@ impl World {
 
     /// Nearest free land tile to the map center (square rings outward).
     fn find_spawn(&self) -> (i64, i64) {
-        if crate::map::gen_v2(self.seed) {
-            if let Some(p) = self.find_good_spawn() {
+        if crate::map::gen_v2(self.seed)
+            && let Some(p) = self.find_good_spawn() {
                 return p;
             }
-        }
         let (cx, cy) = (self.map.w / 2, self.map.h / 2);
         for r in 0..self.map.w.max(self.map.h) / 2 {
-            for dy in -r..=r {
-                for dx in -r..=r {
-                    if dx.abs().max(dy.abs()) != r {
-                        continue;
-                    }
-                    let (tx, ty) = (cx + dx, cy + dy);
-                    let ok = matches!(self.map.terrain(tx, ty), Some(Terrain::Grass | Terrain::Sand | Terrain::Forest));
-                    if ok && self.map.node_for(self.seed, tx, ty).is_none() {
-                        return (tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2);
-                    }
+            for (dx, dy) in square_ring(r) {
+                let (tx, ty) = (cx + dx, cy + dy);
+                let ok = matches!(self.map.terrain(tx, ty), Some(Terrain::Grass | Terrain::Sand | Terrain::Forest));
+                if ok && self.map.cave_accessible_spawn(tx, ty) && self.map.node_for(self.seed, tx, ty).is_none() {
+                    return (tx as i64 * TILE_MM + TILE_MM / 2, ty as i64 * TILE_MM + TILE_MM / 2);
                 }
             }
+        }
+        if let Some((x, y)) = self.map.cave_spawn_fallback() {
+            return (i64::from(x) * TILE_MM + TILE_MM / 2, i64::from(y) * TILE_MM + TILE_MM / 2);
         }
         (cx as i64 * TILE_MM, cy as i64 * TILE_MM)
     }
@@ -1709,7 +1752,7 @@ impl World {
         let rules_now = self.rules_arc();
         let a = self.agents.get(agent.0 as usize)?;
         let Task::Craft { recipe, step, done, hits, salt, stack, n, .. } = a.task else { return None };
-        let def = (&*rules_now).recipes.get(recipe as usize)?;
+        let def = rules_now.recipes.get(recipe as usize)?;
         let mg = def.steps.get(step as usize)?;
         let g = craft_geometry(self.perception_level(), self.mastery(recipe as usize), mg, &a.inventory, self.seed, a.id, recipe, step, done, salt, &stack);
         Some(CraftView {
@@ -1775,7 +1818,7 @@ impl World {
     /// Practice with a recipe: +1 to its minigame targets for every 5 of its product the tribe has made, up to +4.
     pub fn mastery(&self, recipe: usize) -> u32 {
         let rules_now = self.rules_arc();
-        let Some(first) = (&*rules_now).recipes.get(recipe).and_then(|r| r.outputs.first()) else { return 0 };
+        let Some(first) = rules_now.recipes.get(recipe).and_then(|r| r.outputs.first()) else { return 0 };
         // once a book has been printed the tribe has its crafts written down: practice sinks in faster
         let per = if self.produced[ItemKind::Book as usize] > 0 { 3 } else { 5 };
         (self.produced[first.item as usize] / per).min(4)
@@ -1874,7 +1917,7 @@ impl World {
     /// As `can_place`, ignoring one building (the one being moved).
     pub fn can_place_except(&self, kind: BuildingKind, x: i64, y: i64, skip: Option<usize>) -> Result<(), Reject> {
         let rules_now = self.rules_arc();
-        let r = (&*rules_now).building(kind).radius_mm;
+        let r = rules_now.building(kind).radius_mm;
         if kind == BuildingKind::WaterWheel
             && !self.map.water_within(x.div_euclid(TILE_MM) as i32, y.div_euclid(TILE_MM) as i32, 3)
         {
@@ -1889,6 +1932,9 @@ impl World {
             return Err(Reject::Blocked);
         }
         for (ox, oy) in [(0, 0), (r, 0), (-r, 0), (0, r), (0, -r)] {
+            if self.map.surface_cave_gap(((x + ox).div_euclid(TILE_MM)) as i32, ((y + oy).div_euclid(TILE_MM)) as i32) {
+                return Err(Reject::Blocked);
+            }
             match self.map.terrain_mm(x + ox, y + oy) {
                 None | Some(Terrain::Water) => return Err(Reject::Blocked),
                 _ => {}
@@ -1976,7 +2022,7 @@ impl World {
             CommandKind::Gather { node } => {
                 // (a cave mouth is entered, not worked from outside)
                 if kind_of_agent.can_harvest() && self.nodes.get(node.0 as usize).is_some_and(|n| n.amount > 0 && n.kind != NodeKind::CaveMouth) {
-                    if let Err(why) = gate_check_in(&*rules_now, &self.nodes[node.0 as usize], kind_of_agent, &self.agents[idx].inventory) {
+                    if let Err(why) = gate_check_in(&rules_now, &self.nodes[node.0 as usize], kind_of_agent, &self.agents[idx].inventory) {
                         return self.reject(id, why);
                     }
                     self.agents[idx].task = Task::Gather { node: *node, progress: 0 };
@@ -2123,7 +2169,7 @@ impl World {
                 if short {
                     return self.reject(id, Reject::NoMaterials);
                 }
-                let found = (&*rules_now).recipes.iter().position(|r| {
+                let found = rules_now.recipes.iter().position(|r| {
                     r.station.is_none() && r.ticks == 0 && {
                         let mut need = [0u16; ItemKind::COUNT];
                         for i in &r.inputs {
@@ -2134,7 +2180,7 @@ impl World {
                 });
                 match found {
                     Some(r) => {
-                        let d = (&*rules_now).recipes[r].discovery;
+                        let d = rules_now.recipes[r].discovery;
                         self.discover(d);
                         self.apply_command(&Command { agent: id, kind: CommandKind::Craft { recipe: crate::command::RecipeId(r as u16) } });
                     }
@@ -2142,7 +2188,7 @@ impl World {
                 }
             }
             CommandKind::Craft { recipe } => {
-                let Some(def) = (&*rules_now).recipes.get(recipe.0 as usize) else { return };
+                let Some(def) = rules_now.recipes.get(recipe.0 as usize) else { return };
                 if !human || def.station.is_some() || def.ticks != 0 {
                     return;
                 }
@@ -2194,7 +2240,7 @@ impl World {
                 }
                 let Task::Craft { recipe, step, done, hits, salt, score, stack, n, .. } = self.agents[idx].task else { return };
                 let (mut stack, mut n) = (stack, n);
-                let def = &(&*rules_now).recipes[recipe as usize];
+                let def = &rules_now.recipes[recipe as usize];
                 let Some(mg) = def.steps.get(step as usize) else { return };
                 let g = craft_geometry(self.perception_level(), self.mastery(recipe as usize), mg, &self.agents[idx].inventory, self.seed, id, recipe, step, done, salt, &stack);
                 use crate::rules::MinigameKind;
@@ -2364,12 +2410,11 @@ impl World {
                     for o in &def.outputs {
                         self.produced[o.item as usize] += o.n as u32;
                     }
-                    if quality == 2 && def.fine_bonus > 0 {
-                        if let Some(first) = def.outputs.first() {
+                    if quality == 2 && def.fine_bonus > 0
+                        && let Some(first) = def.outputs.first() {
                             inv.give(&[ItemCount { item: first.item, n: def.fine_bonus }]);
                             self.produced[first.item as usize] += def.fine_bonus as u32;
                         }
-                    }
                     if let Some(m) = def.mold.filter(|_| !cracks) {
                         inv.give(&[ItemCount { item: m, n: 1 }]);
                     }
@@ -2384,7 +2429,7 @@ impl World {
             }
             CommandKind::Build { kind, x, y } => {
                 let (kind, x, y) = (*kind, *x, *y);
-                let def = (&*rules_now).building(kind);
+                let def = rules_now.building(kind);
                 if !human {
                     return;
                 }
@@ -2502,7 +2547,7 @@ impl World {
                 self.sync_obstacles();
             }
             CommandKind::StartJob { building, recipe } => {
-                let Some(def) = (&*rules_now).recipes.get(recipe.0 as usize) else { return };
+                let Some(def) = rules_now.recipes.get(recipe.0 as usize) else { return };
                 let Some(b) = self.buildings.get_mut(*building as usize) else { return };
                 if !human || def.station != Some(b.kind) {
                     return;
@@ -2516,11 +2561,10 @@ impl World {
                 if self.known & def.discovery.bit() == 0 {
                     return self.reject(id, Reject::NotLearned);
                 }
-                if let Some(kind) = def.spawns.filter(|_| b.kind == BuildingKind::Pen) {
-                    if !pair_in_pen(&self.agents, kind, b.x, b.y) {
+                if let Some(kind) = def.spawns.filter(|_| b.kind == BuildingKind::Pen)
+                    && !pair_in_pen(&self.agents, kind, b.x, b.y) {
                         return self.reject(id, Reject::NeedsPair);
                     }
-                }
                 // what was loaded into the station counts first, the pack makes up the rest
                 let inv = &mut self.agents[idx].inventory;
                 if !def.inputs.iter().all(|c| b.input[c.item as usize] + inv.get(c.item) >= c.n) {
@@ -2538,7 +2582,7 @@ impl World {
                 if dist2(ax, ay, b.x, b.y) > USE_RADIUS_MM * USE_RADIUS_MM {
                     return self.reject(id, Reject::TooFar);
                 }
-                deposit_into(&*rules_now, &mut self.agents[idx].inventory, b, None);
+                deposit_into(&rules_now, &mut self.agents[idx].inventory, b, None);
             }
             CommandKind::Load { building, item, n } => {
                 let Some(b) = self.buildings.get_mut(*building as usize) else { return };
@@ -2560,7 +2604,7 @@ impl World {
                 match recipe {
                     None => b.auto = None,
                     Some(r) => {
-                        let Some(def) = (&*rules_now).recipes.get(r.0 as usize) else { return };
+                        let Some(def) = rules_now.recipes.get(r.0 as usize) else { return };
                         if def.station != Some(b.kind) {
                             return;
                         }
@@ -2647,10 +2691,10 @@ impl World {
                     Ok(text) => {
                         let base = self.custom_rules.as_ref().map_or_else(|| crate::rules::Rules::base_text().to_string(), |(t, _)| t.clone());
                         if self.set_custom_rules(format!("{base}{text}")).is_err() {
-                            return self.reject(id, Reject::Unbalanced);
+                            self.reject(id, Reject::Unbalanced)
                         }
                     }
-                    Err(why) => return self.reject(id, why),
+                    Err(why) => self.reject(id, why),
                 }
             }
             CommandKind::Drop { item, n } => {
@@ -2685,7 +2729,7 @@ impl World {
                 self.events.push(Event::Prospected { agent: id, kinds, nearest });
             }
             CommandKind::Repair { item } => {
-                let Some(t) = (&*rules_now).tool(*item).copied() else { return };
+                let Some(t) = rules_now.tool(*item).copied() else { return };
                 let Some(mat) = t.repair else { return };
                 let a = &mut self.agents[idx];
                 if !human || a.inventory.get(*item) == 0 || a.wear_of(*item) == 0 {
@@ -2719,7 +2763,7 @@ impl World {
         }
         self.obstacles.clear();
         for b in &self.buildings {
-            let r = (&*rules_now).building(b.kind).radius_mm;
+            let r = rules_now.building(b.kind).radius_mm;
             self.obstacles.block_footprint(&self.map, b.x, b.y, r);
         }
         self.obstacles.built_for = self.buildings.len();
@@ -2764,7 +2808,9 @@ impl World {
             }
             // underground, walking and digging follow the cave's own floor plan
             if a.cave.is_some() {
-                cave_task(a, caves, events, &*rules_now, &settings, seed, tick, stage, &mut rocks);
+                if a.cave.is_some_and(|c| c.elevation_m().is_none()) {
+                    cave_task(a, caves, events, &rules_now, &settings, seed, tick, stage, &mut rocks);
+                }
                 continue;
             }
             match a.task {
@@ -2942,7 +2988,7 @@ impl World {
                         a.task = Task::Idle;
                         continue;
                     }
-                    if let Err(why) = gate_check_in(&*rules_now, n, a.kind, &a.inventory) {
+                    if let Err(why) = gate_check_in(&rules_now, n, a.kind, &a.inventory) {
                         if a.kind == AgentKind::Human {
                             events.push(Event::Rejected(a.id, why));
                         }
@@ -2951,7 +2997,7 @@ impl World {
                     }
                     let (nx, ny) = n.center_mm();
                     // the tool doing the work (not for the loose stones on top) wears; a blunt one is three times slower
-                    let tool = (&*rules_now).gate(n.kind).filter(|g| !(g.loose > 0 && n.amount > n.kind.initial_amount().saturating_sub(g.loose))).and_then(|g| (&*rules_now).best_tool(g.tool, |k| a.inventory.get(k) > 0)).copied();
+                    let tool = rules_now.gate(n.kind).filter(|g| !(g.loose > 0 && n.amount > n.kind.initial_amount().saturating_sub(g.loose))).and_then(|g| rules_now.best_tool(g.tool, |k| a.inventory.get(k) > 0)).copied();
                     let life = tool.map_or(0, |t| tool_life(&t, &settings));
                     let blunt = a.kind == AgentKind::Human && tool.is_some_and(|t| life > 0 && a.wear_of(t.item) >= life);
                     // handier with each evolutionary step: 10% slower at stage 0, 10% faster at stage 5
@@ -2988,19 +3034,19 @@ impl World {
                             // now and then a stone seam gives up a nodule of flint
                             (NodeKind::StoneOutcrop, 2) => ItemKind::Flint,
                             // deeper in some seams lies limestone, the flux of the blast furnace
-                            (NodeKind::StoneOutcrop, 3) if crate::rng::hash2(seed ^ 0x11E5, node.0 as i32, 3) % 4 == 0 => ItemKind::Limestone,
+                            (NodeKind::StoneOutcrop, 3) if crate::rng::hash2(seed ^ 0x11E5, node.0 as i32, 3).is_multiple_of(4) => ItemKind::Limestone,
                             // and at the bottom of some clay beds a pale clay that stands great heat
-                            (NodeKind::ClayDeposit, 1) if crate::rng::hash2(seed ^ 0xF1C1, node.0 as i32, 1) % 3 == 0 => ItemKind::FireClay,
-                            (NodeKind::ClayDeposit, 2) if crate::rng::hash2(seed ^ 0x5A4D, node.0 as i32, 2) % 2 == 0 => ItemKind::Sand,
+                            (NodeKind::ClayDeposit, 1) if crate::rng::hash2(seed ^ 0xF1C1, node.0 as i32, 1).is_multiple_of(3) => ItemKind::FireClay,
+                            (NodeKind::ClayDeposit, 2) if crate::rng::hash2(seed ^ 0x5A4D, node.0 as i32, 2).is_multiple_of(2) => ItemKind::Sand,
                             // and once in a while one of the loose stones on top is a flint nodule
-                            (NodeKind::StoneOutcrop, a) if a > 3 && crate::rng::hash2(seed ^ 0xF117, node.0 as i32, a as i32) % 8 == 0 => ItemKind::Flint,
+                            (NodeKind::StoneOutcrop, a) if a > 3 && crate::rng::hash2(seed ^ 0xF117, node.0 as i32, a as i32).is_multiple_of(8) => ItemKind::Flint,
                             // the tall grass is wild grain: the last armful of a tuft shakes out seed instead of fibre
                             (NodeKind::FiberPlant, 1) => {
                                 // the wild crop of the place: lentils on dry warm land, flax where it is wet, else grain
                                 let (warm, wet) = crate::map::climate(seed, n.tx, n.ty);
                                 if cotton_tuft(seed, n.tx, n.ty, warm, wet) {
                                     ItemKind::Cotton
-                                } else if wet > 550 && crate::rng::hash2(seed ^ 0x11C5, n.tx, n.ty) % 3 == 0 {
+                                } else if wet > 550 && crate::rng::hash2(seed ^ 0x11C5, n.tx, n.ty).is_multiple_of(3) {
                                     // some flax tufts have gone to seed
                                     ItemKind::Linseed
                                 } else if wet > 550 {
@@ -3022,11 +3068,10 @@ impl World {
                             let save = a.inventory.gear().tool_save as u64;
                             save > 0 && crate::rng::hash2(seed ^ 0xA9F0, a.id.0 as i32, (tick % 1_000_000) as i32) % 100 < save
                         };
-                        if let Some(t) = tool.filter(|_| a.kind == AgentKind::Human && life > 0 && !spared) {
-                            if a.add_wear(t.item) == life {
+                        if let Some(t) = tool.filter(|_| a.kind == AgentKind::Human && life > 0 && !spared)
+                            && a.add_wear(t.item) == life {
                                 events.push(Event::ToolBlunt { agent: a.id, item: t.item });
                             }
-                        }
                         *node_acc ^= node_contrib(node.0, n);
                         n.amount -= 1;
                         *node_acc ^= node_contrib(node.0, n);
@@ -3243,7 +3288,7 @@ impl World {
                     let reach = USE_RADIUS_MM - 500;
                     if dist2(a.x, a.y, b.x, b.y) <= reach * reach {
                         match step {
-                            RouteStep::Deposit { .. } => deposit_into(&*rules_now, &mut a.inventory, b, None),
+                            RouteStep::Deposit { .. } => deposit_into(&rules_now, &mut a.inventory, b, None),
                             RouteStep::Collect { item, .. } => {
                                 let cap = a.capacity();
                                 collect_from(&mut a.inventory, cap, b, item)
@@ -3269,7 +3314,7 @@ impl World {
 
     fn run_buildings(&mut self) {
         let rules_now = self.rules_arc();
-        let recipes = &(&*rules_now).recipes;
+        let recipes = &rules_now.recipes;
         let mut spawns: Vec<(AgentKind, i64, i64, u8)> = Vec::new();
         let gins: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.kind == BuildingKind::AnimalGin).map(|b| (b.x, b.y)).collect();
         let mut mills: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.kind == BuildingKind::Windmill).map(|b| (b.x, b.y)).collect();
@@ -3336,7 +3381,7 @@ impl World {
         let winter = self.season() == 3;
         let realistic = self.settings.difficulty == Difficulty::Realistic;
         let tick = self.tick;
-        let second = self.tick % crate::time::TICKS_PER_SECOND == 0;
+        let second = self.tick.is_multiple_of(crate::time::TICKS_PER_SECOND);
         // a drying rack stands in the open: rain and snow slow its drying to half
         let wet_sky = !matches!(self.weather(), crate::time::Weather::Clear);
         for (i, b) in self.buildings.iter_mut().enumerate() {
@@ -3348,7 +3393,7 @@ impl World {
             // a fire-based station only works while it burns
             let lit = !b.kind.burns() || b.fuel > 0;
             // heat: a source climbs toward its ceiling while it burns or works, and cools toward the air otherwise
-            let bdef = (&*rules_now).building(b.kind);
+            let bdef = rules_now.building(b.kind);
             // a bloomery without air from a working bellows within 3 m never gets past 1000 °C; a converter needs a bellows
             // driven by machinery
             let ceiling = match b.kind.requirement() {
@@ -3382,7 +3427,7 @@ impl World {
                         self.events.push(Event::CropFrozen { building: i as u32 });
                     }
                 }
-                if b.job.is_none() && tick % 600 == 0 && b.fertility < 1000 {
+                if b.job.is_none() && tick.is_multiple_of(600) && b.fertility < 1000 {
                     b.fertility += 1;
                 }
                 if b.input[ItemKind::Manure as usize] > 0 && b.fertility <= 750 {
@@ -3396,7 +3441,7 @@ impl World {
                 }
             }
             // penned animals leave dung behind
-            if b.kind == BuildingKind::Pen && tick % 6000 == 0 && tick > 0 {
+            if b.kind == BuildingKind::Pen && tick.is_multiple_of(6000) && tick > 0 {
                 let r2 = PEN_RADIUS_MM * PEN_RADIUS_MM;
                 if self.agents.iter().any(|a| matches!(a.kind, AgentKind::Ox | AgentKind::Horse | AgentKind::Dog) && dist2(a.x, a.y, b.x, b.y) <= r2) {
                     b.output[ItemKind::Manure as usize] += 1;
@@ -3438,7 +3483,7 @@ impl World {
             if b.kind == BuildingKind::SteamHammer {
                 mill_power = if steam_only.iter().any(|&(sx, sy)| dist2(sx, sy, b.x, b.y) <= 8_000 * 8_000) { 3 } else { 0 };
             }
-            let sky_ok = b.kind != BuildingKind::DryingRack || !wet_sky || tick % 2 == 0;
+            let sky_ok = b.kind != BuildingKind::DryingRack || !wet_sky || tick.is_multiple_of(2);
             if let Some(job) = b.job.as_mut().filter(|_| lit && hot_enough && growing && mill_power > 0 && sky_ok) {
                 job.remaining = job.remaining.saturating_sub(if powered { 2 } else { 1 } * if ploughed { 2 } else { 1 } * mill_power);
                 if job.remaining == 0 && by_animal && self.milestones & Milestone::AnimalPower.bit() == 0 {
@@ -3500,8 +3545,8 @@ impl World {
                     self.events.push(Event::JobDone { building: i as u32 });
                 }
             }
-            if b.job.is_none() && lit {
-                if let Some(ri) = b.auto {
+            if b.job.is_none() && lit
+                && let Some(ri) = b.auto {
                     let def = &recipes[ri as usize];
                     // a pen breeds only while a pair of that kind is in it
                     let pair = b.kind != BuildingKind::Pen || def.spawns.is_none_or(|k| pair_in_pen(&self.agents, k, b.x, b.y));
@@ -3512,7 +3557,6 @@ impl World {
                         b.job = Some(Job { recipe: ri, remaining: def.ticks });
                     }
                 }
-            }
         }
         if motor_worked && self.milestones & Milestone::ElectricMotor.bit() == 0 {
             self.milestones |= Milestone::ElectricMotor.bit();
@@ -3729,15 +3773,18 @@ impl World {
         let mut infected = Vec::new();
         let seed = self.seed;
         {
+            let natural_water: Vec<bool> = if self.agents.iter().any(|a| a.cave.is_some_and(|c| c.elevation_m().is_some_and(|z| z <= -60))) {
+                self.agents.iter().map(|a| a.cave.and_then(|c| c.natural_tile()).is_some_and(|tile| self.natural_cave_flooded(tile))).collect()
+            } else { Vec::new() };
             let Self { agents, buildings, caves, .. } = self;
-            for a in agents.iter_mut() {
+            for (ai, a) in agents.iter_mut().enumerate() {
                 if a.kind.is_worker() {
-                    if tick % a.kind.upkeep_decay_ticks() == 0 {
+                    if tick.is_multiple_of(a.kind.upkeep_decay_ticks()) {
                         a.hunger = (a.hunger - 1).max(0);
                     }
                     // Hungry workers help themselves from a nearby depot.
-                    if a.hunger < WORKER_FEED_BELOW {
-                        if let Some(item) = a.kind.upkeep_item() {
+                    if a.hunger < WORKER_FEED_BELOW
+                        && let Some(item) = a.kind.upkeep_item() {
                             let r2 = DEPOT_FEED_RADIUS_MM * DEPOT_FEED_RADIUS_MM;
                             if let Some(b) = buildings.iter_mut().find(|b| {
                                 b.kind == BuildingKind::Depot
@@ -3748,13 +3795,12 @@ impl World {
                                 a.hunger = (a.hunger + a.kind.upkeep_gain()).min(MAX_STAT);
                             }
                         }
-                    }
                     continue;
                 }
-                if tick % 13 == 0 {
+                if tick.is_multiple_of(13) {
                     a.hunger = (a.hunger - 1).max(0);
                 }
-                if tick % 6 == 0 {
+                if tick.is_multiple_of(6) {
                     a.thirst = (a.thirst - 1).max(0);
                 }
                 // out in the rain or snow without cover the cold bites harder
@@ -3770,14 +3816,14 @@ impl World {
                 }
                 a.warmth = if a.warmth > target { (a.warmth - 1).max(target) } else { (a.warmth + 3).min(target) };
 
-                if tick % 10 == 0 {
+                if tick.is_multiple_of(10) {
                     let harm = (a.hunger == 0) as i32 + (a.thirst == 0) as i32 + (a.warmth < 500) as i32;
                     a.health -= harm;
                 }
                 let warm_spot = heat.iter().any(|&(hx, hy, r, _)| dist2(hx, hy, a.x, a.y) <= r * r);
                 let heal = if warm_spot { 3 } else { 1 };
                 // swimming: it costs breath and the water chills; out of breath, you go under
-                let depth = if let Some(c) = a.cave {
+                let depth = if natural_water.get(ai) == Some(&true) { 2 } else if let Some(c) = a.cave {
                     // underground: the water in the cave
                     match caves.get(&c.node).and_then(|cv| cv.level(c.level)).map(|l| l.cell(c.tile().0, c.tile().1)) {
                         Some(crate::caves::Cell::Deep) => 2,
@@ -3793,17 +3839,17 @@ impl World {
                     a.stamina = (a.stamina - SPRINT_DRAIN / 2).max(0);
                     a.sprint = false;
                     a.warmth = (a.warmth - 2).max(0);
-                    if a.stamina == 0 && tick % 2 == 0 {
+                    if a.stamina == 0 && tick.is_multiple_of(2) {
                         a.health -= 5;
                     }
-                } else if depth == 1 && tick % 3 == 0 {
+                } else if depth == 1 && tick.is_multiple_of(3) {
                     a.warmth = (a.warmth - 1).max(0);
                 }
                 // breath: running burns it, standing or walking brings it back
                 if depth == 2 {
                 } else if a.sprint && matches!(a.task, Task::Move { .. } | Task::Gather { .. } | Task::Hunt { .. }) {
                     a.stamina = (a.stamina - crate::rules::Gear::cut(SPRINT_DRAIN * 1000, -a.inventory.gear().tire) / 1000).max(0);
-                    if tick % 3 == 0 {
+                    if tick.is_multiple_of(3) {
                         a.thirst = (a.thirst - 1).max(0);
                     }
                     if a.stamina == 0 {
@@ -3817,7 +3863,7 @@ impl World {
                 }
                 if a.injury > 0 {
                     a.injury = (a.injury - heal).max(0);
-                    if tick % 6 == 0 {
+                    if tick.is_multiple_of(6) {
                         a.health -= 1;
                     }
                     // a wound that closes by itself, never cleaned or bound, may fester
@@ -3828,21 +3874,21 @@ impl World {
                 }
                 if a.sick > 0 {
                     a.sick = (a.sick - heal).max(0);
-                    if tick % 30 == 0 {
+                    if tick.is_multiple_of(30) {
                         a.health -= 1;
                     }
-                    if tick % 12 == 0 {
+                    if tick.is_multiple_of(12) {
                         a.hunger = (a.hunger - 1).max(0);
                     }
                 }
                 // what was eaten lately fades; a lopsided diet caps how healthy the body gets
-                if a.kind == AgentKind::Human && tick % 120 == 0 {
+                if a.kind == AgentKind::Human && tick.is_multiple_of(120) {
                     for g in a.nutrition.iter_mut() {
                         *g = g.saturating_sub(1);
                     }
                 }
                 let cap = a.health_cap(&settings_now);
-                if tick % 20 == 0 && a.injury == 0 && a.sick == 0 && a.hunger > 3000 && a.thirst > 3000 && a.warmth > 3000 && a.health < cap {
+                if tick.is_multiple_of(20) && a.injury == 0 && a.sick == 0 && a.hunger > 3000 && a.thirst > 3000 && a.warmth > 3000 && a.health < cap {
                     a.health = (a.health + 1).min(cap);
                 }
                 if a.health <= 0 {
@@ -4099,13 +4145,13 @@ impl World {
     /// out of the dark, once. Chance is a pure function of seed and time, so every peer agrees.
     fn run_camp(&mut self) {
         const VISIT_RADIUS_MM: i64 = 6_000;
-        if self.tick % 60 != 0 || self.milestone_done(Milestone::Visitor) || self.milestone_done(Milestone::Companion) {
+        if !self.tick.is_multiple_of(60) || self.milestone_done(Milestone::Visitor) || self.milestone_done(Milestone::Companion) {
             return;
         }
         let Some(fire) = self.buildings.iter().find(|b| b.kind == BuildingKind::Campfire && b.active()) else { return };
         let (fx, fy) = (fire.x, fire.y);
         let near = self.agents.iter().any(|a| a.kind == AgentKind::Human && dist2(a.x, a.y, fx, fy) <= VISIT_RADIUS_MM * VISIT_RADIUS_MM);
-        if !near || crate::rng::hash2(self.seed ^ 0xD06, (self.tick / 60) as i32, 0) % 40 != 0 {
+        if !near || !crate::rng::hash2(self.seed ^ 0xD06, (self.tick / 60) as i32, 0).is_multiple_of(40) {
             return;
         }
         let ang = (crate::rng::hash2(self.seed ^ 0xD07, (self.tick / 60) as i32, 1) % 6283) as f32 / 1000.0;
@@ -4189,7 +4235,7 @@ impl World {
     /// written here, and what was built here stands in it as ruins around the new spawn. The newcomer starts with
     /// nothing, as an ape, and the tribe has forgotten everything.
     pub fn next_cycle(&self) -> World {
-        let mut w = World::with_size(if self.map.w > 4096 { crate::map::tag_seed_v3(self.hash()) } else { crate::map::tag_seed_v2(self.hash()) }, self.map.w, self.map.h);
+        let mut w = World::with_size(crate::map::tag_seed_new_world(self.hash(), self.map.w.max(self.map.h)), self.map.w, self.map.h);
         w.settings = self.settings;
         if let Some((text, rules)) = &self.custom_rules {
             w.custom_rules = Some((text.clone(), std::sync::Arc::clone(rules)));
@@ -4303,7 +4349,7 @@ impl World {
 
     /// Accumulators, once a second: one on a grid a dynamo feeds takes on charge; one holding the grid up alone gives it off.
     fn run_grid_storage(&mut self, live: &[bool], fed: &[bool]) {
-        if self.tick % TICKS_PER_SECOND_U64 != 0 {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND_U64) {
             return;
         }
         for (i, b) in self.buildings.iter_mut().enumerate().filter(|(_, b)| b.kind == BuildingKind::Accumulator) {
@@ -4325,7 +4371,7 @@ impl World {
     /// seconds (more the farther it goes) the wagon runs to the nearest other track and tips its load into the depot within
     /// 12 m of it. A wagon with no depot to go to keeps its load. The load lives in the track's own `output`.
     fn run_rails(&mut self) {
-        if self.tick % TICKS_PER_SECOND_U64 != 0 || !self.buildings.iter().any(|b| b.kind == BuildingKind::Railway) {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND_U64) || !self.buildings.iter().any(|b| b.kind == BuildingKind::Railway) {
             return;
         }
         let rails: Vec<usize> = self.buildings.iter().enumerate().filter(|(_, b)| b.kind == BuildingKind::Railway).map(|(i, _)| i).collect();
@@ -4352,7 +4398,7 @@ impl World {
             let Some(pj) = self.rail_partner(ri) else { continue };
             let (px, py) = (self.buildings[pj].x, self.buildings[pj].y);
             let trip = RAIL_TRIP_BASE_S + (dist2(rx, ry, px, py) as f64).sqrt() as u64 / 10_000;
-            if (second + ri as u64) % trip != 0 || self.buildings[ri].output_total() == 0 {
+            if !(second + ri as u64).is_multiple_of(trip) || self.buildings[ri].output_total() == 0 {
                 continue;
             }
             let Some(depot) = self.buildings.iter().enumerate().filter(|(_, b)| b.kind == BuildingKind::Depot && dist2(b.x, b.y, px, py) <= 12_000 * 12_000).min_by_key(|(_, b)| dist2(b.x, b.y, px, py)).map(|(j, _)| j) else { continue };
@@ -4371,7 +4417,7 @@ impl World {
     /// chosen recipe (or, without one, the first it could start) lacks from the output of the machines within 6 m, and hands
     /// its own output on to any neighbouring machine that is set to make something from it.
     fn run_robots(&mut self, live: &[bool]) {
-        if self.tick % TICKS_PER_SECOND_U64 != 0 {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND_U64) {
             return;
         }
         let robots: Vec<usize> = self.buildings.iter().enumerate().filter(|(i, b)| b.kind == BuildingKind::AssemblyRobot && live[*i]).map(|(i, _)| i).collect();
@@ -4477,7 +4523,7 @@ impl World {
     /// Powered belts, once a second: everything the stations within 3 m have made goes to the nearest depot within
     /// 12 m. Power is a water wheel or windmill within 8 m, or an animal at a gin within 6 m.
     fn run_conveyors(&mut self) {
-        if self.tick % TICKS_PER_SECOND_U64 != 0 {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND_U64) {
             return;
         }
         let belts: Vec<(i64, i64)> = self.buildings.iter().filter(|b| b.kind == BuildingKind::Conveyor).map(|b| (b.x, b.y)).collect();
@@ -4514,7 +4560,7 @@ impl World {
     /// halves it, each storage jar in a depot slows it there, and the realistic setting doubles it.
     fn run_spoilage(&mut self) {
         const HOUR: u64 = TICKS_PER_DAY / 24;
-        if self.tick % HOUR != 0 || self.tick == 0 {
+        if !self.tick.is_multiple_of(HOUR) || self.tick == 0 {
             return;
         }
         let rules_now = self.rules_arc();
@@ -4715,6 +4761,7 @@ impl World {
             }
         }
         self.run_tasks();
+        self.run_natural_cave_tasks();
         self.run_physics();
         self.run_taming();
         self.run_hunting();
@@ -4751,7 +4798,7 @@ impl World {
         feed(self.map.h as u64);
         feed(self.tick);
         feed(self.known);
-        feed(self.milestones as u64);
+        feed(self.milestones);
         // the upper half only once items beyond 64 have been seen, so older states keep their hash
         feed(self.seen as u64);
         if self.seen >> 64 != 0 {
@@ -4840,6 +4887,16 @@ impl World {
                 feed(cell as u64 | (left as u64) << 8);
             }
         }
+        for tile in &self.dug_cave {
+            feed(0xCA7E_2026);
+            feed((tile.x as u64) << 32 | tile.y as u32 as u64);
+            feed(tile.z as u16 as u64);
+        }
+        for tile in &self.cave_rubble {
+            feed(0xCA7E_2027);
+            feed((tile.x as u64) << 32 | tile.y as u32 as u64);
+            feed(tile.z as u16 as u64);
+        }
         for f in &self.air {
             feed(f.agent.0 as u64);
             for v in [f.x, f.y, f.z, f.vx, f.vy, f.vz, f.top] {
@@ -4881,7 +4938,7 @@ pub fn deposit_in_cell(seed: u64, cx: i32, cy: i32) -> Option<(i32, i32, ItemKin
     let ty = cy * 24 + ((h >> 16) % 20) as i32 + 2;
     let mut kind = [ItemKind::IronOre, ItemKind::CopperOre, ItemKind::TinOre, ItemKind::Coal, ItemKind::Coal, ItemKind::Oil][((h >> 24) % 6) as usize];
     // a third of the iron beds are red bauxite, aluminium's ore (the rest of the map is as it was)
-    if kind == ItemKind::IronOre && (h >> 36) % 3 == 0 {
+    if kind == ItemKind::IronOre && (h >> 36).is_multiple_of(3) {
         kind = ItemKind::Bauxite;
     }
     Some((tx, ty, kind, 1 + ((h >> 28) % 3) as u8))
@@ -4892,11 +4949,10 @@ pub fn deposits_near(seed: u64, tx: i32, ty: i32, r: i32) -> Vec<(i32, i32, Item
     let mut out = Vec::new();
     for cy in (ty - r).div_euclid(24)..=(ty + r).div_euclid(24) {
         for cx in (tx - r).div_euclid(24)..=(tx + r).div_euclid(24) {
-            if let Some(d) = deposit_in_cell(seed, cx, cy) {
-                if (d.0 - tx).pow(2) + (d.1 - ty).pow(2) <= r * r {
+            if let Some(d) = deposit_in_cell(seed, cx, cy)
+                && (d.0 - tx).pow(2) + (d.1 - ty).pow(2) <= r * r {
                     out.push(d);
                 }
-            }
         }
     }
     out

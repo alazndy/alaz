@@ -20,7 +20,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use stream::Stream;
 
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
@@ -44,9 +44,10 @@ enum ToHost {
 
 #[derive(Serialize, Deserialize)]
 enum ToClient {
-    Welcome { agent: u32, snapshot: Vec<u8> },
+    Welcome { agent: u32, generation: u64, snapshot: Vec<u8> },
     Turn(Turn),
-    Resync { snapshot: Vec<u8> },
+    /// A fresh snapshot. The agent and generation change when the host starts a different world.
+    Resync { agent: u32, generation: u64, snapshot: Vec<u8> },
     Refused(String),
 }
 
@@ -157,7 +158,13 @@ impl Conn {
 
 struct Peer {
     conn: Conn,
+    /// The only agent this connection may command.
+    agent: AgentId,
     resync: bool,
+}
+
+fn peer_can_issue(agent: AgentId, command: &Command) -> bool {
+    command.agent == agent && command.kind != CommandKind::Join
 }
 
 pub struct Host {
@@ -166,6 +173,7 @@ pub struct Host {
     peers: Vec<Peer>,
     queued: Vec<Command>,
     joins_queued: u32,
+    world_generation: u64,
     beacon: Option<(discovery::Beacon, String)>,
     relay: Option<relay_client::RelayLink>,
 }
@@ -174,7 +182,7 @@ impl Host {
     pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
-        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None, relay: None })
+        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, world_generation: 0, beacon: None, relay: None })
     }
 
     /// A host that only the relay can reach: loopback, any free port, no LAN discovery. The relay
@@ -261,9 +269,9 @@ impl Host {
                     let agent = world.agents.len() as u32 + self.joins_queued;
                     self.joins_queued += 1;
                     self.queued.push(Command { agent: AgentId(agent), kind: CommandKind::Join });
-                    conn.send(&ToClient::Welcome { agent, snapshot: world.to_bytes() });
+                    conn.send(&ToClient::Welcome { agent, generation: self.world_generation, snapshot: world.to_bytes() });
                     conn.limit = MAX_FROM_CLIENT;
-                    self.peers.push(Peer { conn, resync: false });
+                    self.peers.push(Peer { conn, agent: AgentId(agent), resync: false });
                 }
                 Some(ToHost::Hello { .. }) => {
                     conn.send(&ToClient::Refused("sürüm uyuşmuyor".into()));
@@ -278,15 +286,30 @@ impl Host {
         for p in &mut self.peers {
             for m in p.conn.recv::<ToHost>() {
                 match m {
-                    // clients can never spawn players themselves
+                    // a client commands only its own agent and can never spawn players itself;
                     // an agent id that names nobody can only be forged or stale, and the sim need not survive it
                     ToHost::Cmds(cmds) => self
                         .queued
-                        .extend(cmds.into_iter().filter(|c| c.kind != CommandKind::Join && (c.agent.0 as usize) < known)),
+                        .extend(cmds.into_iter().filter(|c| peer_can_issue(p.agent, c) && (c.agent.0 as usize) < known)),
                     ToHost::Resync => p.resync = true,
                     ToHost::Hello { .. } => {}
                 }
             }
+        }
+    }
+
+    /// Seat connected players in the replacement world and send them its snapshot on the next turn.
+    pub fn replace_world(&mut self, world: &mut World) {
+        self.world_generation += 1;
+        self.queued.clear();
+        self.joins_queued = 0;
+        self.peers.retain(|p| !p.conn.dead);
+        let (sx, sy) = world.spawn_mm;
+        let humans = world.agents.iter().filter(|a| a.kind == alaz_sim::AgentKind::Human).count();
+        for (offset, peer) in self.peers.iter_mut().enumerate() {
+            let player = (humans + offset) as i64;
+            peer.agent = world.spawn_agent(sx + (player % 5 - 2) * 1_500, sy + (player / 5 % 3) * 1_500);
+            peer.resync = true;
         }
     }
 
@@ -301,7 +324,7 @@ impl Host {
             if p.resync {
                 p.resync = false;
                 if let Some(s) = &snapshot {
-                    p.conn.send(&ToClient::Resync { snapshot: s.clone() });
+                    p.conn.send(&ToClient::Resync { agent: p.agent.0, generation: self.world_generation, snapshot: s.clone() });
                 }
             }
             p.conn.send(&ToClient::Turn(turn.clone()));
@@ -330,6 +353,7 @@ pub struct Client {
     turns: VecDeque<Turn>,
     fresh: Option<World>,
     awaiting_resync: bool,
+    world_generation: u64,
     pub agent: AgentId,
 }
 
@@ -367,6 +391,7 @@ impl Client {
             turns: VecDeque::new(),
             fresh: None,
             awaiting_resync: false,
+            world_generation: 0,
             agent: AgentId(0),
         };
         client.conn.send(&ToHost::Hello { protocol: PROTOCOL });
@@ -375,8 +400,9 @@ impl Client {
         while world.is_none() {
             for m in client.conn.recv::<ToClient>() {
                 match m {
-                    ToClient::Welcome { agent, snapshot } => {
+                    ToClient::Welcome { agent, generation, snapshot } => {
                         client.agent = AgentId(agent);
+                        client.world_generation = generation;
                         world = Some(World::from_bytes(&snapshot).map_err(|e| err(&format!("{e:?}")))?);
                     }
                     ToClient::Turn(t) if world.is_some() => client.queue_turn(t),
@@ -397,8 +423,10 @@ impl Client {
         for m in self.conn.recv::<ToClient>() {
             match m {
                 ToClient::Turn(t) if !self.awaiting_resync => self.queue_turn(t),
-                ToClient::Resync { snapshot } => {
+                ToClient::Resync { agent, generation, snapshot } => {
                     if let Ok(w) = World::from_bytes(&snapshot) {
+                        self.agent = AgentId(agent);
+                        self.world_generation = generation;
                         self.turns.clear();
                         self.fresh = Some(w);
                         self.awaiting_resync = false;
@@ -443,6 +471,11 @@ impl Client {
             self.turns.clear();
             self.conn.send(&ToHost::Resync);
         }
+    }
+
+    /// Changes whenever the host replaces the world. Ordinary resyncs keep the same generation.
+    pub fn world_generation(&self) -> u64 {
+        self.world_generation
     }
 
     pub fn take_fresh_world(&mut self) -> Option<World> {
@@ -894,5 +927,14 @@ mod tests {
         }
         assert_eq!(host.players(), 1);
         assert!(Client::connect("127.0.0.1:1", Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_peer_commands_only_its_own_agent_and_never_joins() {
+        let mine = AgentId(3);
+        let cmd = |agent, kind| Command { agent, kind };
+        assert!(peer_can_issue(mine, &cmd(mine, CommandKind::Jump)));
+        assert!(!peer_can_issue(mine, &cmd(AgentId(1), CommandKind::Jump)));
+        assert!(!peer_can_issue(mine, &cmd(mine, CommandKind::Join)));
     }
 }

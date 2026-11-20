@@ -8,6 +8,7 @@ use alaz_sim::{
     World,
 };
 
+use crate::cave_map::KnownTiles;
 use crate::keys::{Action, Keybinds};
 
 pub const HINT_SECONDS: f32 = 12.0;
@@ -59,6 +60,7 @@ pub struct UiCtx<'a> {
     pub yaw: f32,
     /// Black over the picture while the cave is entered or left (0..1).
     pub fade: f32,
+    pub cave_tiles: Option<&'a KnownTiles>,
 }
 
 /// What the HUD asks the game loop to do this frame.
@@ -365,9 +367,9 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         }
         Event::Fractured(a) if *a == me => "Bacağın kırıldı! Yavaş yürürsün. İki dal ve iki lifle kırık tahtası yap, bacağına bağla: üç kat hızlı kaynar.".into(),
         Event::WoundInfected(a) if *a == me => "Yaran iltihaplandı, ateşin çıktı. Şifalı ot çiğne, ateşin başında dinlen. Bir dahaki sefere yarayı sar.".into(),
-        Event::CaveEntered(a) if *a == me => "Mağaradasın. Işık yalnız meşaleden: yanında dur. Duvara sağ tıkla, kazma varsa kazarsın. Çıkış sol altta ok ile gösterilir.".into(),
-        Event::CaveLevel { agent, level } if *agent == me => format!("{level}. kata indin. Daha derin: damarlar zengin, tavan daha tehlikeli.").into(),
-        Event::CaveDark(a) if *a == me => "Meşale söndü! Karanlıkta yavaş yürürsün; ok çıkış yolunu gösterir.".into(),
+        Event::CaveEntered(a) if *a == me => "Mağaradasın. Kazman varsa duvarı sağ tıklayarak kazabilirsin. Çıkmak için sağ üstteki “Çıkışa git” düğmesini kullan.".into(),
+        Event::CaveLevel { agent, level } if *agent == me => format!("{level}. kata indin. Daha derin: damarlar zengin, tavan daha tehlikeli."),
+        Event::CaveDark(a) if *a == me => "Meşale söndü. Karanlıkta yavaş yürürsün. “Çıkışa git” bir çıkış rotası arar.".into(),
         Event::CaveRelit(a) if *a == me => "Meşaleyi yeniden yaktın.".into(),
         Event::CaveStumbled(a) if *a == me => "Karanlıkta tökezledin.".into(),
         Event::CaveEntered(_) | Event::CaveLevel { .. } | Event::CaveDark(_) | Event::CaveRelit(_) | Event::CaveStumbled(_) => return None,
@@ -692,68 +694,6 @@ thread_local! {
 /// Perception level of the tribe, mirrored here so panels can dress themselves for the era.
 pub(crate) static ERA: PerThread = PerThread(&ERA_CELL);
 
-pub const DISCOVERIES: [Discovery; 59] = [
-    Discovery::SharpStone,
-    Discovery::StoneAxe,
-    Discovery::Hammer,
-    Discovery::Clamp,
-    Discovery::Fire,
-    Discovery::Shelter,
-    Discovery::Clothing,
-    Discovery::Spear,
-    Discovery::Cooking,
-    Discovery::Medicine,
-    Discovery::Farming,
-    Discovery::Milling,
-    Discovery::Pottery,
-    Discovery::Weaving,
-    Discovery::Husbandry,
-    Discovery::Casting,
-    Discovery::Depot,
-    Discovery::Kiln,
-    Discovery::Furnace,
-    Discovery::Smelting,
-    Discovery::Workbench,
-    Discovery::Ironwork,
-    Discovery::Mechanics,
-    Discovery::Workshop,
-    Discovery::Alloying,
-    Discovery::Bronzework,
-    Discovery::Draught,
-    Discovery::Steelmaking,
-    Discovery::Steam,
-    Discovery::Electricity,
-    Discovery::Electronics,
-    Discovery::Computing,
-    Discovery::Geology,
-    Discovery::Fishing,
-    Discovery::Masonry,
-    Discovery::Cement,
-    Discovery::Foundry,
-    Discovery::Converter,
-    Discovery::Machining,
-    Discovery::Throwing,
-    Discovery::OilPressing,
-    Discovery::Tanning,
-    Discovery::Curing,
-    Discovery::Smoking,
-    Discovery::Ropemaking,
-    Discovery::Wells,
-    Discovery::Felting,
-    Discovery::Hoisting,
-    Discovery::Glassblowing,
-    Discovery::Papermaking,
-    Discovery::Printing,
-    Discovery::Ginning,
-    Discovery::Spinning,
-    Discovery::Drawing,
-    Discovery::HeavyCurrent,
-    Discovery::ArcSmelting,
-    Discovery::Chemistry,
-    Discovery::Semiconductors,
-    Discovery::Automation,
-];
-
 pub fn discovery_name(d: Discovery) -> &'static str {
     match d {
         Discovery::SharpStone => "Keskin taş",
@@ -995,7 +935,7 @@ pub(crate) fn item_tip(w: &World, k: ItemKind) -> String {
     let g = alaz_sim::rules::Gear::of(|i| i == k);
     let mut t = format!("{name} (giyilir)");
     for l in gear_lines(&g) {
-        t.push_str("\n");
+        t.push('\n');
         t.push_str(&l);
     }
     t
@@ -1061,7 +1001,7 @@ fn draw_needs(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent) {
             if gear != alaz_sim::rules::Gear::default() {
                 let mut tip = String::from("Giydiklerin:");
                 for l in gear_lines(&gear) {
-                    tip.push_str("\n");
+                    tip.push('\n');
                     tip.push_str(&l);
                 }
                 ui.horizontal(|ui| {
@@ -1086,6 +1026,10 @@ pub fn guide_text(w: &World, me: &alaz_sim::world::Agent) -> String {
     let inv = &me.inventory;
     let n = |k: ItemKind| inv.get(k);
     let fire = w.buildings.iter().any(|b| b.kind == alaz_sim::BuildingKind::Campfire);
+    // a full pack stops all gathering without a sound: say so for as long as it is true
+    if inv.is_full(me.capacity()) {
+        return "Çantan dolu, hiçbir şey toplayamazsın: fazla odun ve lifi sürükleyip pencerenin dışına bırak.".into();
+    }
     if !w.milestone_done(Milestone::FirstFire) || w.day() == 0 {
         if me.thirst < 2500 {
             return "Susadın: suya yaklaş, Su iç de.".into();
@@ -1136,13 +1080,17 @@ pub fn guide_text(w: &World, me: &alaz_sim::world::Agent) -> String {
     if me.warmth < 3000 {
         return "Üşüyorsun: ateşe yaklaş.".into();
     }
+    // wolves come out of the woods at dusk: a bitten newcomer is told how to hit back
+    if me.health < 8500 && n(ItemKind::Spear) == 0 && w.knows(Discovery::Spear) && n(ItemKind::SharpStone) >= 1 && n(ItemKind::Branch) >= 1 && n(ItemKind::Fiber) >= 1 {
+        return "Kurt ısırıyor: ateşin yanında kal. Keskin taş, dal ve lifi ellerinde dene: mızrak olur.".into();
+    }
     let next = Milestone::ALL.iter().find(|m| !is_age(**m) && !w.milestone_done(**m));
     // the farming goals get spelled out step by step, like the road to the first fire
     let field = w.buildings.iter().find(|b| b.kind == alaz_sim::BuildingKind::Field);
     match next {
         Some(Milestone::Harvest) => {
             return if !w.knows(Discovery::Farming) {
-                "Uzun otlara sağ tıkla: başaklarından arada bir tohum dökülür.".into()
+                "Uzun otlara sağ tıkla: dört tutamdan birinde tohum çıkar. Kuru yerdeki otlara bak; sulak yerde keten çıkar.".into()
             } else if n(ItemKind::Hoe) == 0 {
                 "Keskin taş, iki dal ve bir lifi ellerinde dene: çapa olur.".into()
             } else if field.is_none() {
@@ -1330,11 +1278,10 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
                     }
                 }
                 let food = [ItemKind::Bread, ItemKind::Soup, ItemKind::CookedMeat, ItemKind::Berries, ItemKind::RawMeat].into_iter().find(|k| inv.get(*k) > 0);
-                if btn(ui, Glyph::Food, food.map_or("Ye".to_string(), |k| format!("Ye: {}", item_name(k))), food.is_some()) {
-                    if let Some(item) = food {
+                if btn(ui, Glyph::Food, food.map_or("Ye".to_string(), |k| format!("Ye: {}", item_name(k))), food.is_some())
+                    && let Some(item) = food {
                         acts.push(UiAction::Cmd(CommandKind::Eat { item }));
                     }
-                }
                 // care: only when something is wrong and there is a cure in the bag
                 let care = (me.injury > 0 && (inv.get(ItemKind::Bandage) > 0 || inv.get(ItemKind::Alcohol) > 0)) || (me.sick > 0 && (inv.get(ItemKind::Alcohol) > 0 || inv.get(ItemKind::Soap) > 0)) || (me.broken > 0 && inv.get(ItemKind::Splint) > 0) || (me.sick > 0 && inv.get(ItemKind::Herb) > 0);
                 if care {
@@ -1391,16 +1338,12 @@ pub(crate) fn build_group(kind: BuildingKind) -> usize {
     }
 }
 
-fn tab_goals(ui: &mut egui::Ui, w: &World) {
-    let known: Vec<Discovery> = DISCOVERIES.iter().copied().filter(|d| w.knows(*d)).collect();
-    if w.perception_level() >= 1 && !known.is_empty() {
-        ui.label(RichText::new(format!("Keşifler ({}/{})", known.len(), DISCOVERIES.len())).strong());
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-            for d in known {
-                crate::ui_art::chip(ui, discovery_name(d), Color32::from_rgb(40, 52, 36), Color32::from_rgb(190, 214, 170));
-            }
-        });
+fn tab_goals(ui: &mut egui::Ui, w: &World, journal: &mut crate::journal_ui::JournalState) {
+    if let Some(discovery) = journal.progression.next(w) {
+        ui.label(RichText::new("Sıradaki keşif").strong());
+        if ui.link(discovery_name(discovery)).clicked() {
+            journal.show_discovery(discovery);
+        }
         ui.separator();
     }
     let goals: Vec<Milestone> = Milestone::ALL.iter().copied().filter(|m| !is_age(*m)).collect();
@@ -1722,7 +1665,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                 ui.separator();
                 egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| match tab {
                     Tab::Bag | Tab::Craft | Tab::Build => {}
-                    Tab::Goals => tab_goals(ui, w),
+                    Tab::Goals => tab_goals(ui, w, &mut knap.journal),
                     Tab::Routes => tab_routes(ui, w, ui_ctx, acts),
                     Tab::Help => tab_help(ui, ui_ctx.binds),
                     Tab::Creative => tab_creative(ui, ui_ctx, &mut knap.creative_search, acts),
@@ -1740,7 +1683,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         let p = egui::pos2(r.left() + (n[0] + 1.0) * 0.5 * r.width(), r.top() + (1.0 - n[1]) * 0.5 * r.height());
         ctx.data_mut(|d| d.insert_temp(egui::Id::NULL.with("craft_anchor"), p));
     }
-    draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.fade, acts);
+    draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.fade, ui_ctx.cave_tiles, acts);
     match w.craft_view(ui_ctx.me) {
         Some(v) => match v.kind {
             alaz_sim::MinigameKind::Knap => draw_knapping(ctx, &v, ui_ctx.last_strike, knap, ui_ctx.grip, ui_ctx.binds, acts),
@@ -1882,6 +1825,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                 strike_fx(ui.ctx(), resp.rect, last);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yontma taşı"));
                 let rect = resp.rect;
+                crate::pilot::mark(ctx, || "knap".to_string(), rect);
                 let c = px::snap_pos(rect.center());
                 let r0 = KNAP_SIZE * 0.369;
                 px::well(&painter, rect, 3);
@@ -1913,7 +1857,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                         return Some(px::STONE_D);
                     }
                     let h = px::hash((q.x / px::unit()) as i32 - cxi, (q.y / px::unit()) as i32 - cyi, 11);
-                    if d > r - 9.0 * px::unit() && dx + dy < -r * 0.45 && h % 4 != 0 {
+                    if d > r - 9.0 * px::unit() && dx + dy < -r * 0.45 && !h.is_multiple_of(4) {
                         return Some(px::STONE_L);
                     }
                     Some(match h % 17 {
@@ -1995,6 +1939,7 @@ fn draw_knapping(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(boo
                     acts.push(UiAction::Cmd(if grip { CommandKind::StrikeAt { angle, power } } else { CommandKind::StrikeLoose { angle, power } }));
                     st.charge = 0.0;
                 }
+                crate::pilot::signal(ctx, st.charge, st.rising);
                 // force meter
                 let (br, _) = ui.allocate_exact_size(egui::vec2(44.0, KNAP_SIZE), egui::Sense::hover());
                 let bar = br.shrink2(egui::vec2(6.0, 0.0));
@@ -2180,6 +2125,7 @@ fn draw_stack(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, 
             let (resp, painter) = ui.allocate_painter(egui::vec2(w, h), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yığın alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 9);
             let k = w / 210.0;
@@ -2238,6 +2184,7 @@ fn draw_fit(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let (resp, painter) = ui.allocate_painter(egui::vec2(FIT_SIZE, FIT_SIZE), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Yerleştirme alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             let c = rect.center();
             let k = FIT_SIZE / 290.0 * 1.35;
@@ -2291,6 +2238,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 150.0), egui::Sense::click());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Budama alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             let c = rect.center();
             let k = 1.5;
@@ -2306,7 +2254,7 @@ fn draw_trim(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f
             // knots already knocked off leave stubs; the ones still to come wait, dimmer, along the branch
             let spot = |i: u8| -> (f32, f32) {
                 let h = px::hash(i as i32 * 31 + v.recipe as i32, v.step as i32, 77);
-                (((h % 161) as f32) - 80.0, if (h >> 8) % 2 == 0 { -1.0 } else { 1.0 })
+                (((h % 161) as f32) - 80.0, if (h >> 8).is_multiple_of(2) { -1.0 } else { 1.0 })
             };
             for i in 0..v.strikes {
                 if i == v.done {
@@ -2354,6 +2302,7 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Sürtme alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 23);
             let (x0, x1) = (rect.left() + 30.0, rect.right() - 20.0);
@@ -2363,12 +2312,11 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
             let dt = ctx.input(|i| i.stable_dt).min(0.05);
             let down = ctx.input(|i| i.pointer.primary_down());
             // a pass starts at the held end, with the button down, and ends when the button is let go
-            if st.rub.is_none() && resp.is_pointer_button_down_on() && down {
-                if let Some(m) = mouse.filter(|m| m.x <= x0 + len * 0.25) {
+            if st.rub.is_none() && resp.is_pointer_button_down_on() && down
+                && let Some(m) = mouse.filter(|m| m.x <= x0 + len * 0.25) {
                     let _ = m;
                     st.rub = Some(RubPass { progress: 0.0, elapsed: 0.0, slipped: !grip });
                 }
-            }
             if let Some(pass) = st.rub.as_mut() {
                 if let Some(m) = mouse {
                     pass.progress = pass.progress.max(((m.x - x0) / len).clamp(0.0, 1.0));
@@ -2378,15 +2326,14 @@ fn draw_rub(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool, f3
                 ctx.request_repaint();
             }
             let pace_of = |p: RubPass| (p.progress / p.elapsed.max(0.2) / 2.5 * 100.0).clamp(0.0, 100.0);
-            if let Some(pass) = st.rub {
-                if ctx.input(|i| i.pointer.primary_released()) || !down {
+            if let Some(pass) = st.rub
+                && (ctx.input(|i| i.pointer.primary_released()) || !down) {
                     st.rub = None;
                     // an unfinished pass counts for nothing: it was only a false start
                     if pass.progress >= 0.85 {
                         acts.push(UiAction::Cmd(CommandKind::Rub { pace: pace_of(pass).round() as u8, grip: !pass.slipped }));
                     }
                 }
-            }
             // the piece, rough bark ahead of the stone and smooth wood behind it
             let progress = st.rub.map_or(0.0, |p| p.progress);
             let body = Rect::from_min_max(egui::pos2(x0 - 10.0, cy - 14.0), egui::pos2(x1 + 10.0, cy + 14.0));
@@ -2440,6 +2387,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
             let (resp, painter) = ui.allocate_painter(egui::vec2(330.0, 110.0), egui::Sense::click_and_drag());
             strike_fx(ui.ctx(), resp.rect, last);
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Sıkıştırma alanı"));
+            crate::pilot::mark(ctx, || "craft".to_string(), resp.rect);
             let rect = resp.rect;
             px::well(&painter, rect, 17);
             // the handle with the stone set in its notch, and the fibre wound around both
@@ -2480,6 +2428,7 @@ fn draw_tension(ctx: &egui::Context, v: &alaz_sim::CraftView, last: Option<(bool
                 st.charge = 0.0;
             }
             // pressure meter with the band to hit
+            crate::pilot::signal(ctx, st.charge, st.rising);
             let (bar_rect, _) = ui.allocate_exact_size(egui::vec2(330.0, 30.0), egui::Sense::hover());
             let band = ((v.power as f32 - v.power_half as f32).max(0.0), (v.power as f32 + v.power_half as f32).min(100.0));
             px::meter(ui.painter(), bar_rect, false, band, px::verdict(last, Color32::from_rgb(90, 190, 100)), Some(st.charge * 100.0));
@@ -2795,9 +2744,9 @@ fn design_table(ui: &mut egui::Ui, w: &World, acts: &mut Vec<UiAction>) {
 }
 
 /// What a resource node is called, by what it gives.
-pub fn node_label(w: &World, n: &alaz_sim::world::Node) -> String {
+pub(crate) fn node_name(w: &World, kind: alaz_sim::NodeKind) -> &'static str {
     use alaz_sim::NodeKind as N;
-    let name = match n.kind {
+    let name = match kind {
         N::StoneOutcrop => "Taş yığını",
         N::Tree => "Ağaç",
         N::BerryBush => "Yemiş çalısı",
@@ -2812,12 +2761,16 @@ pub fn node_label(w: &World, n: &alaz_sim::world::Node) -> String {
     };
     // ore in the rock looks like any rock until the eye can tell (as in the bag)
     let lvl = w.perception_level();
-    let name = match n.kind {
+    match kind {
         N::IronOutcrop | N::CopperOutcrop | N::TinOutcrop if lvl < 2 => "Kaya",
         N::FiberPlant if lvl < 1 => "Ot",
         _ => name,
-    };
-    if w.perception_level() >= 2 && n.kind != N::CaveMouth {
+    }
+}
+
+pub fn node_label(w: &World, n: &alaz_sim::world::Node) -> String {
+    let name = node_name(w, n.kind);
+    if w.perception_level() >= 2 && n.kind != alaz_sim::NodeKind::CaveMouth {
         format!("{name} ({} kaldı)", n.amount)
     } else {
         name.to_string()
@@ -2950,18 +2903,16 @@ fn draw_worker(
                     .filter(|(_, b)| b.kind == BuildingKind::AnimalGin)
                     .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
                     .map(|(gi, _)| gi as u32);
-                if let Some(gin) = gin {
-                    if ui.button("Maneje götür").on_hover_text("Manejin çevresinde döner: 6 m içindeki değirmeni çevirir.").clicked() {
+                if let Some(gin) = gin
+                    && ui.button("Maneje götür").on_hover_text("Manejin çevresinde döner: 6 m içindeki değirmeni çevirir.").clicked() {
                         let route = vec![RouteStep::Deposit { building: gin }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
                         acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
                     }
-                }
-                if let Some(field) = field.filter(|_| a.inventory.get(ItemKind::Plow) > 0) {
-                    if ui.button("Tarlaya götür").on_hover_text("Sabanla tarlanın yanında durur: ekin iki kat hızlı büyür.").clicked() {
+                if let Some(field) = field.filter(|_| a.inventory.get(ItemKind::Plow) > 0)
+                    && ui.button("Tarlaya götür").on_hover_text("Sabanla tarlanın yanında durur: ekin iki kat hızlı büyür.").clicked() {
                         let route = vec![RouteStep::Deposit { building: field }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
                         acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
                     }
-                }
             }
             if let Some(pen) = pen.filter(|_| a.kind != AgentKind::Bot) {
                 // walk in, drop any fodder carried, then stay put a long while (the route loops)
@@ -3010,7 +2961,7 @@ mod ui_tests {
             anchor: Some([0.0, 0.0]),
             grip: true,
             time_scale: 1,
-            evo: 9.0, yaw: 0.0, fade: 0.0,
+            evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
         };
         draw(ctx, &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
     }
@@ -3341,7 +3292,7 @@ mod ui_tests {
                     move |ui, s| {
                         let ui_ctx = UiCtx {
                             hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, fade: 0.0,
+                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, fade: 0.0, cave_tiles: None,
                         };
                         draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                     },
@@ -3362,6 +3313,37 @@ mod ui_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn natural_cave_map_shows_explored_tiles_and_fits_the_window() {
+        let seed = alaz_sim::map::tag_seed_natural(42, 256);
+        let mut world = World::with_size(seed, 256, 256);
+        let node = world.node_at(222, 150).unwrap();
+        let (x, y) = world.nodes[node.0 as usize].center_mm();
+        let me = world.spawn_agent(x, y);
+        world.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
+        world.step(&[Command { agent: me, kind: CommandKind::EnterCave { node } }]);
+        let cave = world.agents[0].cave.unwrap();
+        let torch_lit = world.natural_cave_sight(cave);
+        assert!(!torch_lit.is_empty());
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 600.0)).build_ui_state(
+            move |ui, (world, map)| {
+                map.observe(world, me);
+                draw_cave(ui.ctx(), world, me, 0.0, 0.0, Some(map.known()), &mut Vec::new());
+            },
+            (world, crate::cave_map::CaveMap::default()),
+        );
+        h.step();
+        h.step();
+        for label in ["Çıkışa git", "Çıkış", "Çöküntü", "Su"] {
+            assert!(h.ctx.content_rect().contains_rect(h.get_by_label(label).rect()));
+        }
+        assert_eq!(h.state().1.known(), &torch_lit);
+        h.state_mut().0.agents[0].cave.as_mut().unwrap().light = 0;
+        h.state_mut().1 = crate::cave_map::CaveMap::from_known(torch_lit.clone());
+        h.step();
+        assert_eq!(h.state().1.known(), &torch_lit, "restored tiles remain visible when the torch runs out");
     }
 
     /// The text of the cave events is for the player alone.
@@ -3396,7 +3378,7 @@ mod ui_tests {
                     let ui_ctx_anchor: [f32; 2] = anchor;
                     let ui_ctx = UiCtx {
                         hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0,
+                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
                     };
                     draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                 },
@@ -3414,7 +3396,7 @@ mod ui_tests {
 
 /// Inside a cave: a small status (level, torch, which way out), a map of what has been seen, and the fade on entry and
 /// exit. The cave itself is drawn by the renderer; the pointer's hints come from the game loop.
-fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f32, acts: &mut Vec<UiAction>) {
+fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f32, known: Option<&KnownTiles>, acts: &mut Vec<UiAction>) {
     use alaz_sim::caves::{Cell, CAVE_H, CAVE_W};
     if fade > 0.01 {
         let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("cave_fade")));
@@ -3427,14 +3409,18 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
         panel(ui, 6.0, |ui| {
             ui.set_min_width(190.0);
             let names = ["Üst galeri", "Orta galeri", "Derin galeri", "En dip"];
-            ui.label(RichText::new(format!("Mağara  ·  {}. kat  ·  {} m", c.level, c.level as u32 * 4)).strong());
-            ui.label(RichText::new(names[(c.level as usize - 1).min(3)]).small());
+            if let Some(z) = c.elevation_m() {
+                ui.label(RichText::new(format!("Mağara  ·  Rakım {z} m")).strong());
+            } else {
+                ui.label(RichText::new(format!("Mağara  ·  {}. kat  ·  {} m", c.level, c.level as u32 * 4)).strong());
+                ui.label(RichText::new(names[(c.level as usize - 1).min(3)]).small());
+            }
             let frac = (c.light as f32 / c.full.max(1) as f32).clamp(0.0, 1.0);
             let (lb, _) = ui.allocate_exact_size(egui::vec2(190.0, 7.0), egui::Sense::hover());
             ui.painter().rect_filled(lb, 0.0, Color32::from_gray(35));
             ui.painter().rect_filled(egui::Rect::from_min_size(lb.min, egui::vec2(190.0 * frac, 7.0)), 0.0, if frac > 0.2 { Color32::from_rgb(255, 170, 60) } else { Color32::from_rgb(230, 70, 40) });
             if c.light == 0 {
-                ui.label(RichText::new("Meşale söndü. Karanlıkta yavaş yürürsün; ok çıkışı gösterir.").small().color(Color32::from_rgb(230, 120, 90)));
+                ui.label(RichText::new("Meşale söndü. Karanlıkta yavaş yürürsün.").small().color(Color32::from_rgb(230, 120, 90)));
             } else {
                 ui.label(RichText::new(format!("Meşale: {} sn", c.light / 60)).small());
             }
@@ -3459,6 +3445,19 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
             }
         });
     });
+    let below = status.response.rect;
+    let map_pos = egui::pos2(below.left(), below.bottom() + 6.0);
+    if c.elevation_m().is_some() {
+        let current_sight;
+        let tiles = if let Some(known) = known {
+            known
+        } else {
+            current_sight = w.natural_cave_sight(c);
+            &current_sight
+        };
+        draw_natural_cave_map(ctx, tiles, c, map_pos);
+        return;
+    }
     // the map: only what has been near enough to see; it is kept per level in the egui memory
     let Some(lv) = w.caves.get(&c.node).and_then(|k| k.level(c.level)) else { return };
     let key = egui::Id::NULL.with(("cave_seen", c.node, c.level));
@@ -3472,8 +3471,7 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
             }
         }
     }
-    let below = status.response.rect;
-    egui::Area::new(egui::Id::NULL.with("cave_map")).fixed_pos(egui::pos2(below.left(), below.bottom() + 6.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::NULL.with("cave_map")).fixed_pos(map_pos).order(egui::Order::Foreground).show(ctx, |ui| {
         panel(ui, 4.0, |ui| {
             let cell = 2.5;
             let (resp, p) = ui.allocate_painter(egui::vec2(CAVE_W as f32 * cell, CAVE_H as f32 * cell), egui::Sense::hover());
@@ -3484,12 +3482,9 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
                         continue;
                     }
                     let col = match lv.cell(tx, ty) {
-                        Cell::Rock => Color32::from_rgb(44, 40, 38),
                         Cell::Rubble => Color32::from_rgb(90, 76, 60),
                         Cell::Shallow | Cell::Deep => Color32::from_rgb(40, 90, 140),
-                        Cell::Down => Color32::from_rgb(240, 200, 80),
-                        Cell::Up | Cell::Exit => Color32::from_rgb(120, 220, 140),
-                        Cell::Floor => Color32::from_rgb(140, 128, 112),
+                        cell => cave_map_color(cell),
                     };
                     let at = resp.rect.min + egui::vec2(tx as f32 * cell, ty as f32 * cell);
                     p.rect_filled(egui::Rect::from_min_size(at, egui::vec2(cell, cell)), 0.0, col);
@@ -3504,6 +3499,61 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
         });
     });
     ctx.data_mut(|d| d.insert_temp(key, seen));
+}
+
+fn cave_map_color(cell: alaz_sim::caves::Cell) -> Color32 {
+    use alaz_sim::caves::Cell;
+    match cell {
+        Cell::Rock => Color32::from_rgb(44, 40, 38),
+        Cell::Rubble => Color32::from_rgb(177, 119, 70),
+        Cell::Shallow | Cell::Deep => Color32::from_rgb(68, 143, 205),
+        Cell::Down => Color32::from_rgb(240, 200, 80),
+        Cell::Up | Cell::Exit => Color32::from_rgb(120, 220, 140),
+        Cell::Floor => Color32::from_rgb(140, 128, 112),
+    }
+}
+
+fn draw_natural_cave_map(ctx: &egui::Context, known: &KnownTiles, cave: alaz_sim::CaveSelf, pos: egui::Pos2) {
+    use alaz_sim::{cave_terrain::CaveTile, caves::Cell};
+
+    let Some(z) = cave.elevation_m() else { return };
+    let (x, y) = cave.tile();
+    const RADIUS: i32 = 16;
+    const SIDE: i32 = 2 * RADIUS + 1;
+    let from = CaveTile { x: x - RADIUS, y: i32::MIN, z: i16::MIN };
+    let through = CaveTile { x: x + RADIUS, y: i32::MAX, z: i16::MAX };
+    let mut grid = [None; (SIDE * SIDE) as usize];
+    for (&tile, &cell) in known.range(from..=through) {
+        if (tile.y - y).abs() <= RADIUS {
+            let index = (tile.x - x + RADIUS + (tile.y - y + RADIUS) * SIDE) as usize;
+            let distance = tile.z.abs_diff(z);
+            if grid[index].is_none_or(|(old, _)| distance < old) {
+                grid[index] = Some((distance, cell));
+            }
+        }
+    }
+    egui::Area::new(egui::Id::unique("natural_cave_map")).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
+        panel(ui, 4.0, |ui| {
+            let (resp, painter) = ui.allocate_painter(egui::Vec2::splat(190.0), egui::Sense::hover());
+            let cell = resp.rect.width() / SIDE as f32;
+            painter.rect_filled(resp.rect, 0.0, Color32::from_rgb(8, 8, 10));
+            for (i, tile) in grid.iter().enumerate() {
+                if let Some((distance, kind)) = tile {
+                    let at = resp.rect.min + egui::vec2((i as i32 % SIDE) as f32, (i as i32 / SIDE) as f32) * cell;
+                    let color = cave_map_color(*kind);
+                    let color = if *distance > 5 { color.gamma_multiply(0.55) } else { color };
+                    painter.rect_filled(Rect::from_min_size(at, egui::Vec2::splat(cell)), 0.0, color);
+                }
+            }
+            painter.circle_filled(resp.rect.center(), 3.0, Color32::WHITE);
+            painter.circle_stroke(resp.rect.center(), 3.6, Stroke::new(1.0, Color32::BLACK));
+            ui.horizontal(|ui| {
+                for (text, kind) in [("Çıkış", Cell::Exit), ("Çöküntü", Cell::Rubble), ("Su", Cell::Deep)] {
+                    ui.label(RichText::new(text).small().color(cave_map_color(kind)));
+                }
+            });
+        });
+    });
 }
 
 /// Red edges after a blow, fading with `k` (1 to 0); drawn under every panel.
