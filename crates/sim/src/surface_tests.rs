@@ -347,8 +347,8 @@ fn surface_fire_and_ice_pass_over_underground_agents() {
     let (x, y) = (i64::from(ice.0) * 1_000 + 500, i64::from(ice.1) * 1_000 + 500);
     let surface = w.spawn_agent(x, y);
     let underground = w.spawn_agent(x, y);
-    w.agents[1].cave = Some(crate::CaveSelf {
-        node: 0, level: 90, x, y, light: 60, full: 60, dark: 0, cool: 0, leaving: false,
+    w.agents[1].set_cave_view(crate::CaveView {
+        x, y, z: -10, light: 60, leaving: false,
     });
     w.tick = 600;
     w.burn.insert(ice, Burn { fire: true, born: w.tick, until: w.tick + 1_000 });

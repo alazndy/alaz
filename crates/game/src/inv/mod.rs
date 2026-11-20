@@ -220,7 +220,7 @@ fn open_machine(cx: &Cx) -> Option<usize> {
 
 /// The same for callers without a `Cx` (the book).
 pub(crate) fn open_machine_of(w: &World, me: &Agent, selection: Option<Selection>) -> Option<usize> {
-    if me.cave.is_some() {
+    if me.cave_view().is_some() {
         return None;
     }
     match selection {
@@ -531,7 +531,6 @@ mod tests {
             time_scale: 1,
             evo: 9.0,
             yaw: 0.0,
-            fade: 0.0,
             cave_tiles: None,
         }
     }

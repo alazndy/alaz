@@ -58,8 +58,6 @@ pub struct UiCtx<'a> {
     pub evo: f32,
     /// The camera's yaw in degrees (the way-out arrow is drawn as the camera sees it).
     pub yaw: f32,
-    /// Black over the picture while the cave is entered or left (0..1).
-    pub fade: f32,
     pub cave_tiles: Option<&'a KnownTiles>,
 }
 
@@ -367,12 +365,11 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
         }
         Event::Fractured(a) if *a == me => "Bacağın kırıldı! Yavaş yürürsün. İki dal ve iki lifle kırık tahtası yap, bacağına bağla: üç kat hızlı kaynar.".into(),
         Event::WoundInfected(a) if *a == me => "Yaran iltihaplandı, ateşin çıktı. Şifalı ot çiğne, ateşin başında dinlen. Bir dahaki sefere yarayı sar.".into(),
-        Event::CaveEntered(a) if *a == me => "Mağaradasın. Kazman varsa duvarı sağ tıklayarak kazabilirsin. Çıkmak için sağ üstteki “Çıkışa git” düğmesini kullan.".into(),
+        Event::CaveEntered(a) if *a == me => "Mağaradasın. Duvarı kazmak için kazmayla sağ tıkla. Çıkmak için ağza yürü ya da “Çıkışa git”e tıkla.".into(),
         Event::CaveLevel { agent, level } if *agent == me => format!("{level}. kata indin. Daha derin: damarlar zengin, tavan daha tehlikeli."),
-        Event::CaveDark(a) if *a == me => "Meşale söndü. Karanlıkta yavaş yürürsün. “Çıkışa git” bir çıkış rotası arar.".into(),
+        Event::CaveDark(a) if *a == me => "Işık söndü. Görüş iki karoya düştü.".into(),
         Event::CaveRelit(a) if *a == me => "Meşaleyi yeniden yaktın.".into(),
-        Event::CaveStumbled(a) if *a == me => "Karanlıkta tökezledin.".into(),
-        Event::CaveEntered(_) | Event::CaveLevel { .. } | Event::CaveDark(_) | Event::CaveRelit(_) | Event::CaveStumbled(_) => return None,
+        Event::CaveEntered(_) | Event::CaveLevel { .. } | Event::CaveDark(_) | Event::CaveRelit(_) => return None,
         Event::CaveRockfall(_) | Event::CaveLeft { .. } | Event::Fractured(_) | Event::WoundInfected(_) => return None,
         Event::Fell { agent, height_mm } if *agent == me => {
             let m = *height_mm as f32 / 1000.0;
@@ -505,7 +502,6 @@ pub fn event_hint(e: &Event, w: &World, me: AgentId) -> Option<String> {
             Reject::NoIdea => "Bunları birbirine vurdun, bağladın, denedin... hiçbir şey olmadı.".into(),
             Reject::NeedsWater => "Su çarkı akan suyun (3 kare) yakınına kurulur.".into(),
             Reject::Escaped => "Av kaçtı. Daha yakından dene.".into(),
-            Reject::NoLight => "Mağaraya girmek için meşale gerek: iki dal ve bir lifle Yap sekmesinde yapılır, yakmak için çakmaktaşı lazım. Yağ kandili ve bir kaşık bitkisel yağ da ışık verir.".into(),
             Reject::NeedsTool { tool, tier } => {
                 use alaz_sim::rules::ToolKind;
                 let metal = ["taş", "bakır", "bronz", "demir", "çelik"].get(*tier as usize).copied().unwrap_or("daha sert");
@@ -1683,7 +1679,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         let p = egui::pos2(r.left() + (n[0] + 1.0) * 0.5 * r.width(), r.top() + (1.0 - n[1]) * 0.5 * r.height());
         ctx.data_mut(|d| d.insert_temp(egui::Id::NULL.with("craft_anchor"), p));
     }
-    draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.fade, ui_ctx.cave_tiles, acts);
+    draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.cave_tiles, acts);
     match w.craft_view(ui_ctx.me) {
         Some(v) => match v.kind {
             alaz_sim::MinigameKind::Knap => draw_knapping(ctx, &v, ui_ctx.last_strike, knap, ui_ctx.grip, ui_ctx.binds, acts),
@@ -1698,7 +1694,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
     }
 
     // the workpiece needs the screen: side panels wait until the job is done
-    let in_cave = w.agents.iter().any(|a| a.id == ui_ctx.me && a.cave.is_some());
+    let in_cave = w.agents.iter().any(|a| a.id == ui_ctx.me && a.cave_view().is_some());
     let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave { None } else { ui_ctx.selection };
     match selection {
         Some(Selection::Building(i)) => {
@@ -2961,7 +2957,7 @@ mod ui_tests {
             anchor: Some([0.0, 0.0]),
             grip: true,
             time_scale: 1,
-            evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
+            evo: 9.0, yaw: 0.0, cave_tiles: None,
         };
         draw(ctx, &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
     }
@@ -3274,25 +3270,28 @@ mod ui_tests {
     #[test]
     fn the_cave_status_shows_underground_and_fits_small_windows() {
         for size in [(800.0f32, 600.0f32), (1280.0, 800.0)] {
-            let mut w = World::new(5);
+            let mut w = World::with_size(alaz_sim::map::tag_seed_natural(42, 256), 256, 256);
             let (sx, sy) = w.spawn_mm;
             w.spawn_agent(sx, sy);
             w.learn_everything();
             let ni = w.nodes.iter().position(|n| n.kind == alaz_sim::NodeKind::CaveMouth).expect("a mouth");
-            let (mx, my) = w.nodes[ni].center_mm();
-            w.agents[0].x = mx;
-            w.agents[0].y = my + 1_500;
+            (w.agents[0].x, w.agents[0].y) = w.nodes[ni].center_mm();
             w.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
             let surface = State { w: w.clone(), knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
-            w.step(&[Command { agent: AgentId(0), kind: CommandKind::EnterCave { node: alaz_sim::NodeId(ni as u32) } }]);
-            assert!(w.agents[0].cave.is_some());
+            let position = w.cave_entrance_destination(alaz_sim::NodeId(ni as u32)).unwrap();
+            w.step(&[Command { agent: AgentId(0), kind: CommandKind::MoveToFloor { position } }]);
+            for _ in 0..100 {
+                if w.agents[0].cave_view().is_some() { break; }
+                w.step(&[]);
+            }
+            assert!(w.agents[0].cave_view().is_some());
             for (what, world) in [("below", w), ("above", surface.w.clone())] {
                 let state = State { w: world, knap: KnapState::default(), acts: Vec::new(), tab: None, binds: Keybinds::default() };
                 let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(size.0, size.1)).with_step_dt(1.0 / 60.0).build_ui_state(
                     move |ui, s| {
                         let ui_ctx = UiCtx {
                             hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, fade: 0.0, cave_tiles: None,
+                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, cave_tiles: None,
                         };
                         draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                     },
@@ -3305,8 +3304,8 @@ mod ui_tests {
                 if what == "below" {
                     let r = h.get_by_label("Çıkışa git").rect();
                     assert!(screen.contains_rect(r), "the way-out button {r:?} outside {screen:?}");
-                    assert!(h.query_by_label_contains("Mağara  ·  1. kat").is_some(), "the level is shown");
-                    assert!(h.query_by_label_contains("Meşale").is_some(), "the torch is shown");
+                    assert!(h.query_by_label_contains("Mağara  ·  Rakım").is_some(), "the level is shown");
+                    assert!(h.query_by_label_contains("Işık açık").is_some(), "the torch is shown");
                     assert!(h.query_by_label("Damarı kaz").is_none() && h.query_by_label("Daha derine in").is_none(), "the old panel is gone");
                 } else {
                     assert!(h.query_by_label("Çıkışa git").is_none(), "nothing of the cave HUD on the surface");
@@ -3323,14 +3322,19 @@ mod ui_tests {
         let (x, y) = world.nodes[node.0 as usize].center_mm();
         let me = world.spawn_agent(x, y);
         world.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
-        world.step(&[Command { agent: me, kind: CommandKind::EnterCave { node } }]);
-        let cave = world.agents[0].cave.unwrap();
+        let position = world.cave_entrance_destination(node).unwrap();
+        world.step(&[Command { agent: me, kind: CommandKind::MoveToFloor { position } }]);
+        for _ in 0..100 {
+            if world.agents[0].cave_view().is_some() { break; }
+            world.step(&[]);
+        }
+        let cave = world.agents[0].cave_view().unwrap();
         let torch_lit = world.natural_cave_sight(cave);
         assert!(!torch_lit.is_empty());
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(800.0, 600.0)).build_ui_state(
             move |ui, (world, map)| {
                 map.observe(world, me);
-                draw_cave(ui.ctx(), world, me, 0.0, 0.0, Some(map.known()), &mut Vec::new());
+                draw_cave(ui.ctx(), world, me, 0.0, Some(map.known()), &mut Vec::new());
             },
             (world, crate::cave_map::CaveMap::default()),
         );
@@ -3340,7 +3344,8 @@ mod ui_tests {
             assert!(h.ctx.content_rect().contains_rect(h.get_by_label(label).rect()));
         }
         assert_eq!(h.state().1.known(), &torch_lit);
-        h.state_mut().0.agents[0].cave.as_mut().unwrap().light = 0;
+        h.state_mut().0.agents[0].inventory.counts[ItemKind::Torch as usize] = 0;
+        h.state_mut().0.step(&[]);
         h.state_mut().1 = crate::cave_map::CaveMap::from_known(torch_lit.clone());
         h.step();
         assert_eq!(h.state().1.known(), &torch_lit, "restored tiles remain visible when the torch runs out");
@@ -3354,10 +3359,10 @@ mod ui_tests {
         w.spawn_agent(sx, sy);
         w.spawn_agent(sx + 3000, sy);
         let (a, b) = (AgentId(0), AgentId(1));
-        for e in [Event::CaveEntered(a), Event::CaveLevel { agent: a, level: 2 }, Event::CaveDark(a), Event::CaveRelit(a), Event::CaveStumbled(a)] {
+        for e in [Event::CaveEntered(a), Event::CaveLevel { agent: a, level: 2 }, Event::CaveDark(a), Event::CaveRelit(a)] {
             assert!(event_hint(&e, &w, a).is_some(), "{e:?} has a hint for its owner");
         }
-        for e in [Event::CaveEntered(b), Event::CaveLevel { agent: b, level: 2 }, Event::CaveDark(b), Event::CaveRelit(b), Event::CaveStumbled(b)] {
+        for e in [Event::CaveEntered(b), Event::CaveLevel { agent: b, level: 2 }, Event::CaveDark(b), Event::CaveRelit(b)] {
             assert!(event_hint(&e, &w, a).is_none(), "{e:?} is not for the other player");
         }
     }
@@ -3378,7 +3383,7 @@ mod ui_tests {
                     let ui_ctx_anchor: [f32; 2] = anchor;
                     let ui_ctx = UiCtx {
                         hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
+                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, cave_tiles: None,
                     };
                     draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                 },
@@ -3394,36 +3399,17 @@ mod ui_tests {
 }
 
 
-/// Inside a cave: a small status (level, torch, which way out), a map of what has been seen, and the fade on entry and
-/// exit. The cave itself is drawn by the renderer; the pointer's hints come from the game loop.
-fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f32, known: Option<&KnownTiles>, acts: &mut Vec<UiAction>) {
-    use alaz_sim::caves::{Cell, CAVE_H, CAVE_W};
-    if fade > 0.01 {
-        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("cave_fade")));
-        p.rect_filled(ctx.content_rect(), 0.0, Color32::from_black_alpha((fade.clamp(0.0, 1.0) * 255.0) as u8));
-    }
+/// Inside a cave, show the light, exit direction and discovered map.
+fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, known: Option<&KnownTiles>, acts: &mut Vec<UiAction>) {
     let Some(a) = w.agents.iter().find(|a| a.id == me) else { return };
-    let Some(c) = a.cave else { return };
+    let Some(c) = a.cave_view() else { return };
     // top right is free on every screen size; the map hangs right under the status
     let status = egui::Area::new(egui::Id::NULL.with("cave_status")).fixed_pos(ctx.content_rect().right_top() + egui::vec2(-12.0 - 206.0, 12.0)).order(egui::Order::Foreground).show(ctx, |ui| {
         panel(ui, 6.0, |ui| {
             ui.set_min_width(190.0);
-            let names = ["Üst galeri", "Orta galeri", "Derin galeri", "En dip"];
-            if let Some(z) = c.elevation_m() {
-                ui.label(RichText::new(format!("Mağara  ·  Rakım {z} m")).strong());
-            } else {
-                ui.label(RichText::new(format!("Mağara  ·  {}. kat  ·  {} m", c.level, c.level as u32 * 4)).strong());
-                ui.label(RichText::new(names[(c.level as usize - 1).min(3)]).small());
-            }
-            let frac = (c.light as f32 / c.full.max(1) as f32).clamp(0.0, 1.0);
-            let (lb, _) = ui.allocate_exact_size(egui::vec2(190.0, 7.0), egui::Sense::hover());
-            ui.painter().rect_filled(lb, 0.0, Color32::from_gray(35));
-            ui.painter().rect_filled(egui::Rect::from_min_size(lb.min, egui::vec2(190.0 * frac, 7.0)), 0.0, if frac > 0.2 { Color32::from_rgb(255, 170, 60) } else { Color32::from_rgb(230, 70, 40) });
-            if c.light == 0 {
-                ui.label(RichText::new("Meşale söndü. Karanlıkta yavaş yürürsün.").small().color(Color32::from_rgb(230, 120, 90)));
-            } else {
-                ui.label(RichText::new(format!("Meşale: {} sn", c.light / 60)).small());
-            }
+            let z = a.z.div_euclid(1_000);
+            ui.label(RichText::new(format!("Mağara  ·  Rakım {z} m")).strong());
+            ui.label(RichText::new(if c.light == 0 { "Karanlık  ·  Görüş 2 karo" } else { "Işık açık" }).small());
             if let Some(((dx, dy), steps)) = w.cave_way_out(me) {
                 // which way that is on the screen, with the camera as it is turned
                 let y = yaw_deg.to_radians();
@@ -3440,65 +3426,23 @@ fn draw_cave(ctx: &egui::Context, w: &World, me: AgentId, yaw_deg: f32, fade: f3
                 p.add(egui::Shape::convex_polygon(vec![tip, tail + side, mid - egui::vec2(ux, uy) * 4.0, tail - side], Color32::from_rgb(120, 220, 140), Stroke::new(1.0, Color32::BLACK)));
                 p.text(egui::pos2(mid.x + 28.0, mid.y), Align2::LEFT_CENTER, format!("Çıkış bu yönde  ·  {} adım", steps), egui::FontId::proportional(12.0), Color32::from_gray(225));
             }
-            if ui.small_button("Çıkışa git").clicked() {
-                acts.push(UiAction::Cmd(CommandKind::CaveLeave));
+            if ui.small_button("Çıkışa git").clicked()
+                && let Some(position) = w.cave_exit_destination(me)
+            {
+                acts.push(UiAction::Cmd(CommandKind::MoveToFloor { position }));
             }
         });
     });
     let below = status.response.rect;
     let map_pos = egui::pos2(below.left(), below.bottom() + 6.0);
-    if c.elevation_m().is_some() {
-        let current_sight;
-        let tiles = if let Some(known) = known {
-            known
-        } else {
-            current_sight = w.natural_cave_sight(c);
-            &current_sight
-        };
-        draw_natural_cave_map(ctx, tiles, c, map_pos);
-        return;
-    }
-    // the map: only what has been near enough to see; it is kept per level in the egui memory
-    let Some(lv) = w.caves.get(&c.node).and_then(|k| k.level(c.level)) else { return };
-    let key = egui::Id::NULL.with(("cave_seen", c.node, c.level));
-    let mut seen: Vec<bool> = ctx.data_mut(|d| d.get_temp(key)).unwrap_or_else(|| vec![false; (CAVE_W * CAVE_H) as usize]);
-    let (px, py) = c.tile();
-    let r = if c.light > 0 { 7 } else { 1 };
-    for ty in (py - r).max(0)..=(py + r).min(CAVE_H - 1) {
-        for tx in (px - r).max(0)..=(px + r).min(CAVE_W - 1) {
-            if (tx - px).pow(2) + (ty - py).pow(2) <= r * r {
-                seen[(ty * CAVE_W + tx) as usize] = true;
-            }
-        }
-    }
-    egui::Area::new(egui::Id::NULL.with("cave_map")).fixed_pos(map_pos).order(egui::Order::Foreground).show(ctx, |ui| {
-        panel(ui, 4.0, |ui| {
-            let cell = 2.5;
-            let (resp, p) = ui.allocate_painter(egui::vec2(CAVE_W as f32 * cell, CAVE_H as f32 * cell), egui::Sense::hover());
-            p.rect_filled(resp.rect, 0.0, Color32::from_rgb(8, 8, 10));
-            for ty in 0..CAVE_H {
-                for tx in 0..CAVE_W {
-                    if !seen[(ty * CAVE_W + tx) as usize] {
-                        continue;
-                    }
-                    let col = match lv.cell(tx, ty) {
-                        Cell::Rubble => Color32::from_rgb(90, 76, 60),
-                        Cell::Shallow | Cell::Deep => Color32::from_rgb(40, 90, 140),
-                        cell => cave_map_color(cell),
-                    };
-                    let at = resp.rect.min + egui::vec2(tx as f32 * cell, ty as f32 * cell);
-                    p.rect_filled(egui::Rect::from_min_size(at, egui::vec2(cell, cell)), 0.0, col);
-                    if lv.ore_at(tx, ty).is_some() && lv.cell(tx, ty) == Cell::Rock {
-                        p.rect_filled(egui::Rect::from_min_size(at, egui::vec2(cell, cell)), 0.0, Color32::from_rgb(220, 120, 60));
-                    }
-                }
-            }
-            let me_at = resp.rect.min + egui::vec2((c.x as f32 / 1000.0) * cell, (c.y as f32 / 1000.0) * cell);
-            p.circle_filled(me_at, 3.0, Color32::from_rgb(255, 255, 255));
-            p.circle_stroke(me_at, 3.5, Stroke::new(1.0, Color32::BLACK));
-        });
-    });
-    ctx.data_mut(|d| d.insert_temp(key, seen));
+    let current_sight;
+    let tiles = if let Some(known) = known {
+        known
+    } else {
+        current_sight = w.natural_cave_sight(c);
+        &current_sight
+    };
+    draw_natural_cave_map(ctx, tiles, c, map_pos);
 }
 
 fn cave_map_color(cell: alaz_sim::caves::Cell) -> Color32 {
@@ -3513,10 +3457,10 @@ fn cave_map_color(cell: alaz_sim::caves::Cell) -> Color32 {
     }
 }
 
-fn draw_natural_cave_map(ctx: &egui::Context, known: &KnownTiles, cave: alaz_sim::CaveSelf, pos: egui::Pos2) {
+fn draw_natural_cave_map(ctx: &egui::Context, known: &KnownTiles, cave: alaz_sim::CaveView, pos: egui::Pos2) {
     use alaz_sim::{cave_terrain::CaveTile, caves::Cell};
 
-    let Some(z) = cave.elevation_m() else { return };
+    let z = cave.elevation_m();
     let (x, y) = cave.tile();
     const RADIUS: i32 = 16;
     const SIDE: i32 = 2 * RADIUS + 1;

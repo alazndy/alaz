@@ -12,8 +12,9 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 ## Technical Decisions
 
 - Generate natural cave voxels from the world seed and the surface elevation. Keep all entrances in the same coordinate space.
-- Save only excavated voxels and player positions. Restore generated geometry from the seed.
-- Use separate seed tags and a separate save version for natural caves. Legacy saves still depend on their original layouts.
+- Save player positions, excavated voxels, and rubble. Restore generated geometry from the seed.
+- Keep the seed tags and resource node order stable for older saves. Discover unmarked entrances from terrain density.
+- Save all worlds in format 33. Read older layouts, retain valid natural cave positions, and discard artificial chambers.
 - Check air connectivity and walkability separately. A route needs headroom, floor support, and a climbable slope.
 - Save rubble at the floor's world coordinates. Clear it by hand even with a full pack so it cannot trap a player.
 - Find the nearest cave exit through the walkable graph. Recheck tool and pump access when a route changes.
@@ -22,6 +23,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Match exploration to the exact saved world and player. Keep both the current and backup maps in the slot sidecar.
 - Derive surface entrances from the existing threshold, slope, and roof. Preserve saved entrances and collision.
 - Keep the exact cave floor selection when caching meshes. Upload only changed height regions when the texture origin stays fixed.
+- Build the surface opening mesh from nearby seeded floors and ceilings. Share floor edges across chunks so the gallery remains visible through the mouth.
 - Share player ownership and world generation checks between direct and relayed connections.
 
 ## Important Links & Paths
@@ -40,6 +42,8 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 
 ## Change Log & Agent Trail
 
+- [2026-11-20] [Codex Kaira]: Replaced the entrance back wall with the real gallery mesh. Added a regression test for the open seam and the landing geometry.
+- [2026-11-20] [Codex Kaira]: Unified walking coordinates, route search, and step speed. Added density-based entrances, a horizontal cutaway, save format 33, and protocol 4. Surface orders resume after the player walks out. Preserve distinct entrance thresholds to prevent repeated transitions.
 - [2026-11-19] [Codex Kaira]: Connected natural cave terrain to entrances, walking, excavation, rendering, and saved state.
 - [2026-11-19] [Codex Kaira]: Added shared rockfalls and rubble clearing. Format 32 stores rubble. Format 31 still loads.
 - [2026-11-19] [Codex Kaira]: Added nearest-exit routing, replanning on collapse, and a local exploration map.

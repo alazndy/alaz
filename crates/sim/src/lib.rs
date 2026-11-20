@@ -28,7 +28,7 @@ mod tests;
 mod surface_tests;
 
 pub use agents::{AgentKind, RouteStep};
-pub use caves::{Cave, CaveSelf};
+pub use caves::CaveView;
 pub use buildings::{Building, BuildingKind, Job};
 pub use command::{AgentId, Command, CommandKind, NodeId, RecipeId};
 pub use map::{climate, elevation_mm, ItemKind, Map, NodeKind, Terrain};

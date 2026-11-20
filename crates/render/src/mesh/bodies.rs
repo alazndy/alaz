@@ -429,7 +429,7 @@ pub(crate) fn work_of(world: &World, a: &alaz_sim::world::Agent) -> (Work, Tool,
     let me = m(a.x, a.y);
     let near = |p: (f32, f32), r: f32| (p.0 - me.0).powi(2) + (p.1 - me.1).powi(2) <= r * r;
     // underground: a swing at the rock face, with the pick if there is one
-    if let Some(c) = a.cave {
+    if let Some(c) = a.cave_view() {
         let at = m(c.x, c.y);
         return match a.task {
             Task::Dig { tx, ty, .. } => (Work::Mine, if has(I::IronPickaxe) || has(I::BronzePickaxe) { Tool::MetalPick } else { Tool::StoneAxe }, (tx as f32 + 0.5, ty as f32 + 0.5)),
@@ -680,6 +680,10 @@ pub(crate) struct BodyJob {
     pub(crate) chips: Option<(Work, (f32, f32), f32)>,
     /// Height of the flight, when off the ground.
     pub(crate) lift: Option<f32>,
+    /// Absolute support height where the surface height map does not describe the floor.
+    pub(crate) floor_height: Option<f32>,
+    /// Daylight reaching this body's gallery floor.
+    pub(crate) cave_exposure: Option<f32>,
     /// Roll and forward lean of a body that is going somewhere.
     pub(crate) lean: Option<(f32, f32)>,
     pub(crate) heading: f32,
@@ -694,10 +698,13 @@ pub(crate) struct BodyJob {
 /// Draws one body: its chips, shadow and figure, then bends the figure to the ground it is on.
 fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u32>> {
     let (x, z, secs) = (j.x, j.z, j.secs);
+    let detail_start = out.len();
     if let Some((work, target, cyc)) = j.chips {
         push_chips(out, work, target, (x, z), cyc, j.pose.tool);
     }
-    decal(out, art.shadow_s, x, z, WHITE, 0.0);
+    if j.floor_height.is_none() {
+        decal(out, art.shadow_s, x, z, WHITE, 0.0);
+    }
     let body_start = out.len();
     push_creature(out, j.kind, x, z, j.marked, j.pose);
     let range = if j.is_me { Some(body_start as u32..out.len() as u32) } else { None };
@@ -737,6 +744,16 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
         for v in &mut out.verts[body_start..] {
             let p = glam::Vec3::from(v.pos);
             v.pos = (rot * (p - pivot) + pivot + lift).to_array();
+        }
+    }
+    if let Some(floor) = j.floor_height {
+        for v in &mut out.verts[detail_start..] {
+            if v.kind == 4.0 {
+                v.kind = 1000.0 + floor;
+                if let Some(light) = j.cave_exposure {
+                    v.uv[0] = -1.0 - 0.99 * light;
+                }
+            }
         }
     }
     range

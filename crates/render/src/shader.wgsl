@@ -15,7 +15,7 @@ struct Globals {
     fires: array<vec4<f32>, 8>, // burning fires: xyz position, w reach in metres (0 = none)
     occ: vec4<f32>,     // x: how many of `fires` burn
     sun_vp_static: mat4x4<f32>, // the static shadow map's own box (trees and rocks; the shadow map starts as a copy of a window of it)
-    cave: vec4<f32>,    // x: 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
+    cave: vec4<f32>,    // x: torch strength (0..1), y: local roof cut enabled
     look: vec4<f32>,    // xyz: a small resource the pointer is on, w: 1 if there is one
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -179,10 +179,6 @@ fn place(v0: VIn) -> vec3<f32> {
     var lift = 0.0;
     if (v0.kind > 500.0) {
         lift = v0.kind - 1000.0;
-    } else if (globals.cave.y > 0.5) {
-        let xz = select(v.pos.xz, v.off, anchored);
-        let tile = clamp(vec2<i32>(floor(xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
-        lift = textureLoad(hmap, tile, 0).r;
     } else {
         lift = ground_h(select(v.pos.xz, v.off, anchored)) + select(0.0, 0.02, anchored);
     }
@@ -828,6 +824,15 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(finish(lit, wpos, 0.0), 1.0);
 }
 
+// Match the ray picker: hide only nearby rock above the player and between them and the eye.
+fn cave_roof_cut(world: vec3<f32>) -> bool {
+    if (globals.cave.y <= 0.5 || globals.peek.w <= 0.5) { return false; }
+    let d = world - globals.peek.xyz;
+    let toward_eye = cross(globals.cam_r.xyz, globals.cam_u.xyz);
+    let screen = vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz));
+    return d.y > 0.25 && dot(d, toward_eye) > 0.3 && length(d.xz) < 4.2 && length(screen) < 2.1;
+}
+
 @vertex fn vs_ground(v0: VIn) -> GIn {
     var o: GIn;
     let wp = place(v0);
@@ -839,6 +844,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk whose bake is complete: one lookup stands in for the whole static colour.
 @fragment fn fs_ground(v: GIn) -> @location(0) vec4<f32> {
+    if (cave_roof_cut(v.world)) { discard; }
     let tx = vec2<i32>(floor(v.wpos * GTF));
     let rt = ((tx % vec2<i32>(RING_TEXELS)) + vec2<i32>(RING_TEXELS)) % vec2<i32>(RING_TEXELS);
     let c = textureLoad(bake_col, rt, 0);
@@ -851,6 +857,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk the bake has not reached yet (or lies beyond the ring): the same, worked out on the spot.
 @fragment fn fs_ground_live(v: GIn) -> @location(0) vec4<f32> {
+    if (cave_roof_cut(v.world)) { discard; }
     let tx = vec2<i32>(floor(v.wpos * GTF));
     return ground_finish(ground_dyn(v.wpos, tx, ground_static(tx)), v.wpos, v.world);
 }
@@ -880,46 +887,36 @@ struct BakeOut {
 }
 
 // ---- models and decals --------------------------------------------------------------------------------------------
-// Underground the rock is lit by the player's torch alone. `hmap`'s green channel marks the tiles of solid rock (the cave
-// writes it there in place of the climate), so the light is stopped by walls: a short march from the torch to the point.
-fn cave_open(src: vec3<f32>, dst: vec3<f32>) -> f32 {
-    for (var i = 1; i < 14; i = i + 1) {
-        let q = mix(src, dst, f32(i) / 14.0);
-        if (globals.cave.y > 0.5) {
-            let t = clamp(vec2<i32>(floor(q.xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
-            let rock = textureLoad(hmap, t, 0);
-            if (rock.g > 0.5 || q.y < rock.r - 0.12) { return 0.0; }
-        } else if (q.y < 2.2) {
-            let t = clamp(vec2<i32>(floor(q.xz)), vec2<i32>(0), vec2<i32>(255));
-            if (textureLoad(hmap, t, 0).g > 0.5) { return 0.0; }
-        }
-    }
-    return 1.0;
+// Negative model UVs carry exposure from the connected cave mesh. Rock and actors use distinct ranges
+// so the camera can open the roof without punching holes through bodies or carried models.
+fn cave_daylight(tag: f32) -> f32 {
+    if (tag <= -2.0) { return clamp(-tag - 2.0, 0.0, 1.0); }
+    return clamp((-tag - 1.0) / 0.99, 0.0, 1.0);
 }
 
-fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
-    let k = clamp(globals.cave.x - 1.0, 0.0, 1.0);
+fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>, exposure: f32) -> vec3<f32> {
+    let strength = clamp(globals.cave.x, 0.0, 1.0);
     let torch = globals.peek.xyz + vec3<f32>(0.0, 0.55, 0.0);
-    let reach = 12.0 * k;
-    var light = vec3<f32>(0.06, 0.07, 0.10);
-    if (reach > 0.5) {
+    let reach = 8.0;
+    var light = vec3<f32>(0.07, 0.078, 0.10);
+    if (exposure > 0.0) {
+        let day = env_light(n, v.world, 1.0) * globals.light.rgb + fires_at(n, v.world);
+        light = mix(light, day, exposure);
+    }
+    if (strength > 0.0 && globals.peek.w > 0.5) {
         let d = torch - v.world;
         let dist = length(d);
         if (dist < reach) {
             let dir = d / max(dist, 0.001);
-            let vis = cave_open(torch, v.world + dir * 0.2);
-            let att = pow(1.0 - dist / reach, 1.25);
+            let att = 1.0 - smoothstep(0.0, reach, dist);
             let ndl = max(dot(n, dir), 0.0) * 0.75 + 0.25;
             let flick = 0.90 + 0.06 * sin(globals.env.x * 13.0) + 0.04 * sin(globals.env.x * 29.0 + 1.3);
-            // (the tops of the rock are far above the torch: dim, a dark mass against the lit floor)
-            let rock_top = select(v.world.y > 1.5, v.uv.x > 1.5, globals.cave.y > 0.5);
-            let top = select(1.0, 0.35, rock_top && n.y > 0.8);
-            light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * 2.2 * vis * top;
+            light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * (1.8 * strength);
         }
     }
     var lit: vec3<f32>;
     if (v.glow < 0.5) {
-        lit = col * quantize(light, 0.07);
+        lit = col * quantize(light, 0.05);
     } else {
         lit = col * (0.5 + 0.6 * v.glow);
     }
@@ -929,6 +926,9 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
+    let cave_model = v.kind == 4.0 && v.uv.x <= -1.0;
+    if (cave_model && v.uv.x <= -2.0 && cave_roof_cut(v.world)) { discard; }
+    let exposure = select(1.0, cave_daylight(v.uv.x), cave_model);
     if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && (v.glow < 0.5 || v.glow > 1.5) && v.p3.y > 1.15 && leaf_gap(v.p3)) { discard; }
     // a crown standing between the eye and the player opens up around them: leaves near the player on screen, and
     // nearer the camera than the player, are thinned out in a pixel pattern (more toward the middle), so the
@@ -962,20 +962,6 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.85 * k) { discard; }
         }
     }
-    let cave_on = globals.cave.x > 0.5;
-    // underground: rock between the eye and the player opens up around them, so they are never lost behind a wall
-    if (cave_on && v.kind == 4.0 && v.uv.x > 1.5 && globals.peek.w > 0.5) {
-        let d = v.world - globals.peek.xyz;
-        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
-        let ahead = dot(d, to_eye);
-        let r = length(vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz) * 0.8));
-        if (ahead > 0.4 && r < 2.8) {
-            let k = 1.0 - smoothstep(1.3, 2.8, r);
-            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
-            let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-            if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.9 * k) { discard; }
-        }
-    }
     // the bright rim around whatever the pointer is on: one flat colour, no light, no haze
     if (v.glow > 1.5) {
         return vec4<f32>(pow(v.color, vec3<f32>(2.2)), 1.0);
@@ -1001,15 +987,16 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         n = nm;
         // snow on the upper faces of leaves
         if (v.mat > 1.5 && v.mat < 2.5 && v.glow < 0.5) {
-            col = mix(col, vec3<f32>(0.9, 0.94, 1.0), globals.env.w * 0.45 * smoothstep(0.45, 0.8, nm.y));
+            col = mix(col, vec3<f32>(0.9, 0.94, 1.0), exposure * globals.env.w * 0.45 * smoothstep(0.45, 0.8, nm.y));
         }
         // in the rain everything outdoors is wet: darker, and its upper faces catch a cool sheen of the sky
         if (v.glow < 0.5) {
-            col = col * (1.0 - 0.16 * globals.env.z) + vec3<f32>(0.04, 0.05, 0.06) * globals.env.z * smoothstep(0.6, 0.9, nm.y);
+            let wet = exposure * globals.env.z;
+            col = col * (1.0 - 0.16 * wet) + vec3<f32>(0.04, 0.05, 0.06) * wet * smoothstep(0.6, 0.9, nm.y);
         }
     }
-    if (cave_on) {
-        return vec4<f32>(cave_shade(v, col, n), alpha);
+    if (cave_model) {
+        return vec4<f32>(cave_shade(v, col, n, exposure), alpha);
     }
     // light: sky, sun (held back by shadows and clouds) and fires; things that glow light themselves
     var lit: vec3<f32>;

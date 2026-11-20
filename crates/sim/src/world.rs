@@ -259,9 +259,6 @@ pub enum Task {
     /// `salt` varies the target positions between crafts.
     /// `stack`/`n`: the pieces placed so far in a stacking step (centres in cm).
     Craft { recipe: u16, step: u8, done: u8, hits: u8, idle: u16, salt: u16, score: u16, stack: [(i8, u8); 8], n: u8 },
-    /// Before caves could be walked in: the minigame state of a miner in a chamber. No longer made; a save that holds
-    /// one puts the miner back outside.
-    Cave { node: NodeId, depth: u8, light: u16, act: u8, work: u16 },
     /// Walking straight the way the keys push (no route planning, and over an edge if there is one).
     Walk { x: i64, y: i64 },
     /// Breaking up a felled trunk on the ground (a body id); `progress` ticks into the current blow.
@@ -272,8 +269,6 @@ pub enum Task {
     Fish { tx: i32, ty: i32, progress: u32 },
     /// In a cave: digging the wall on tile (tx, ty); ticks spent on the current swing.
     Dig { tx: i32, ty: i32, progress: u32 },
-    /// Walking up to a cave mouth to go in.
-    Enter { node: NodeId },
 }
 
 /// Felling a standing tree takes this many rounds of chopping; it gives no wood itself. The wood is in the trunk.
@@ -291,6 +286,10 @@ pub struct Agent {
     pub kind: AgentKind,
     pub x: i64,
     pub y: i64,
+    /// Feet elevation above sea level, in millimetres. Saved by the versioned agent record.
+    #[serde(skip)]
+    pub z: i64,
+    #[serde(with = "crate::save::legacy_task")]
     pub task: Task,
     pub inventory: Inventory,
     pub health: i32,
@@ -301,8 +300,8 @@ pub struct Agent {
     /// Standing orders of a worker, repeated forever.
     pub route: Vec<RouteStep>,
     pub route_i: u32,
-    route_wait: u32,
-    route_try: u8,
+    pub(crate) route_wait: u32,
+    pub(crate) route_try: u8,
     /// Bleeding and sickness: ticks left. They drain health and fade faster near warmth.
     pub injury: i32,
     /// A broken leg: ticks until it has knit. Walking is slow meanwhile.
@@ -317,6 +316,14 @@ pub struct Agent {
     /// Planned route around obstacles: remaining waypoint tiles (next one last) and the goal tile it is for.
     pub path: Vec<(i32, i32)>,
     pub path_goal: (i32, i32),
+    #[serde(skip)]
+    pub(crate) walk_route: Option<crate::nav::walking::WalkRoute>,
+    #[serde(skip)]
+    pub(crate) floor_target: Option<i64>,
+    #[serde(skip)]
+    pub(crate) after_entry: Option<crate::cave_terrain::WorldPoint>,
+    #[serde(skip)]
+    pub(crate) after_surface: Option<CommandKind>,
     /// Animals: how many generations from the wild (a calf is its mother's plus one). Saved in the extension block.
     #[serde(skip)]
     pub generation: u8,
@@ -330,10 +337,15 @@ pub struct Agent {
     /// Sitting at the evening fire, where (the sitting ends when the person moves). Not saved.
     #[serde(skip)]
     pub seated: Option<(i64, i64)>,
-    /// Underground: the cave, level and spot (the surface position above stays the mouth it went in by). Saved in the
-    /// extension block.
+    /// Floor contact and lighting at the current world position.
     #[serde(skip)]
-    pub cave: Option<crate::caves::CaveSelf>,
+    pub(crate) passage: Option<CavePassage>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CavePassage {
+    pub light: u16,
+    pub leaving: bool,
 }
 
 fn half_fed() -> [u16; 3] {
@@ -364,6 +376,20 @@ fn food_groups(k: ItemKind) -> [u16; 3] {
 }
 
 impl Agent {
+    pub fn position(&self) -> crate::cave_terrain::WorldPoint {
+        crate::cave_terrain::WorldPoint { x_mm: self.x, y_mm: self.y, z_mm: self.z }
+    }
+
+    pub fn cave_view(&self) -> Option<crate::caves::CaveView> {
+        let passage = self.passage?;
+        Some(crate::caves::CaveView { x: self.x, y: self.y, z: self.z.div_euclid(1_000) as i16, light: passage.light, leaving: passage.leaving })
+    }
+
+    pub(crate) fn set_cave_view(&mut self, view: crate::caves::CaveView) {
+        (self.x, self.y, self.z) = (view.x, view.y, i64::from(view.z) * 1_000);
+        self.passage = Some(CavePassage { light: view.light, leaving: view.leaving });
+    }
+
     /// Sitting at the fire: set down by camp, and over when the person moves or takes up work.
     pub fn is_seated(&self) -> bool {
         self.task == Task::Idle && self.seated == Some((self.x, self.y))
@@ -555,7 +581,6 @@ pub enum Reject {
     /// No way through to where you wanted to go.
     Unreachable,
     /// A cave needs a torch.
-    NoLight,
     /// Lighting a fire needs flint in the pack.
     NoFlint,
     /// A fire will not take on standing water or ice.
@@ -626,12 +651,10 @@ pub enum Event {
     CaveEntered(AgentId),
     /// Came to another level of a cave (1 = the first under the mouth).
     CaveLevel { agent: AgentId, level: u8 },
-    /// The light went out and there was no other to light.
+    /// The player no longer has a usable light.
     CaveDark(AgentId),
-    /// The light burnt down and the next was lit.
+    /// The player has a usable light again.
     CaveRelit(AgentId),
-    /// Knocked about, groping in the dark.
-    CaveStumbled(AgentId),
     Milestone(Milestone),
     /// Came down from a height (mm from the top of the flight to the ground).
     Fell { agent: AgentId, height_mm: i32 },
@@ -1050,12 +1073,13 @@ pub fn dist2(ax: i64, ay: i64, bx: i64, by: i64) -> i64 {
 }
 
 impl Agent {
-    fn with_kind(id: AgentId, kind: AgentKind, x: i64, y: i64) -> Self {
+    fn with_kind(id: AgentId, kind: AgentKind, seed: u64, x: i64, y: i64) -> Self {
         Self {
             id,
             kind,
             x,
             y,
+            z: i64::from(crate::map::elevation_at_mm(seed, x, y)),
             task: Task::Idle,
             inventory: Inventory::default(),
             health: MAX_STAT,
@@ -1074,16 +1098,20 @@ impl Agent {
             sick: 0,
             path: Vec::new(),
             path_goal: (-1, -1),
+            walk_route: None,
+            floor_target: None,
+            after_entry: None,
+            after_surface: None,
             generation: 0,
             wear: Vec::new(),
             nutrition: half_fed(),
             seated: None,
-            cave: None,
+            passage: None,
         }
     }
 
-    fn new(id: AgentId, x: i64, y: i64) -> Self {
-        Self::with_kind(id, AgentKind::Human, x, y)
+    fn new(id: AgentId, seed: u64, x: i64, y: i64) -> Self {
+        Self::with_kind(id, AgentKind::Human, seed, x, y)
     }
 
     /// What this agent can carry: its kind's load, plus a woven bag for a person who has one.
@@ -1289,8 +1317,6 @@ pub struct World {
     pub journal: crate::journal::Journal,
     /// How much of `events` the journal has read. Derived, not saved.
     pub(crate) journal_cursor: usize,
-    /// The caves people have been in, by the node index of their mouth (cut from the seed when first needed).
-    pub caves: std::collections::BTreeMap<u32, crate::caves::Cave>,
     /// Excavated rock in natural caves, shared by every entrance and player.
     pub(crate) dug_cave: std::collections::BTreeSet<crate::cave_terrain::CaveTile>,
     pub(crate) cave_rubble: std::collections::BTreeSet<crate::cave_terrain::CaveTile>,
@@ -1411,7 +1437,6 @@ impl World {
             events: Vec::new(),
             journal: Default::default(),
             journal_cursor: 0,
-            caves: Default::default(),
             dug_cave: Default::default(),
             cave_rubble: Default::default(),
             dug_cave_digest: 0,
@@ -1670,11 +1695,12 @@ impl World {
     /// Live nodes inside the tile rectangle `[x0, x1) x [y0, y1)` (for chunked rendering).
     pub fn nodes_in(&self, x0: i32, y0: i32, x1: i32, y1: i32) -> impl Iterator<Item = &Node> {
         let (a, b) = (node_chunk(x0, y0), node_chunk(x1 - 1, y1 - 1));
+        let has_caves = crate::map::has_natural_caves(self.seed);
         (a.1..=b.1)
             .flat_map(move |cy| (a.0..=b.0).map(move |cx| (cx, cy)))
             .filter_map(move |c| self.node_rows.get(&c))
             .flat_map(move |v| v.iter().map(move |&i| &self.nodes[i as usize]))
-            .filter(move |n| n.amount > 0 && n.tx >= x0 && n.tx < x1 && n.ty >= y0 && n.ty < y1)
+            .filter(move |n| n.amount > 0 && (has_caves || n.kind != NodeKind::CaveMouth) && n.tx >= x0 && n.tx < x1 && n.ty >= y0 && n.ty < y1)
     }
 
     /// Live (non-depleted) node on a tile.
@@ -1683,7 +1709,10 @@ impl World {
             return None;
         }
         find_node(&self.nodes, &self.node_rows, tx, ty)
-            .filter(|&i| self.nodes[i as usize].amount > 0)
+            .filter(|&i| {
+                let n = &self.nodes[i as usize];
+                n.amount > 0 && (n.kind != NodeKind::CaveMouth || crate::map::has_natural_caves(self.seed))
+            })
             .map(NodeId)
     }
 
@@ -1700,7 +1729,7 @@ impl World {
 
     pub fn spawn_worker(&mut self, kind: AgentKind, x: i64, y: i64) -> AgentId {
         let id = AgentId(self.agents.len() as u32);
-        self.agents.push(Agent::with_kind(id, kind, x, y));
+        self.agents.push(Agent::with_kind(id, kind, self.seed, x, y));
         id
     }
 
@@ -1984,27 +2013,46 @@ impl World {
         let (ax, ay) = (self.agents[idx].x, self.agents[idx].y);
         let kind_of_agent = self.agents[idx].kind;
         let human = kind_of_agent == AgentKind::Human;
-        // underground, only the things that make sense there
-        if self.agents[idx].cave.is_some() && cave_refuses(&c.kind) {
+        if let Some(cave) = self.agents[idx].cave_view() && command_needs_surface(&c.kind) {
+            self.natural_leave_command(idx, cave);
+            if self.agents[idx].cave_view().is_some_and(|c| c.leaving) {
+                self.agents[idx].after_surface = Some(c.kind.clone());
+            }
             return;
         }
         match &c.kind {
             CommandKind::Join => {}
-            CommandKind::MoveTo { x, y } => {
+            CommandKind::MoveTo { x, y } | CommandKind::MoveToFloor { position: crate::cave_terrain::WorldPoint { x_mm: x, y_mm: y, .. } } => {
+                if !(0..i64::from(self.map.w) * TILE_MM).contains(x) || !(0..i64::from(self.map.h) * TILE_MM).contains(y) {
+                    return;
+                }
+                let a = &mut self.agents[idx];
+                a.after_surface = None;
+                a.after_entry = None;
+                a.floor_target = match c.kind {
+                    CommandKind::MoveToFloor { position } => Some(position.z_mm),
+                    _ => None,
+                };
                 if matches!(self.agents[idx].task, Task::Craft { .. }) && human {
                     self.events.push(Event::CraftAbandoned(id));
                 }
                 self.agents[idx].task = Task::Move { x: *x, y: *y };
-                if let Some(cv) = &mut self.agents[idx].cave {
+                if let Some(cv) = &mut self.agents[idx].passage {
                     cv.leaving = false;
+                }
+                if let CommandKind::MoveToFloor { position } = c.kind {
+                    self.route_to_floor(idx, position);
                 }
             }
             CommandKind::Walk { x, y } => {
+                self.agents[idx].after_surface = None;
+                self.agents[idx].after_entry = None;
+                self.agents[idx].floor_target = None;
                 if matches!(self.agents[idx].task, Task::Craft { .. }) && human {
                     self.events.push(Event::CraftAbandoned(id));
                 }
                 self.agents[idx].task = Task::Walk { x: *x, y: *y };
-                if let Some(cv) = &mut self.agents[idx].cave {
+                if let Some(cv) = &mut self.agents[idx].passage {
                     cv.leaving = false;
                 }
             }
@@ -2028,17 +2076,15 @@ impl World {
                     self.agents[idx].task = Task::Gather { node: *node, progress: 0 };
                 }
             }
-            CommandKind::EnterCave { node } => self.cave_enter_command(idx, *node),
             CommandKind::CaveDig { tx, ty } => self.cave_dig_command(idx, *tx, *ty),
             CommandKind::SetSprint { on } => {
                 let a = &mut self.agents[idx];
                 if human {
                     // winded people cannot start running until they have caught some breath
                     a.sprint = *on && a.stamina >= SPRINT_MIN_START && a.broken == 0;
-                    a.fly = *on && self.settings.difficulty == Difficulty::Creative;
+                    a.fly = *on && self.settings.difficulty == Difficulty::Creative && a.passage.is_none();
                 }
             }
-            CommandKind::CaveLeave => self.cave_leave_command(idx),
             CommandKind::Fish { tx, ty } => {
                 if !human || self.map.terrain(*tx, *ty) != Some(Terrain::Water) {
                     return;
@@ -2784,10 +2830,8 @@ impl World {
         // pieces broken off trunks this tick (what, from where, which way), and who is looking for the next piece
         let mut thrown: Vec<(ItemKind, (i64, i64, i64), (i64, i64, i64))> = Vec::new();
         let mut seek: Vec<usize> = Vec::new();
-        let mut entering: Vec<(usize, NodeId)> = Vec::new();
-        let mut rocks: Vec<RockFall> = Vec::new();
         let ground = self.ground();
-        let Self { map, nodes, node_seq, node_stamps, node_acc, agents, obstacles, events, air, bodies, caves, .. } = self;
+        let Self { map, nodes, node_seq, node_stamps, node_acc, agents, obstacles, events, air, bodies, .. } = self;
         let mut nav = Nav { map, obstacles, budget: PATHS_PER_TICK, ground };
         for (ai, a) in agents.iter_mut().enumerate() {
             // off the ground, nobody walks or works: the fall has them until they land
@@ -2806,31 +2850,12 @@ impl World {
             if a.kind.is_worker() && a.hunger == 0 {
                 continue;
             }
-            // underground, walking and digging follow the cave's own floor plan
-            if a.cave.is_some() {
-                if a.cave.is_some_and(|c| c.elevation_m().is_none()) {
-                    cave_task(a, caves, events, &rules_now, &settings, seed, tick, stage, &mut rocks);
-                }
+            if a.cave_view().is_some() {
                 continue;
             }
             match a.task {
-                Task::Idle | Task::Tame { .. } | Task::Hunt { .. } | Task::Craft { .. } | Task::Cave { .. } => {}
-                // (underground work is run by `cave_task`, above)
+                Task::Idle | Task::Tame { .. } | Task::Hunt { .. } | Task::Craft { .. } => {}
                 Task::Dig { .. } => a.task = Task::Idle,
-                Task::Enter { node } => {
-                    let Some(n) = nodes.get(node.0 as usize) else {
-                        a.task = Task::Idle;
-                        continue;
-                    };
-                    let (nx, ny) = n.center_mm();
-                    if dist2(a.x, a.y, nx, ny) <= ENTER_REACH_MM * ENTER_REACH_MM {
-                        entering.push((ai, node));
-                        a.task = Task::Idle;
-                    } else if matches!(advance(a, &mut nav, nx, ny), Step::Blocked) {
-                        events.push(Event::Rejected(a.id, Reject::Unreachable));
-                        a.task = Task::Idle;
-                    }
-                }
                 Task::Move { x, y } => {
                     if !matches!(advance(a, &mut nav, x, y), Step::Moved) {
                         a.task = Task::Idle;
@@ -3107,12 +3132,6 @@ impl World {
         }
         for ai in seek {
             self.seek_piece(ai);
-        }
-        for (ai, node) in entering {
-            self.enter_cave(ai, node);
-        }
-        for r in rocks {
-            self.drop_rocks(r);
         }
         for (x, y, vx, vy, salt) in loosened {
             self.loose_rock(x, y, vx, vy, salt);
@@ -3694,7 +3713,7 @@ impl World {
                 .agents
                 .iter()
                 .enumerate()
-                .filter(|(_, a)| a.kind == AgentKind::Human && a.cave.is_none())
+                .filter(|(_, a)| a.kind == AgentKind::Human && a.cave_view().is_none())
                 .map(|(i, a)| (dist2(a.x, a.y, w.x, w.y), i, a.x, a.y))
                 .min();
             if let Some((d2, ai, ax, ay)) = target.filter(|t| t.0 < aggro * aggro) {
@@ -3723,7 +3742,7 @@ impl World {
 
     /// Rivers carry whoever is in them along: a swimmer fully, a wader half as much.
     fn run_currents(&mut self) {
-        for a in self.agents.iter_mut().filter(|a| a.kind == AgentKind::Human && a.health > 0) {
+        for a in self.agents.iter_mut().filter(|a| a.kind == AgentKind::Human && a.health > 0 && a.passage.is_none() && !self.air.iter().any(|f| f.agent == a.id)) {
             let (tx, ty) = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
             let depth = crate::map::water_depth(&self.map, tx, ty);
             if depth == 0 {
@@ -3734,6 +3753,7 @@ impl World {
             if self.map.terrain_mm(a.x + cx, a.y + cy).is_some() {
                 a.x += cx;
                 a.y += cy;
+                a.z = i64::from(crate::map::elevation_at_mm(self.seed, a.x, a.y));
             }
         }
     }
@@ -3773,10 +3793,10 @@ impl World {
         let mut infected = Vec::new();
         let seed = self.seed;
         {
-            let natural_water: Vec<bool> = if self.agents.iter().any(|a| a.cave.is_some_and(|c| c.elevation_m().is_some_and(|z| z <= -60))) {
-                self.agents.iter().map(|a| a.cave.and_then(|c| c.natural_tile()).is_some_and(|tile| self.natural_cave_flooded(tile))).collect()
+            let natural_water: Vec<bool> = if self.agents.iter().any(|a| a.cave_view().is_some_and(|c| c.elevation_m() <= -60)) {
+                self.agents.iter().map(|a| a.cave_view().map(|c| c.natural_tile()).is_some_and(|tile| self.natural_cave_flooded(tile))).collect()
             } else { Vec::new() };
-            let Self { agents, buildings, caves, .. } = self;
+            let Self { agents, buildings, .. } = self;
             for (ai, a) in agents.iter_mut().enumerate() {
                 if a.kind.is_worker() {
                     if tick.is_multiple_of(a.kind.upkeep_decay_ticks()) {
@@ -3804,7 +3824,7 @@ impl World {
                     a.thirst = (a.thirst - 1).max(0);
                 }
                 // out in the rain or snow without cover the cold bites harder
-                let covered = a.cave.is_some() || heat.iter().any(|&(hx, hy, r, _)| dist2(hx, hy, a.x, a.y) <= r * r);
+                let covered = a.cave_view().is_some() || heat.iter().any(|&(hx, hy, r, _)| dist2(hx, hy, a.x, a.y) <= r * r);
                 let gear = a.inventory.gear();
                 let wet = if covered { 0 } else { (match sky { crate::time::Weather::Clear => 0, crate::time::Weather::Rain => 30, crate::time::Weather::Snow => 50 } - gear.dry).max(0) };
                 let worn = gear.warmth;
@@ -3823,13 +3843,8 @@ impl World {
                 let warm_spot = heat.iter().any(|&(hx, hy, r, _)| dist2(hx, hy, a.x, a.y) <= r * r);
                 let heal = if warm_spot { 3 } else { 1 };
                 // swimming: it costs breath and the water chills; out of breath, you go under
-                let depth = if natural_water.get(ai) == Some(&true) { 2 } else if let Some(c) = a.cave {
-                    // underground: the water in the cave
-                    match caves.get(&c.node).and_then(|cv| cv.level(c.level)).map(|l| l.cell(c.tile().0, c.tile().1)) {
-                        Some(crate::caves::Cell::Deep) => 2,
-                        Some(crate::caves::Cell::Shallow) => 1,
-                        _ => 0,
-                    }
+                let depth = if natural_water.get(ai) == Some(&true) { 2 } else if a.cave_view().is_some() {
+                    0
                 } else if a.kind == AgentKind::Human {
                     crate::map::water_depth(&self.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32)
                 } else {
@@ -3901,7 +3916,7 @@ impl World {
         }
         for id in died {
             // Hardcore/save-reload is decided by the front end; the sim itself respawns with nothing.
-            self.agents[id.0 as usize] = Agent::new(id, spawn.0, spawn.1);
+            self.agents[id.0 as usize] = Agent::new(id, self.seed, spawn.0, spawn.1);
             self.events.push(Event::Died(id));
             self.clear_wolves_around(spawn);
         }
@@ -4761,8 +4776,9 @@ impl World {
             }
         }
         self.run_tasks();
-        self.run_cave_gaps();
         self.run_natural_cave_tasks();
+        // A walker changes contact at the lip after either movement pass has taken its step.
+        self.run_cave_gaps();
         self.run_physics();
         self.run_taming();
         self.run_hunting();
@@ -4863,11 +4879,24 @@ impl World {
                     feed((*c as u8 as u64) << 8 | *w as u64);
                 }
             }
-            if let Some(c) = a.cave {
-                feed(0xCA7E_0000 | (c.level as u64) << 8 | c.leaving as u64 | (c.light as u64) << 24 | (c.node as u64) << 40);
-                feed(c.x as u64);
-                feed(c.y as u64);
-                feed(c.dark as u64 | (c.cool as u64) << 16 | (c.full as u64) << 32);
+            if let Some(c) = a.cave_view() {
+                feed(0xCA7E_0000 | c.leaving as u64 | (c.light as u64) << 24);
+                feed(a.z as u64);
+                if let Some(route) = &a.walk_route {
+                    for f in &route.remaining {
+                        feed((f.x as u64) << 32 | f.y as u32 as u64);
+                        feed(f.z_mm as u64);
+                    }
+                }
+            }
+            if let Some(z) = a.floor_target { feed(0xCA7E_F100 ^ z as u64); }
+            if let Some(p) = a.after_entry {
+                for v in [p.x_mm, p.y_mm, p.z_mm] { feed(v as u64); }
+            }
+            if let Some(command) = &a.after_surface {
+                for byte in postcard::to_allocvec(command).expect("serialize pending command") {
+                    feed(u64::from(byte));
+                }
             }
             if let Some(&(px, py)) = a.path.last() {
                 feed((px as u64) << 32 | py as u64 & 0xffff_ffff);
@@ -4879,13 +4908,6 @@ impl World {
             feed(a.route_i as u64);
             for c in a.inventory.counts {
                 feed(c as u64);
-            }
-        }
-        // only once a cave has been changed, so a world that never saw one keeps the hash it had
-        for (node, c) in &self.caves {
-            for (&(lv, x, y), &(cell, left)) in &c.changed {
-                feed(0xCA7E_C0DE ^ (*node as u64) << 32 ^ (lv as u64) << 24 ^ (x as u64) << 8 ^ y as u64);
-                feed(cell as u64 | (left as u64) << 8);
             }
         }
         for tile in &self.dug_cave {

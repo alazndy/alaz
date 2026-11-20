@@ -616,6 +616,9 @@ impl NodeKind {
     }
 }
 
+type CaveOpenings = [Option<crate::cave_terrain::CaveMouth>; 4];
+type CaveOpeningCache = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<(i32, i32), CaveOpenings>>>;
+
 #[derive(Clone, Debug)]
 pub struct Map {
     pub w: i32,
@@ -623,6 +626,7 @@ pub struct Map {
     pub tiles: Vec<Terrain>,
     pub seed: u64,
     small_caves: Option<crate::cave_terrain::SmallWorldCaves>,
+    cave_openings: CaveOpeningCache,
 }
 
 /// Run `f(y0, y1)` over horizontal bands of rows on several threads and join the results in row order,
@@ -913,7 +917,7 @@ impl Map {
     pub fn generate(seed: u64, w: i32, h: i32) -> Self {
         // a very large world keeps no tile table: every tile is worked out from the seed when it is asked for
         if w as i64 * h as i64 > EAGER_MAX_TILES {
-            return Self { w, h, tiles: Vec::new(), seed, small_caves: None };
+            return Self { w, h, tiles: Vec::new(), seed, small_caves: None, cave_openings: Default::default() };
         }
         let tiles = par_rows(w, h, |y0, y1| {
             let mut tiles = Vec::with_capacity(((y1 - y0) * w) as usize);
@@ -924,7 +928,7 @@ impl Map {
             }
             tiles
         });
-        let mut map = Self { w, h, tiles, seed, small_caves: None };
+        let mut map = Self { w, h, tiles, seed, small_caves: None, cave_openings: Default::default() };
         if seed >> 48 == GEN_SMALL_CAVES_TAG && (128..=256).contains(&w) && (128..=256).contains(&h) {
             map.small_caves = crate::cave_terrain::SmallWorldCaves::generate(&map);
         }
@@ -957,12 +961,27 @@ impl Map {
     }
 
     pub fn surface_cave_gap(&self, tx: i32, ty: i32) -> bool {
-        if let Some(caves) = &self.small_caves {
-            return caves.gaps.contains(&(tx, ty));
-        }
-        has_natural_caves(self.seed) && crate::cave_terrain::SIDES.into_iter().any(|(dx, dy)| {
-            self.natural_cave_mouth(tx + dx, ty + dy).is_some_and(|mouth| mouth.threshold.xy() == (tx, ty))
-        })
+        self.cave_openings_at(tx, ty).next().is_some()
+    }
+
+    /// Physical entrances at a threshold, including ones without a generated marker node.
+    pub fn cave_openings_at(&self, tx: i32, ty: i32) -> impl Iterator<Item = crate::cave_terrain::CaveMouth> + use<> {
+        let openings = if has_natural_caves(self.seed) && self.in_bounds(tx, ty) {
+            // A missed sample is pure. Keep parallel chunk builders out of the write lock while sampling it.
+            let cached = self.cave_openings.read().unwrap_or_else(|e| e.into_inner()).get(&(tx, ty)).copied();
+            cached.unwrap_or_else(|| {
+                let openings = crate::cave_terrain::surface_openings(self, tx, ty);
+                let mut cached = self.cave_openings.write().unwrap_or_else(|e| e.into_inner());
+                if cached.len() >= 65_536 {
+                    cached.clear();
+                }
+                cached.insert((tx, ty), openings);
+                openings
+            })
+        } else {
+            [None; 4]
+        };
+        openings.into_iter().flatten()
     }
 
     pub fn natural_cave_mouth(&self, tx: i32, ty: i32) -> Option<crate::cave_terrain::CaveMouth> {

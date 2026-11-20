@@ -1,6 +1,5 @@
 use super::DetMath;
 use super::*;
-use alaz_sim::cave_terrain::{CaveEntrance, CaveMouth};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TreeDetail {
@@ -71,136 +70,6 @@ pub fn node_bounds(world: &World, n: &alaz_sim::world::Node) -> ([f32; 2], f32, 
     node_shape(world, n)
 }
 
-fn push_natural_mouth(out: &mut Mesh, world: &World, mouth: CaveMouth, seed: u32) {
-    let origin = [
-        mouth.threshold.x as f32 + 0.5,
-        mouth.threshold.y as f32 + 0.5,
-    ];
-    let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
-    let xz = |along: f32, across: f32| {
-        [
-            origin[0] + along * dx + across * dz,
-            origin[1] + along * dz - across * dx,
-        ]
-    };
-    let surface = |along, across| {
-        let [x, z] = xz(along, across);
-        ground_height(world.seed, x, z)
-    };
-    let lift = surface(0.0, 0.0) + 0.02;
-    let point = |along, across, height| {
-        let [x, z] = xz(along, across);
-        [x, height - lift, z]
-    };
-    let sill = f32::from(mouth.threshold.z);
-    let back_floor = (sill + f32::from(mouth.landing.z)) / 2.0;
-    let approach = [surface(-0.5, -0.5), surface(-0.5, 0.5)];
-    let entrance = mouth.entrance(&world.map);
-    let sections = [(-0.5, approach), (0.0, [sill; 2]), (0.5, [back_floor; 2])];
-    out.set_anchor(origin[0], origin[1]);
-    let mut quad = |vertices: [[f32; 3]; 4], color: [f32; 3]| {
-        let [a, b, c, d] = vertices.map(|p| out.v(p, color, 0.0));
-        out.extend_from_slice(&[a, b, c, a, c, d]);
-    };
-    for (i, pair) in sections.windows(2).enumerate() {
-        let (front, [left, right]) = pair[0];
-        let (back, [back_left, back_right]) = pair[1];
-        let floor = if i == 0 {
-            [0.35, 0.32, 0.28]
-        } else {
-            [0.20, 0.19, 0.18]
-        };
-        quad(
-            [
-                point(front, -0.5, left),
-                point(front, 0.5, right),
-                point(back, 0.5, back_right),
-                point(back, -0.5, back_left),
-            ],
-            floor,
-        );
-        for (i, across) in [-0.5, 0.5].into_iter().enumerate() {
-            let floor = pair[0].1[i];
-            let back_floor = pair[1].1[i];
-            quad(
-                [
-                    point(front, across, floor),
-                    point(back, across, back_floor),
-                    point(back, across, surface(back, across).max(back_floor)),
-                    point(front, across, surface(front, across).max(floor)),
-                ],
-                [0.30, 0.27, 0.24],
-            );
-        }
-    }
-    // The far cut joins the terrain at the tile seam. Darkness hides the part of the gallery beyond it.
-    quad(
-        [
-            point(0.5, -0.5, back_floor),
-            point(0.5, 0.5, back_floor),
-            point(0.5, 0.5, surface(0.5, 0.5).max(back_floor)),
-            point(0.5, -0.5, surface(0.5, -0.5).max(back_floor)),
-        ],
-        [0.073, 0.068, 0.073],
-    );
-
-    if let CaveEntrance::Hillside { roof_mm } = entrance {
-        let roof = roof_mm as f32 / 1_000.0;
-        let arch = [
-            (-0.50, roof - 0.54),
-            (-0.31, roof - 0.24),
-            (0.0, roof),
-            (0.27, roof - 0.19),
-            (0.5, roof - 0.54),
-        ];
-        for arc in arch.windows(2) {
-            let (left, left_roof) = arc[0];
-            let (right, right_roof) = arc[1];
-            let left_rim = surface(0.5, left);
-            let right_rim = surface(0.5, right);
-            let a = point(0.15, left, left_roof + 0.25);
-            let b = point(0.15, right, right_roof + 0.25);
-            let c = point(0.15, right, right_roof);
-            let d = point(0.15, left, left_roof);
-            quad([a, b, c, d], [0.43, 0.40, 0.37]);
-            quad(
-                [
-                    a,
-                    b,
-                    point(0.5, right, right_rim),
-                    point(0.5, left, left_rim),
-                ],
-                [0.51, 0.48, 0.43],
-            );
-            quad(
-                [
-                    c,
-                    d,
-                    point(0.5, left, left_rim - 0.18),
-                    point(0.5, right, right_rim - 0.18),
-                ],
-                [0.19, 0.17, 0.16],
-            );
-        }
-    }
-
-    let flank = if entrance == CaveEntrance::Descent {
-        0.57
-    } else {
-        0.62
-    };
-    for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
-        let rock = point(0.24, flank * side, surface(0.24, flank * side) - 0.04);
-        shapes::rock(
-            out,
-            rock,
-            [0.27, 0.22, 0.31],
-            [0.43, 0.40, 0.36],
-            seed ^ i as u32,
-        );
-    }
-}
-
 pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, level: u8, tree_detail: TreeDetail) {
     use shapes::{limb, rock, sphere};
     {
@@ -209,10 +78,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
         // things you have never handled look like the ordinary thing they resemble
         let known = world.has_seen(n.kind.item());
         let (x, z) = (n.tx as f32 + 0.5 + 0.18 * jit(3), n.ty as f32 + 0.5 + 0.18 * jit(7));
-        if n.kind == NodeKind::CaveMouth
-            && let Some(mouth) = world.map.natural_cave_mouth(n.tx, n.ty)
-        {
-            push_natural_mouth(out, world, mouth, seed);
+        if n.kind == NodeKind::CaveMouth {
             return;
         }
         let far_tree = n.kind == NodeKind::Tree && tree_detail == TreeDetail::Far;
@@ -393,27 +259,7 @@ pub(crate) fn push_node(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node
                     sphere(out, [x - 0.06, 0.38, z + 0.04], [0.04; 3], [0.82, 0.78, 0.7], 5, 4, 0.0, 1);
                 }
             }
-            NodeKind::CaveMouth => {
-                // a craggy hillside with a dark arched mouth, mossy ledges and stalagmites by the entrance
-                let g = 0.5 + 0.05 * jit(11);
-                rock(out, [x, 0.7, z - 0.1], [1.25, 0.95, 1.05], [g, g, g + 0.02], seed);
-                rock(out, [x - 0.8, 0.35, z + 0.2], [0.55, 0.4, 0.5], [g * 0.9, g * 0.9, g * 0.94], seed ^ 21);
-                rock(out, [x + 0.95, 0.3, z - 0.1], [0.45, 0.34, 0.42], [g * 0.95, g * 0.95, g], seed ^ 22);
-                // the mouth: a black hollow framed by an arch of stones
-                sphere(out, [x + 0.15, 0.36, z + 0.78], [0.5, 0.46, 0.3], [0.02, 0.02, 0.03], 10, 6, 0.04, seed ^ 31);
-                for k in 0..5u32 {
-                    let a = std::f32::consts::PI * (k as f32 / 4.0);
-                    rock(out, [x + 0.15 - a.dcos() * 0.6, 0.3 + a.dsin() * 0.62, z + 0.74], [0.17, 0.15, 0.16], [g * 1.05, g * 1.05, g * 1.08], seed ^ (41 + k));
-                }
-                // moss on the ledges
-                for k in 0..4u32 {
-                    sphere(out, [x - 0.6 + 0.4 * k as f32 + 0.1 * jit(k + 3), 1.15 - 0.12 * (k % 2) as f32, z - 0.15 + 0.2 * jit(k + 9)], [0.22, 0.07, 0.2], [0.26, 0.42, 0.2], 6, 3, 0.1, seed ^ (51 + k));
-                }
-                // stalagmites in front
-                for (dx, h) in [(-0.35f32, 0.34f32), (0.62, 0.26)] {
-                    limb(out, [x + dx, 0.0, z + 1.0], [x + dx, h, z + 1.0], 0.08, 0.012, [g * 0.95, g * 0.93, g], 5);
-                }
-            }
+            NodeKind::CaveMouth => {}
             NodeKind::FiberPlant => {
                 // a tall clump of pale straw-gold stalks with seed heads: it stands out of the green grass
                 let c = if known { [0.86, 0.78, 0.42] } else { [0.74, 0.70, 0.40] };
@@ -498,51 +344,4 @@ fn push_node_file(out: &mut Mesh, world: &World, n: &alaz_sim::world::Node, (x, 
     let yaw = if m.opts.rotate { (seed >> 8) as f32 % 628.0 / 100.0 } else { 0.0 };
     m.place(out, &assets::Place::at(x, z).turned(yaw, scale));
     true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alaz_sim::map::tag_seed_natural;
-
-    #[test]
-    fn natural_portals_join_the_surface_and_reach_the_cave_floor() {
-        for (seed, (tx, ty)) in [(4, (38, 230)), (42, (222, 150))] {
-            let world = World::with_size(tag_seed_natural(seed, 256), 256, 256);
-            let node = &world.nodes[world.node_at(tx, ty).unwrap().0 as usize];
-            let mouth = world.map.natural_cave_mouth(tx, ty).unwrap();
-            let ([x, z], _, _) = node_bounds(&world, node);
-            let lift = ground_height(world.seed, x, z) + 0.02;
-            let mut mesh = Mesh::fixed();
-            push_node(&mut mesh, &world, node, 2, TreeDetail::Full);
-            let on_floor = |v: &Vertex, h: f32| (v.pos[1] + lift - h).abs() <= 0.001;
-            assert!(
-                mesh.iter()
-                    .any(|v| on_floor(v, f32::from(mouth.threshold.z)))
-            );
-            let back_floor = f32::from(mouth.threshold.z + mouth.landing.z) / 2.0;
-            assert!(mesh.iter().any(|v| on_floor(v, back_floor)));
-            let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
-            for side in [-0.5, 0.5] {
-                let front_x = x - dx * 0.5 + side * dz;
-                let front_z = z - dz * 0.5 - side * dx;
-                let surface = ground_height(world.seed, front_x, front_z);
-                assert!(
-                    mesh.iter().any(|v| v.pos[0] == front_x
-                        && v.pos[2] == front_z
-                        && on_floor(v, surface))
-                );
-            }
-            match mouth.entrance(&world.map) {
-                CaveEntrance::Hillside { roof_mm } => {
-                    assert!(
-                        mesh.iter()
-                            .any(|v| on_floor(v, roof_mm as f32 / 1_000.0 + 0.25))
-                    );
-                }
-                CaveEntrance::Descent => assert!(back_floor < f32::from(mouth.threshold.z)),
-                CaveEntrance::Open => panic!("expected a descent or hillside profile"),
-            }
-        }
-    }
 }

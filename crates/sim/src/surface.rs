@@ -284,7 +284,7 @@ impl World {
             return;
         }
         let mut hurt: Vec<AgentId> = Vec::new();
-        for a in self.agents.iter_mut().filter(|a| a.cave.is_none()) {
+        for a in self.agents.iter_mut().filter(|a| a.passage.is_none()) {
             let k = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
             if self.burn.get(&k).is_some_and(|b| b.fire) {
                 a.health -= crate::rules::Gear::cut(FIRE_HURT, a.inventory.gear().fire);
@@ -306,7 +306,7 @@ impl World {
         }
         let t = self.tick;
         let mut slipped: Vec<AgentId> = Vec::new();
-        for a in self.agents.iter_mut().filter(|a| a.cave.is_none()) {
+        for a in self.agents.iter_mut().filter(|a| a.passage.is_none()) {
             if !(a.sprint && a.stamina > 0 && matches!(a.task, Task::Move { .. } | Task::Walk { .. })) {
                 continue;
             }

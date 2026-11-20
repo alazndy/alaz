@@ -176,14 +176,6 @@ mod mesh_hashes {
             push_hover_rim(&mut o, &world, (n.tx, n.ty), 3, &Camera::default(), 2.0, TreeDetail::Full);
             r.push(("rim-tree".into(), fnv(&o)));
         }
-        // a cave: its blocks on every level (corner, middle) and the torch in three states
-        let cave = alaz_sim::Cave::generate(world.seed, 40, 60);
-        for level in 1..=4u8 {
-            let lv = cave.level(level).unwrap();
-            for (bx, by) in [(4, 3), (3, 4)] {
-                r.push((format!("cave L{level} block {bx},{by}"), fnv(&build_cave_block(lv, world.seed, 5, level - 1, bx, by))));
-            }
-        }
         for (i, frac) in [0.0f32, 0.1, 0.9].into_iter().enumerate() {
             let mut o = fresh(false);
             push_torch(&mut o, 3.5, 4.5, 12.0 + i as f32, frac);
@@ -196,19 +188,19 @@ mod mesh_hashes {
     const EXPECTED: &[(&str, u64)] = &[
         ("terrain 0,0", 0x63daca5654c464e5),
         ("decor 0,0", 0xb3afbe8ed1903b42),
-        ("nodes 0,0 L0", 0xa86cdf6def8a9c93),
-        ("nodes 0,0 L3", 0x8c2b448e6d67afe3),
-        ("nodes 0,0 L5", 0x8c2b448e6d67afe3),
+        ("nodes 0,0 L0", 0x6d22901ec682e5a1),
+        ("nodes 0,0 L3", 0x38168d0ca3c0236d),
+        ("nodes 0,0 L5", 0x38168d0ca3c0236d),
         ("terrain 1,0", 0xd70567431ae2c341),
         ("decor 1,0", 0x960fe2a436292d83),
-        ("nodes 1,0 L0", 0x1c92c4062d8265bf),
-        ("nodes 1,0 L3", 0x8990dc757200654f),
-        ("nodes 1,0 L5", 0x8990dc757200654f),
+        ("nodes 1,0 L0", 0xfecfa01ea91ff53b),
+        ("nodes 1,0 L3", 0xa2b8fd966415836b),
+        ("nodes 1,0 L5", 0xa2b8fd966415836b),
         ("terrain 0,1", 0x8bf3c60361402ed1),
         ("decor 0,1", 0x0d8eaed176f30947),
-        ("nodes 0,1 L0", 0x6a1197918926bac9),
-        ("nodes 0,1 L3", 0xd5800efef959becf),
-        ("nodes 0,1 L5", 0xd5800efef959becf),
+        ("nodes 0,1 L0", 0x8dc1ffd471dc44fd),
+        ("nodes 0,1 L3", 0x655df9b5ed6ef9db),
+        ("nodes 0,1 L5", 0x655df9b5ed6ef9db),
         ("terrain -1,-1", 0x77484c3a413b0109),
         ("decor -1,-1", 0xa794a5f546a1f1bb),
         ("nodes -1,-1 L0", 0xe648e98d6615376e),
@@ -530,14 +522,6 @@ mod mesh_hashes {
         ("fish", 0x9e6d7c69dc48f264),
         ("rim-empty", 0xcbf29ce484222325),
         ("rim-tree", 0xa1366b6a0db5bd77),
-        ("cave L1 block 4,3", 0x1d906b027c1cc3e5),
-        ("cave L1 block 3,4", 0xca060e6e0bcfdb30),
-        ("cave L2 block 4,3", 0x5554431eebd18fd1),
-        ("cave L2 block 3,4", 0x34cf2a0dba3ee948),
-        ("cave L3 block 4,3", 0x276c1cb066036625),
-        ("cave L3 block 3,4", 0xf06e5d85128be82c),
-        ("cave L4 block 4,3", 0x1c28f519097787b3),
-        ("cave L4 block 3,4", 0xa4ca580d40ec43a2),
         ("torch 0", 0x709f6551d60aba86),
         ("torch 0.1", 0x64f1c54900cd1336),
         ("torch 0.9", 0xebbcaeb29ee820a9),

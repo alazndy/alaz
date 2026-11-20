@@ -430,9 +430,10 @@ impl Script {
                     // dig the nearest ore vein (or, with none about, the nearest bare wall)
                     "mine" | "dig" => w.cave_dig_target(me).map(|(tx, ty)| CommandKind::CaveDig { tx, ty }),
                     // walk to the stair down
-                    "down" => w.cave_down_spot(me).map(|(x, y)| CommandKind::MoveTo { x, y }),
-                    "leave" => Some(CommandKind::CaveLeave),
-                    _ => nearest(w, &a, NodeKind::CaveMouth).map(|node| CommandKind::EnterCave { node }),
+                    "down" | "deeper" => w.cave_down_spot(me).map(|(x, y)| CommandKind::MoveTo { x, y }),
+                    "leave" => w.cave_exit_destination(me).map(|position| CommandKind::MoveToFloor { position }),
+                    _ => nearest(w, &a, NodeKind::CaveMouth).and_then(|node| w.natural_mouth(node.0))
+                        .map(|mouth| CommandKind::MoveToFloor { position: crate::nav::walking::WalkFloor::from(mouth.landing).center() }),
                 };
                 match k {
                     Some(k) => {

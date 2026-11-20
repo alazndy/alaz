@@ -1,6 +1,6 @@
 //! Item relationships for the book. The caller applies its world's discovery rules before showing them.
 
-use crate::caves::{CAVE_LEVELS, ore_item, vein_distribution};
+use crate::caves::{ore_item, vein_distribution};
 use crate::rules::{BuildingDef, RecipeDef, Rules};
 use crate::{Discovery, ItemKind, NodeKind};
 
@@ -83,7 +83,7 @@ pub fn found_in(item: ItemKind) -> impl Iterator<Item = NodeKind> {
 
 /// Zero-based cave depth bands in which a vein can yield the item.
 pub fn cave_depths(item: ItemKind) -> impl Iterator<Item = u8> {
-    (0..CAVE_LEVELS).filter(move |&depth| {
+    (0..=crate::world::CAVE_MAX_DEPTH).filter(move |&depth| {
         vein_distribution(depth)
             .iter()
             .any(|&(code, _)| ore_item(code) == Some(item))

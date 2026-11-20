@@ -69,13 +69,9 @@ pub enum CommandKind {
     Feed { target: crate::command::AgentId },
     /// Replace a worker's standing route (empty = stop).
     SetRoute { worker: crate::command::AgentId, route: Vec<RouteStep> },
-    /// Go into a cave mouth with a torch or a lamp (a torch is used up), walking up to it first if need be.
-    EnterCave { node: NodeId },
     /// In a cave: dig the wall on this tile (walk up to it, then swing the pick). Rock and veins want a pick; fallen
     /// rubble can be cleared by hand.
     CaveDig { tx: i32, ty: i32 },
-    /// In a cave: make your own way out to the surface, by the stairs and the exit.
-    CaveLeave,
     /// Start or stop running. Running is faster, costs breath and thirst, and only works with breath left.
     SetSprint { on: bool },
     /// Add one wood to a burning building.
@@ -111,6 +107,8 @@ pub enum CommandKind {
     SetGoal { goal: Option<crate::journal::Goal> },
     /// Put up to `n` of one item into a building (same rules as Deposit, one item only).
     Load { building: u32, item: ItemKind, n: u16 },
+    /// Walk to the selected floor at this world position.
+    MoveToFloor { position: crate::cave_terrain::WorldPoint },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

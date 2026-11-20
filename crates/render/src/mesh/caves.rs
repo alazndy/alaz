@@ -1,16 +1,10 @@
-//! The inside of a cave: floor, rock walls cut into blocks, ore in the walls, stairs, rubble and a few stalagmites.
-//! Built once per level (and again when a wall is dug or the water goes down) from the sim's grid, in metres with a
-//! tile one metre square. Models are lit by the torch alone (see the cave branch of the shader): a face tagged
-//! `WALL` in `uv.x` is rock that thins out in front of the player, as trees do.
+//! World-space cave terrain, rock details and held lights.
 
 use super::*;
-use alaz_sim::caves::{Cell, Level, CAVE_H, CAVE_W, ORE_COAL, ORE_COPPER, ORE_IRON, ORE_TIN};
+use alaz_sim::caves::{ORE_COAL, ORE_COPPER, ORE_IRON, ORE_TIN};
 use alaz_sim::cave_terrain::CaveTile;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use super::shapes::{limb, rock, sphere};
-
-/// Tiles on a side of one cached block of the cave mesh.
-pub(crate) const BLOCK: i32 = 8;
 
 /// A ball that shines by itself.
 fn lamp(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], seed: u32, glow: f32) {
@@ -22,33 +16,8 @@ fn lamp(out: &mut Mesh, c: [f32; 3], r: [f32; 3], col: [f32; 3], seed: u32, glow
     }
 }
 
-/// `uv.x` of a face of a wall block: the shader lets the walls between the eye and the player open up.
-pub(crate) const WALL: f32 = 2.0;
-/// Height of the rock above the floor (metres).
-const WALL_H: f32 = 2.3;
-
 fn unit(seed: u64, x: i32, y: i32, salt: i32) -> f32 {
     (alaz_sim::rng::hash2(seed ^ (salt as u64).wrapping_mul(0x9E37_79B9), x, y) % 10_000) as f32 / 10_000.0
-}
-
-fn quad(out: &mut Mesh, p: [[f32; 3]; 4], col: [f32; 3], glow: f32, light: f32) {
-    for i in [0, 1, 2, 0, 2, 3] {
-        out.push(out.vl(p[i], col, glow, light));
-    }
-}
-
-fn mul(c: [f32; 3], k: f32) -> [f32; 3] {
-    [c[0] * k, c[1] * k, c[2] * k]
-}
-
-/// Rock colours of a level: warm brown near the surface, cooler and darker further down.
-fn palette(level: u8) -> ([f32; 3], [f32; 3]) {
-    match level {
-        1 => ([0.45, 0.40, 0.35], [0.36, 0.32, 0.29]),
-        2 => ([0.42, 0.40, 0.37], [0.34, 0.32, 0.31]),
-        3 => ([0.38, 0.39, 0.41], [0.30, 0.31, 0.34]),
-        _ => ([0.36, 0.35, 0.41], [0.28, 0.27, 0.33]),
-    }
 }
 
 fn ore_color(code: u8) -> ([f32; 3], f32) {
@@ -61,281 +30,222 @@ fn ore_color(code: u8) -> ([f32; 3], f32) {
     }
 }
 
-/// One exposed side of a wall block: a 2x2 faceted face from the floor up, its middle pushed in or out, in two
-/// bands of rock. `(x, z)` is the tile corner, `dir` which side of the tile it is on (0 north (-z), 1 east, 2 south,
-/// 3 west).
-fn wall_face(out: &mut Mesh, seed: u64, tx: i32, ty: i32, dir: usize, top: f32, base: [f32; 3], low: [f32; 3]) {
-    let (x, z) = (tx as f32, ty as f32);
-    // the face's corners along its length (a, b) and the outward normal
-    let (a, b, n): ([f32; 2], [f32; 2], [f32; 2]) = match dir {
-        0 => ([x, z], [x + 1.0, z], [0.0, -1.0]),
-        1 => ([x + 1.0, z], [x + 1.0, z + 1.0], [1.0, 0.0]),
-        2 => ([x + 1.0, z + 1.0], [x, z + 1.0], [0.0, 1.0]),
-        _ => ([x, z + 1.0], [x, z], [-1.0, 0.0]),
-    };
-    // the wall is on the far side of the face from the open ground: its surface is the face, bumps come out of it
-    // toward the open ground, which is the opposite way of the wall block's own outward normal. The open ground is
-    // the way `n` points.
-    let bump = (unit(seed, tx, ty, 11 + dir as i32) - 0.35) * 0.30;
-    let mid = |t: f32, h: f32| [a[0] + (b[0] - a[0]) * t, h, a[1] + (b[1] - a[1]) * t];
-    let off = |p: [f32; 3], k: f32| [p[0] + n[0] * k, p[1], p[2] + n[1] * k];
-    // vertices on a 3x3 grid (columns 0, 1/2, 1; rows 0, mid, top); only the middle one is pushed
-    let rows = [0.0, top * 0.42, top];
-    let cols = [0.0f32, 0.5, 1.0];
-    let jitter = (unit(seed, tx, ty, 21 + dir as i32) - 0.5) * 0.4;
-    let pt = |i: usize, j: usize| {
-        let mut p = mid(cols[i], rows[j]);
-        if i == 1 && j == 1 {
-            p = off(p, bump);
-        }
-        // the band line wanders along the face a little
-        if j == 1 && i != 1 {
-            p[1] += jitter * 0.4;
-        }
-        p
-    };
-    for j in 0..2 {
-        for i in 0..2 {
-            let q = [pt(i, j), pt(i + 1, j), pt(i + 1, j + 1), pt(i, j + 1)];
-            let shade = 0.88 + 0.22 * unit(seed, tx * 4 + i as i32, ty * 4 + j as i32 + dir as i32 * 97, 31);
-            let col = if j == 0 { mul(low, shade) } else { mul(base, shade) };
-            quad(out, q, col, 0.0, WALL);
-        }
-    }
-}
-
 /// A speck of ore: a rough lump that sits on a wall face.
 fn nugget(out: &mut Mesh, c: [f32; 3], r: f32, code: u8, seed: u32) {
     let (col, glow) = ore_color(code);
     // (a glowing lump is drawn as a bright core with a lit crust round it)
     out.set_anchor(0.0, 0.0);
-    rock(out, c, [r, r * 0.85, r], mul(col, 1.0), seed);
+    rock(out, c, [r, r * 0.85, r], col, seed);
     if glow > 0.0 {
         lamp(out, c, [r * 0.55; 3], col, seed ^ 7, glow);
     }
 }
 
-/// One block (BLOCK x BLOCK tiles) of a level.
-pub(crate) fn build_cave_block(level: &Level, seed: u64, node: u32, depth: u8, bx: i32, by: i32) -> Vec<Vertex> {
-    let mut out = Mesh::new();
-    let (base, low) = palette(depth);
-    let seed = seed ^ (node as u64) << 20 ^ (depth as u64) << 52;
-    let open = |x: i32, y: i32| level.cell(x, y).walkable();
-    // how far a tile is from open ground (chebyshev, up to 4): rock deeper than that is not drawn
-    let near_open = |x: i32, y: i32| (-3..=3).any(|dy| (-3..=3).any(|dx| open(x + dx, y + dy)));
-    let top_h = |x: i32, y: i32| WALL_H + 0.22 * (unit(seed, x, y, 5) - 0.5) * 2.0;
-    for ty in by * BLOCK..(by * BLOCK + BLOCK).min(CAVE_H) {
-        for tx in bx * BLOCK..(bx * BLOCK + BLOCK).min(CAVE_W) {
-            let cell = level.cell(tx, ty);
-            let (x, z) = (tx as f32, ty as f32);
-            match cell {
-                Cell::Rock | Cell::Rubble => {
-                    if cell == Cell::Rubble {
-                        // fallen stone on the floor: a heap you can clear
-                        quad(&mut out, [[x, 0.0, z], [x + 1.0, 0.0, z], [x + 1.0, 0.0, z + 1.0], [x, 0.0, z + 1.0]], mul(low, 0.9), 0.0, 1.0);
-                        out.set_anchor(0.0, 0.0);
-                        for k in 0..6 {
-                            let f = |s: i32| unit(seed, tx, ty, 40 + k * 3 + s);
-                            let r = 0.22 + 0.2 * f(0);
-                            let c = [x + 0.2 + 0.6 * f(1), 0.14 + 0.45 * f(2) * (1.0 - (f(1) - 0.5).abs()), z + 0.2 + 0.6 * f(0) * 0.5 + 0.3 * f(2)];
-                            rock(&mut out, c, [r, r * 0.8, r], mul(base, 0.75 + 0.5 * f(2)), (tx * 31 + ty * 17 + k) as u32);
-                        }
-                        continue;
-                    }
-                    if !near_open(tx, ty) {
-                        continue;
-                    }
-                    let h = top_h(tx, ty);
-                    let tcol = mul(base, 0.88 + 0.2 * unit(seed, tx, ty, 6));
-                    quad(&mut out, [[x, h, z], [x + 1.0, h, z], [x + 1.0, h, z + 1.0], [x, h, z + 1.0]], tcol, 0.0, WALL);
-                    // sides on the open ground
-                    for (dir, (dx, dy)) in [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().enumerate() {
-                        let (nx, ny) = (tx + dx, ty + dy);
-                        if open(nx, ny) {
-                            wall_face(&mut out, seed, tx, ty, dir, h, base, low);
-                            if let Some((code, left)) = level.ore_at(tx, ty) {
-                                // ore in the wall: lumps, fewer as the vein is worked
-                                let (a, b) = match dir {
-                                    0 => ([x, z], [x + 1.0, z]),
-                                    1 => ([x + 1.0, z], [x + 1.0, z + 1.0]),
-                                    2 => ([x + 1.0, z + 1.0], [x, z + 1.0]),
-                                    _ => ([x, z + 1.0], [x, z]),
-                                };
-                                let n = [dx as f32, dy as f32];
-                                for k in 0..(2 + left as i32).min(6) {
-                                    let t = 0.15 + 0.7 * unit(seed, tx, ty, 70 + k * 5 + dir as i32);
-                                    let yy = 0.35 + 1.15 * unit(seed, tx, ty, 71 + k * 5 + dir as i32);
-                                    let r = 0.10 + 0.09 * unit(seed, tx, ty, 72 + k * 5 + dir as i32);
-                                    let c = [a[0] + (b[0] - a[0]) * t + n[0] * 0.04, yy, a[1] + (b[1] - a[1]) * t + n[1] * 0.04];
-                                    nugget(&mut out, c, r, code, (tx * 13 + ty * 7 + k) as u32);
-                                }
-                            } else if unit(seed, tx, ty, 90 + dir as i32) < 0.045 {
-                                // a few pale crystals growing out of the bare rock
-                                let (a, b) = match dir {
-                                    0 => ([x, z], [x + 1.0, z]),
-                                    1 => ([x + 1.0, z], [x + 1.0, z + 1.0]),
-                                    2 => ([x + 1.0, z + 1.0], [x, z + 1.0]),
-                                    _ => ([x, z + 1.0], [x, z]),
-                                };
-                                let t = 0.25 + 0.5 * unit(seed, tx, ty, 95 + dir as i32);
-                                let base_p = [a[0] + (b[0] - a[0]) * t, 0.5 + unit(seed, tx, ty, 96) * 0.8, a[1] + (b[1] - a[1]) * t];
-                                for k in 0..3 {
-                                    let lean = 0.10 + 0.09 * k as f32;
-                                    let tip = [base_p[0] + dx as f32 * (0.2 + lean), base_p[1] + 0.12 * (k as f32 - 1.0), base_p[2] + dy as f32 * (0.2 + lean)];
-                                    limb(&mut out, [base_p[0] + (k as f32 - 1.0) * 0.05 * dy as f32, base_p[1], base_p[2] + (k as f32 - 1.0) * 0.05 * dx as f32], tip, 0.05, 0.008, [0.55, 0.78, 1.0], 4);
-                                }
-                                // (limbs are lit; the tip glows)
-                                lamp(&mut out, base_p, [0.045; 3], [0.7, 0.9, 1.0], 3, 0.6);
-                            }
-                        } else if !near_open(nx, ny) {
-                            // the side towards rock that is not drawn: nothing to see
-                        } else if matches!(level.cell(nx, ny), Cell::Rock) {
-                            // a step in the rock tops: close the gap on the lower side
-                            let hn = top_h(nx, ny);
-                            if hn < h - 0.01 {
-                                let (a, b) = match dir {
-                                    0 => ([x, z], [x + 1.0, z]),
-                                    1 => ([x + 1.0, z], [x + 1.0, z + 1.0]),
-                                    2 => ([x + 1.0, z + 1.0], [x, z + 1.0]),
-                                    _ => ([x, z + 1.0], [x, z]),
-                                };
-                                quad(&mut out, [[a[0], hn, a[1]], [b[0], hn, b[1]], [b[0], h, b[1]], [a[0], h, a[1]]], mul(low, 1.05), 0.0, WALL);
-                            }
-                        }
-                    }
-                }
-                Cell::Floor | Cell::Shallow | Cell::Deep | Cell::Down | Cell::Up | Cell::Exit => {
-                    let tint = 0.86 + 0.24 * unit(seed, tx, ty, 2);
-                    let fl = mul(base, 0.95 * tint);
-                    let (y, col) = match cell {
-                        Cell::Shallow => (-0.04, [0.13, 0.26, 0.32]),
-                        Cell::Deep => (-0.12, [0.06, 0.15, 0.27]),
-                        _ => (0.0, fl),
-                    };
-                    quad(&mut out, [[x, y, z], [x + 1.0, y, z], [x + 1.0, y, z + 1.0], [x, y, z + 1.0]], col, 0.0, 1.0);
-                    if cell == Cell::Shallow || cell == Cell::Deep {
-                        // pale ripples on the water
-                        for k in 0..2 {
-                            if unit(seed, tx, ty, 120 + k) < 0.5 {
-                                let (rx, rz) = (x + 0.15 + 0.7 * unit(seed, tx, ty, 122 + k), z + 0.15 + 0.7 * unit(seed, tx, ty, 124 + k));
-                                quad(&mut out, [[rx, y + 0.006, rz], [rx + 0.34, y + 0.006, rz], [rx + 0.34, y + 0.006, rz + 0.05], [rx, y + 0.006, rz + 0.05]], [0.35, 0.48, 0.56], 0.0, 1.0);
-                            }
-                        }
-                    }
-                    match cell {
-                        Cell::Down => {
-                            // a stair spiralling down into the dark: a rim and three steps getting darker
-                            let (cx, cz) = (x + 0.5, z + 0.5);
-                            push_box(&mut out, [cx, 0.0, cz], [0.5, 0.05, 0.5], [0.55, 0.52, 0.47], 0.0);
-                            for (k, (half, shade)) in [(0.38f32, 0.5f32), (0.27, 0.3), (0.16, 0.12)].into_iter().enumerate() {
-                                let top = -0.10 - 0.12 * k as f32;
-                                let ang = k as f32 * 0.5;
-                                let (dx, dz) = (ang.dsin() * 0.05, ang.dcos() * 0.05);
-                                push_box(&mut out, [cx + dx, top - 0.3, cz + dz], [half, 0.3, half], [0.5 * shade * 2.0, 0.48 * shade * 2.0, 0.46 * shade * 2.0], 0.0);
-                            }
-                        }
-                        Cell::Up | Cell::Exit => {
-                            let (cx, cz) = (x + 0.5, z + 0.5);
-                            let exit = cell == Cell::Exit;
-                            for (k, half) in [0.46f32, 0.34, 0.22].into_iter().enumerate() {
-                                let top = 0.10 + 0.12 * k as f32;
-                                let c = if exit && k == 2 { [0.92, 0.96, 1.0] } else { [0.62, 0.60, 0.56] };
-                                push_box(&mut out, [cx, 0.0, cz], [half, top, half], c, if exit && k == 2 { 0.85 } else { 0.0 });
-                            }
-                        }
-                        _ => {}
-                    }
-                    // fixtures that do not get in the way: a stalagmite or a few pebbles, by the wall only
-                    let by_wall = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().find(|&&(dx, dy)| matches!(level.cell(tx + dx, ty + dy), Cell::Rock));
-                    if cell == Cell::Floor
-                        && let Some(&(dx, dy)) = by_wall {
-                            let r = unit(seed, tx, ty, 3);
-                            let (px, pz) = (x + 0.5 + dx as f32 * 0.36, z + 0.5 + dy as f32 * 0.36);
-                            if r < 0.08 {
-                                let h = 0.5 + 0.9 * unit(seed, tx, ty, 4);
-                                limb(&mut out, [px, 0.0, pz], [px, h, pz], 0.13, 0.015, mul(base, 1.05), 5);
-                                limb(&mut out, [px + 0.18, 0.0, pz + 0.08], [px + 0.18, h * 0.5, pz + 0.08], 0.08, 0.012, mul(base, 0.95), 5);
-                            } else if r < 0.22 {
-                                for k in 0..3 {
-                                    let f = |s: i32| unit(seed, tx, ty, 50 + k * 4 + s);
-                                    rock(&mut out, [px + (f(0) - 0.5) * 0.4, 0.05, pz + (f(1) - 0.5) * 0.4], [0.07 + 0.06 * f(2), 0.05, 0.07 + 0.06 * f(2)], mul(base, 0.8 + 0.4 * f(3)), (tx * 7 + ty + k) as u32);
-                                }
-                            }
-                        }
+pub(crate) fn collect_cave_entrances(world: &World, bounds: (i32, i32, i32, i32)) -> CaveSection {
+    const REACH: i32 = 6;
+    let (x0, y0, x1, y1) = bounds;
+    let mut section = BTreeMap::new();
+    // Read the same gallery on both sides of a chunk seam, then emit each floor once.
+    for y in (y0 - REACH - 1).max(0)..(y1 + REACH + 1).min(world.map.h) {
+        for x in (x0 - REACH - 1).max(0)..(x1 + REACH + 1).min(world.map.w) {
+            let mut last = None;
+            for mouth in world.map.cave_openings_at(x, y) {
+                if last != Some(mouth.threshold) {
+                    section.extend(world.cave_entrance_section(mouth.threshold, REACH));
+                    last = Some(mouth.threshold);
                 }
             }
         }
     }
-    for v in &mut out.verts {
-        // models stand at height 0 here (the height window is flat in a cave)
-        v.off = [0.0, 0.0];
-    }
-    out.verts
+    section
 }
 
-pub(crate) fn build_natural_cave(world: &World, floors: &BTreeMap<(i32, i32), i16>, rubble: &BTreeMap<(i32, i32), i16>, depth: u8) -> Vec<Vertex> {
-    let (base, low) = palette(depth + 1);
-    let mut out = Mesh::new();
-    let mut caps = BTreeSet::new();
-    for (&(tx, ty), &height) in floors {
-        let (x, y, z) = (tx as f32, f32::from(height), ty as f32);
-        let tint = 0.86 + 0.26 * unit(world.seed, tx, ty, 2);
-        let tile = CaveTile { x: tx, y: ty, z: height };
-        let exit = world.natural_cave_exit_at(tile).is_some();
-        let floor_color = if exit { [0.52, 0.54, 0.45] } else if world.natural_cave_flooded(tile) { [0.12, 0.32, 0.43] } else { mul(base, tint) };
-        quad(&mut out, [[x, y, z], [x + 1.0, y, z], [x + 1.0, y, z + 1.0], [x, y, z + 1.0]], floor_color, if exit { 0.62 } else { 0.0 }, 1.0);
+pub(crate) type CaveSection = BTreeMap<CaveTile, Option<i16>>;
 
-        for ((dx, dy), (a, b)) in [
-            ((0, -1), ([x, z], [x + 1.0, z])),
-            ((1, 0), ([x + 1.0, z], [x + 1.0, z + 1.0])),
-            ((0, 1), ([x + 1.0, z + 1.0], [x, z + 1.0])),
-            ((-1, 0), ([x, z + 1.0], [x, z])),
+fn gallery_neighbor(section: &CaveSection, tile: CaveTile, ceiling: Option<i16>, (dx, dy): (i32, i32)) -> Option<(CaveTile, Option<i16>)> {
+    [0, -1, 1].into_iter().find_map(|dz| {
+        let next = CaveTile { x: tile.x + dx, y: tile.y + dy, z: tile.z + dz };
+        let &next_ceiling = section.get(&next)?;
+        let lower_ceiling = if dz < 0 { next_ceiling } else { ceiling };
+        let can_cross = dz == 0 || lower_ceiling != Some(tile.z.min(next.z) + 2);
+        can_cross.then_some((next, next_ceiling))
+    })
+}
+
+fn cave_face(out: &mut Mesh, points: [[f32; 3]; 3], color: [f32; 3], light: f32) {
+    let vertices = points.map(|pos| {
+        let mut v = out.v(pos, color, 0.0);
+        v.kind = 1000.0;
+        v.uv = [-2.0 - light, 3.0];
+        v
+    });
+    out.extend_from_slice(&vertices);
+}
+
+fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, site: GalleryTile) {
+    const EDGES: [((i32, i32), [f32; 2], [f32; 2]); 4] = [
+        ((0, -1), [0.0, 0.0], [1.0, 0.0]),
+        ((1, 0), [1.0, 0.0], [1.0, 1.0]),
+        ((0, 1), [1.0, 1.0], [0.0, 1.0]),
+        ((-1, 0), [0.0, 1.0], [0.0, 0.0]),
+    ];
+    let GalleryTile { tile, ceiling, light, flooded } = site;
+    let x = tile.x as f32;
+    let z = tile.y as f32;
+    let floor = f32::from(tile.z);
+    let mouths = world.map.cave_openings_at(tile.x, tile.y)
+        .filter(|m| m.threshold == tile).collect::<Vec<_>>();
+    let open = !mouths.is_empty();
+    let roof = if open { None } else { ceiling.map(f32::from) };
+    let tint = if flooded { [0.12, 0.32, 0.43] } else if open { [0.41, 0.37, 0.32] } else { [0.31, 0.28, 0.25] };
+    let wall = if open { [0.39, 0.35, 0.30] } else { [0.30, 0.27, 0.25] };
+    let stone = [0.26, 0.23, 0.21];
+    out.set_anchor(x + 0.5, z + 0.5);
+    let pos = |[u, v]: [f32; 2], height: f32| [x + u, height, z + v];
+    let surface = |[u, v]: [f32; 2]| ground_height(world.seed, x + u, z + v);
+    let center = pos([0.5, 0.5], floor);
+    let mut edges = Vec::with_capacity(4);
+
+    for (side, (direction, a, b)) in EDGES.into_iter().enumerate() {
+        let outside = mouths.iter().any(|m| m.direction == (-direction.0, -direction.1));
+        let neighbor = gallery_neighbor(section, tile, ceiling, direction);
+        let edge_y = |p| {
+            if outside { surface(p) } else { neighbor.map_or(floor, |(next, _)| (floor + f32::from(next.z)) * 0.5) }
+        };
+        let underside = |p| match (roof, neighbor) {
+            (Some(h), Some((_, Some(other)))) => (h + f32::from(other)) * 0.5,
+            (Some(h), _) => h,
+            (None, _) => surface(p),
+        };
+        let feet = [pos(a, edge_y(a)), pos(b, edge_y(b))];
+        let cap = [pos(a, underside(a).max(feet[0][1])), pos(b, underside(b).max(feet[1][1]))];
+        edges.push((feet, cap));
+        cave_face(out, [center, feet[0], feet[1]], tint, light);
+        if let Some(h) = roof {
+            cave_face(out, [pos([0.5, 0.5], h), cap[1], cap[0]], stone, light);
+        }
+        if outside {
+            continue;
+        }
+        if let Some((next, _)) = neighbor {
+            // A roof ending at the lip exposes its thickness above the opening.
+            let next_open = world.map.cave_openings_at(next.x, next.y).any(|m| m.threshold == next);
+            if roof.is_some() && next_open {
+                let [u, v] = [pos(a, surface(a).max(cap[0][1])), pos(b, surface(b).max(cap[1][1]))];
+                cave_face(out, [cap[1], cap[0], u], wall, light);
+                cave_face(out, [cap[1], u, v], wall, light);
+            }
+            continue;
+        }
+
+        // Break the retaining face into rock facets. Edge vertices stay at the terrain seam.
+        let random = alaz_sim::rng::hash2(world.seed ^ 0x4E21, tile.x, tile.y).rotate_right(side as u32 * 13);
+        let along = 0.35 + (random & 255) as f32 / 850.0;
+        let middle = |outward: f32, y: f32| {
+            let u = a[0] + (b[0] - a[0]) * along + direction.0 as f32 * outward;
+            let v = a[1] + (b[1] - a[1]) * along + direction.1 as f32 * outward;
+            pos([u, v], y)
+        };
+        let foot_y = feet[0][1] + along * (feet[1][1] - feet[0][1]);
+        let cap_y = cap[0][1] + along * (cap[1][1] - cap[0][1]);
+        let ridge = middle(0.09, foot_y + (cap_y - foot_y) * 0.46);
+        if light < 0.6 && let Some(ore) = world.natural_cave_ore_at(CaveTile { x: tile.x + direction.0, y: tile.y + direction.1, z: tile.z }) {
+            let start = out.len();
+            for n in 0..3 {
+                let c = middle(-0.04, foot_y + (cap_y - foot_y) * (0.38 + n as f32 * 0.13));
+                let [u, v] = [c[0] + (b[0] - a[0]) * (n - 1) as f32 * 0.17, c[2] + (b[1] - a[1]) * (n - 1) as f32 * 0.17];
+                nugget(out, [u, c[1], v], 0.09, ore, random as u32 ^ n as u32);
+            }
+            mark_cave_geometry(&mut out.verts[start..], light);
+            out.set_anchor(x + 0.5, z + 0.5);
+        }
+        let rim = if open {
+            let rim = middle(-0.12 - along * 0.17, (cap_y - 0.08).max(foot_y));
+            cave_face(out, [cap[0], cap[1], rim], [0.45, 0.41, 0.36], light);
+            rim
+        } else {
+            middle(0.0, cap_y)
+        };
+        for (triangle, color) in [
+            ([feet[0], feet[1], ridge], wall),
+            ([feet[1], cap[1], ridge], tint),
+            ([cap[1], rim, ridge], wall),
+            ([rim, cap[0], ridge], tint),
+            ([cap[0], feet[0], ridge], stone),
         ] {
-            let neighbor = (tx + dx, ty + dy);
-            if rubble.contains_key(&neighbor) {
-                continue;
-            }
-            let (top, light) = match floors.get(&neighbor) {
-                Some(&next) if next > height => (f32::from(next), 1.0),
-                Some(_) => continue,
-                None => {
-                    let top = y + WALL_H + (tint - 1.0) * 0.6;
-                    if caps.insert(neighbor) {
-                        let (nx, nz) = (neighbor.0 as f32, neighbor.1 as f32);
-                        quad(&mut out, [[nx, top, nz], [nx + 1.0, top, nz], [nx + 1.0, top, nz + 1.0], [nx, top, nz + 1.0]], mul(low, 0.9), 0.0, WALL);
-                    }
-                    (top, WALL)
-                }
-            };
-            let mid = y + (top - y) * 0.46;
-            for (lo, hi, col) in [(y, mid, mul(low, tint)), (mid, top, mul(base, tint))] {
-                quad(&mut out, [[a[0], lo, a[1]], [b[0], lo, b[1]], [b[0], hi, b[1]], [a[0], hi, a[1]]], col, 0.0, light);
-            }
-            if light == WALL
-                && let Some(ore) = world.natural_cave_ore_at(CaveTile { x: neighbor.0, y: neighbor.1, z: height }) {
-                    for k in 0..3 {
-                        let along = 0.19 + 0.62 * unit(world.seed, tx, ty, 80 + k + dx * 7 + dy * 3);
-                        let point = [a[0] + (b[0] - a[0]) * along - dx as f32 * 0.05, y + 0.5 + 0.31 * k as f32, a[1] + (b[1] - a[1]) * along - dy as f32 * 0.05];
-                        nugget(&mut out, point, 0.11, ore, (tx * 11 + ty * 17 + k) as u32);
-                    }
-                }
+            cave_face(out, triangle, color, light);
         }
     }
-    for (&(x, z), &height) in rubble {
-        let floor = f32::from(height);
-        let (cx, cz) = (x as f32, z as f32);
-        quad(&mut out, [[cx, floor, cz], [cx + 1.0, floor, cz], [cx + 1.0, floor, cz + 1.0], [cx, floor, cz + 1.0]], low, 0.0, 1.0);
-        for k in 0..7 {
-            let u = |salt| unit(world.seed, x, z, salt + 7 * k);
-            let radius = 0.15 + 0.18 * u(30);
-            let base_y = if k < 4 { 0.14 } else { 0.31 };
-            let color = mul(base, 0.98 + 0.51 * u(33));
-            rock(&mut out, [cx + 0.22 + 0.56 * u(31), floor + base_y + 0.10 * u(34), cz + 0.22 + 0.56 * u(32)], [radius, radius * 0.84, radius], color, (x * 31 + z * 17 + k) as u32);
+
+    for n in 0..4 {
+        let (feet, caps) = edges[n];
+        let (next, next_caps) = edges[(n + 1) % 4];
+        if feet[1][1] != next[0][1] {
+            cave_face(out, [center, feet[1], next[0]], tint, light);
+        }
+        if let Some(h) = roof && caps[1][1] != next_caps[0][1] {
+            cave_face(out, [pos([0.5, 0.5], h), next_caps[0], caps[1]], stone, light);
         }
     }
-    // Coordinates already include the actual floor height.
-    for vertex in &mut out.verts {
+}
+
+struct GalleryTile {
+    tile: CaveTile,
+    ceiling: Option<i16>,
+    light: f32,
+    flooded: bool,
+}
+
+pub(crate) fn cave_daylight(world: &World, section: &CaveSection) -> BTreeMap<CaveTile, f32> {
+    let mut open = VecDeque::new();
+    let mut light = BTreeMap::new();
+    for &tile in section.keys() {
+        if world.natural_cave_exit_at(tile).is_some() {
+            light.insert(tile, 1.0);
+            open.push_back((tile, 0));
+        }
+    }
+    while let Some((tile, steps)) = open.pop_front() {
+        let next_steps = steps + 1;
+        if next_steps >= 7 {
+            continue;
+        }
+        for direction in [(0, 1), (1, 0), (0, -1), (-1, 0)] {
+            if let Some((next, _)) = gallery_neighbor(section, tile, section[&tile], direction)
+                && let std::collections::btree_map::Entry::Vacant(entry) = light.entry(next) {
+                let intensity = 1.0 - next_steps as f32 / 7.0;
+                entry.insert(intensity * intensity);
+                open.push_back((next, next_steps));
+            }
+        }
+    }
+    light
+}
+
+fn mark_cave_geometry(vertices: &mut [Vertex], light: f32) {
+    for vertex in vertices {
         vertex.kind = 1000.0;
+        vertex.uv[0] = -2.0 - light;
+    }
+}
+
+pub(crate) fn build_cave_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, f32>, flooded: &BTreeSet<CaveTile>) -> Vec<Vertex> {
+    let mut out = Mesh::new();
+    for (&tile, &ceiling) in section {
+        let light = light.get(&tile).copied().unwrap_or(0.0);
+        push_gallery_tile(&mut out, world, section, GalleryTile { tile, ceiling, light, flooded: flooded.contains(&tile) });
+        if world.natural_cave_rubble_at(tile) {
+            let start = out.len();
+            let (x, z) = (tile.x as f32, tile.y as f32);
+            for k in 0..7 {
+                let u = |salt| unit(world.seed, tile.x, tile.y, salt + 7 * k);
+                let radius = 0.14 + 0.17 * u(30);
+                let y = f32::from(tile.z) + if k < 4 { 0.12 } else { 0.30 };
+                rock(&mut out, [x + 0.22 + 0.56 * u(31), y, z + 0.22 + 0.56 * u(32)],
+                    [radius, radius * 0.86, radius], [0.38, 0.32, 0.26], (tile.x * 31 + tile.y * 17 + k) as u32);
+            }
+            mark_cave_geometry(&mut out.verts[start..], light);
+        }
     }
     out.verts
 }
@@ -355,4 +265,46 @@ pub(crate) fn push_torch(out: &mut Mesh, x: f32, z: f32, secs: f32, frac: f32) {
     let r = (0.05 + 0.04 * low) * flick;
     lamp(out, [x, 1.50 + 0.03 * (secs * 11.0).dsin(), z], [r, r * 1.7, r], [1.0, 0.62, 0.20], 2, 1.0);
     lamp(out, [x, 1.48, z], [r * 0.55, r, r * 0.55], [1.0, 0.92, 0.55], 3, 1.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alaz_sim::map::tag_seed_natural;
+
+    #[test]
+    fn natural_portals_join_the_surface_and_show_the_gallery() {
+        for (seed, (tx, ty)) in [(4, (38, 230)), (42, (222, 150))] {
+            let world = World::with_size(tag_seed_natural(seed, 256), 256, 256);
+            let mouth = world.map.natural_cave_mouth(tx, ty).unwrap();
+            let tile = mouth.threshold;
+            let section = collect_cave_entrances(&world, (tile.x - 2, tile.y - 2, tile.x + 3, tile.y + 3));
+            let light = cave_daylight(&world, &section);
+            let mesh = build_cave_scene(&world, &section, &light, &BTreeSet::new());
+            let x = tile.x as f32 + 0.5;
+            let z = tile.y as f32 + 0.5;
+            let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
+            let at = |v: &Vertex| (v.pos[0] - x) * dx + (v.pos[2] - z) * dz;
+
+            assert!(mesh.iter().any(|v| v.pos == [x, f32::from(tile.z), z]));
+            let (lx, ly) = mouth.landing.xy();
+            assert!(mesh.iter().any(|v| v.pos == [lx as f32 + 0.5, f32::from(mouth.landing.z), ly as f32 + 0.5]));
+            for side in [-0.5, 0.5] {
+                let front_x = x - dx * 0.5 + side * dz;
+                let front_z = z - dz * 0.5 - side * dx;
+                let surface = ground_height(world.seed, front_x, front_z);
+                assert!(mesh.iter().any(|v| v.pos == [front_x, surface, front_z]));
+            }
+
+            // A full-height face across the shared edge would hide the landing from the approach.
+            let seam_floor = f32::from(tile.z + mouth.landing.z) * 0.5;
+            for face in mesh.chunks_exact(3).filter(|face| face.iter().all(|v| {
+                at(v) == 0.5 && ((v.pos[0] - x) * dz - (v.pos[2] - z) * dx).abs() <= 0.5
+            })) {
+                let low = face.iter().map(|v| v.pos[1]).fold(f32::INFINITY, f32::min);
+                let high = face.iter().map(|v| v.pos[1]).fold(f32::NEG_INFINITY, f32::max);
+                assert!(low >= seam_floor + 1.0 || high <= seam_floor + 0.1);
+            }
+        }
+    }
 }
