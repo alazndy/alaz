@@ -246,16 +246,16 @@ Doğal mağaralarda keşfettiğin yerler kayıt yuvasındaki `cave-map.alz` dosy
 
 ### İnternetten (kodla)
 
-Aracı sunucu çalıştığında arkadaşınla port açmadan internet üzerinden oynayabilirsin. Kuran oyuncu bir kod alır. Arkadaşı kodu yazarak katılır.
+Port açmadan, internet üzerinden arkadaşınla oynayabilirsin. Kuran oyuncu bir kod alır; arkadaşı o kodu yazarak katılır.
 
 - **Ağa aç:** Çok oyunculu ekranında **Ağa aç**'a bas. `K7Q4-XM2P` gibi bir kod çıkar. **Kopyala** düğmesiyle panoya kopyalayabilirsin. Bağlı oyuncu sayısı da görünür.
 - **Kodla katıl:** Arkadaşın **Kodla katıl** alanına kodu yazar. Büyük-küçük harf, boşluk ve tire önemli değildir.
 - **Yeni kod:** Yeni bir kod alır. Eski kod hemen geçersiz olur.
 - **Ağı kapat:** Kod geçersiz olur. Ağda olan oyuncular oyunda kalır.
 - Kod, ağı açık tuttuğun sürece geçerlidir. Bir odada en çok 8 oyuncu olabilir (kuran dahil).
-- Kodu güvendiğin arkadaşlarınla paylaş. Sunucu oyuncu komutlarını bağlantıya atanmış karakterle sınırlar. Oyuncular ortak işçi komutları verebilir.
+- **Dikkat:** Kodu yalnız güvendiğin arkadaşlarınla paylaş. Kodu bilen herkes katılıp takımda oynayabilir. Sunucu her oyuncunun komutunu yalnız o oyuncunun karakterine bağlar; işçiler ise ortaktır ve herkes onlara komut verebilir.
 - Çok oyunculu ekranından **Ağa aç** yalnız internet yolunu açar; LAN portu açılmaz. Oyun zaten LAN için açıksa ikisi de çalışır.
-- Oyun bağlantıyı `relay.alazlab.com` (port 443, TLS) adresindeki aracı sunucu üzerinden kurar. Aracı oyuncuları eşleştirir. LAN ve internet oyunları aynı eşzamanlı simülasyonu kullanır.
+- Oyun bağlantıyı `relay.alazlab.com` (port 443, TLS) adresindeki bir aracı sunucu üzerinden kurar. Aracı iki oyuncuyu eşleştirir. Oyunun kendisi değişmez; eşzamanlı (lockstep) çalışmaya devam eder.
 - Aracı kod ya da oyun içeriğini kaydetmez; yalnız sayaç tutar. TLS aracıda sonlandığı için aracı trafiği teknik olarak görebilir.
 - Herkes aynı oyun sürümünü kullanmalı.
 - Aracının adresini `ALAZ_RELAY=host:port` ortam değişkeniyle değiştirebilirsin (test ya da kendi aracın için). Aracıyı kurma adımları: `packaging/relay/RUNBOOK.md`.

@@ -24,7 +24,7 @@ pub enum MenuAction {
     /// Raw text: "192.168.1.5" or "192.168.1.5:7777".
     Join(String),
     /// Open the hosted world to the internet. Carries the host settings because the world may not be hosted yet.
-    HostOnline { slot: u8, new: Option<NewWorld> },
+    HostOnline { slot: u8, port: u16, new: Option<NewWorld> },
     /// Raw text of the code field; `Client::connect_code` normalizes it.
     JoinCode(String),
     CloseOnline,
@@ -556,9 +556,10 @@ impl Menu {
         use alaz_net::RelayStatus as R;
         let mut act = None;
         let open = |menu: &Menu| {
+            let port = menu.port_text.parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(7777);
             let full = menu.slots[menu.slot as usize - 1].is_some();
             let new = if full || menu.hosting { None } else { Some(menu.new_world()) };
-            MenuAction::HostOnline { slot: menu.slot, new }
+            MenuAction::HostOnline { slot: menu.slot, port, new }
         };
         match self.relay.clone() {
             None | Some(R::Closed) => {
@@ -1087,7 +1088,7 @@ mod tests {
         let mut h = open_mp(Menu::new(false));
         h.get_by_label("Ağa aç").click();
         h.run();
-        assert!(matches!(h.state().got, Some(MenuAction::HostOnline { slot: 1, .. })));
+        assert!(matches!(h.state().got, Some(MenuAction::HostOnline { port: 7777, .. })));
     }
 
     #[test]

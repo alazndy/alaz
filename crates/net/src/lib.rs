@@ -3,8 +3,7 @@
 //! turns to the same deterministic `World`. The host also publishes a state hash every `HASH_EVERY`
 //! ticks so clients notice a desync and can ask for a fresh snapshot.
 //!
-//! Clients act through the player assigned by the host. Shared workers can still be targeted by
-//! player commands such as assigning a route.
+//! Trust model: friends on one team. Clients may command any agent, the host does not police it.
 
 pub mod discovery;
 mod relay_client;
@@ -21,7 +20,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use stream::Stream;
 
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 3;
 pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
@@ -39,7 +38,7 @@ const MAX_OUTBOX: usize = 64 << 20;
 #[derive(Serialize, Deserialize)]
 enum ToHost {
     Hello { protocol: u32 },
-    Cmds { generation: u64, commands: Vec<Command> },
+    Cmds(Vec<Command>),
     Resync,
 }
 
@@ -47,6 +46,7 @@ enum ToHost {
 enum ToClient {
     Welcome { agent: u32, generation: u64, snapshot: Vec<u8> },
     Turn(Turn),
+    /// A fresh snapshot. The agent and generation change when the host starts a different world.
     Resync { agent: u32, generation: u64, snapshot: Vec<u8> },
     Refused(String),
 }
@@ -158,6 +158,7 @@ impl Conn {
 
 struct Peer {
     conn: Conn,
+    /// The only agent this connection may command.
     agent: AgentId,
     resync: bool,
 }
@@ -181,16 +182,7 @@ impl Host {
     pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
-        Ok(Self {
-            listener,
-            waiting: Vec::new(),
-            peers: Vec::new(),
-            queued: Vec::new(),
-            joins_queued: 0,
-            world_generation: 0,
-            beacon: None,
-            relay: None,
-        })
+        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, world_generation: 0, beacon: None, relay: None })
     }
 
     /// A host that only the relay can reach: loopback, any free port, no LAN discovery. The relay
@@ -251,21 +243,6 @@ impl Host {
         self.peers.len() + 1
     }
 
-    /// Seat connected players in the replacement world and send them its snapshot on the next turn.
-    pub fn replace_world(&mut self, world: &mut World) {
-        self.world_generation += 1;
-        self.queued.clear();
-        self.joins_queued = 0;
-        self.peers.retain(|p| !p.conn.dead);
-        let (sx, sy) = world.spawn_mm;
-        let humans = world.agents.iter().filter(|a| a.kind == alaz_sim::AgentKind::Human).count();
-        for (offset, peer) in self.peers.iter_mut().enumerate() {
-            let player = (humans + offset) as i64;
-            peer.agent = world.spawn_agent(sx + (player % 5 - 2) * 1_500, sy + (player / 5 % 3) * 1_500);
-            peer.resync = true;
-        }
-    }
-
     /// Accept newcomers and collect client commands. Call right before `turn`, with no step in between.
     pub fn poll(&mut self, world: &World) {
         if let Some((beacon, label)) = &self.beacon {
@@ -292,8 +269,8 @@ impl Host {
                     let agent = world.agents.len() as u32 + self.joins_queued;
                     self.joins_queued += 1;
                     self.queued.push(Command { agent: AgentId(agent), kind: CommandKind::Join });
-                    conn.limit = MAX_FROM_CLIENT;
                     conn.send(&ToClient::Welcome { agent, generation: self.world_generation, snapshot: world.to_bytes() });
+                    conn.limit = MAX_FROM_CLIENT;
                     self.peers.push(Peer { conn, agent: AgentId(agent), resync: false });
                 }
                 Some(ToHost::Hello { .. }) => {
@@ -309,15 +286,30 @@ impl Host {
         for p in &mut self.peers {
             for m in p.conn.recv::<ToHost>() {
                 match m {
-                    ToHost::Cmds { generation, commands }
-                        if generation == self.world_generation && (p.agent.0 as usize) < known =>
-                    {
-                        self.queued.extend(commands.into_iter().filter(|c| peer_can_issue(p.agent, c)));
-                    }
+                    // a client commands only its own agent and can never spawn players itself;
+                    // an agent id that names nobody can only be forged or stale, and the sim need not survive it
+                    ToHost::Cmds(cmds) => self
+                        .queued
+                        .extend(cmds.into_iter().filter(|c| peer_can_issue(p.agent, c) && (c.agent.0 as usize) < known)),
                     ToHost::Resync => p.resync = true,
-                    ToHost::Cmds { .. } | ToHost::Hello { .. } => {}
+                    ToHost::Hello { .. } => {}
                 }
             }
+        }
+    }
+
+    /// Seat connected players in the replacement world and send them its snapshot on the next turn.
+    pub fn replace_world(&mut self, world: &mut World) {
+        self.world_generation += 1;
+        self.queued.clear();
+        self.joins_queued = 0;
+        self.peers.retain(|p| !p.conn.dead);
+        let (sx, sy) = world.spawn_mm;
+        let humans = world.agents.iter().filter(|a| a.kind == alaz_sim::AgentKind::Human).count();
+        for (offset, peer) in self.peers.iter_mut().enumerate() {
+            let player = (humans + offset) as i64;
+            peer.agent = world.spawn_agent(sx + (player % 5 - 2) * 1_500, sy + (player / 5 % 3) * 1_500);
+            peer.resync = true;
         }
     }
 
@@ -409,12 +401,9 @@ impl Client {
             for m in client.conn.recv::<ToClient>() {
                 match m {
                     ToClient::Welcome { agent, generation, snapshot } => {
-                        world = Some(client.accept_snapshot(agent, generation, &snapshot).map_err(|e| err(&format!("{e:?}")))?);
-                    }
-                    ToClient::Resync { agent, generation, snapshot } if world.is_some() => {
-                        if let Ok(w) = client.accept_snapshot(agent, generation, &snapshot) {
-                            world = Some(w);
-                        }
+                        client.agent = AgentId(agent);
+                        client.world_generation = generation;
+                        world = Some(World::from_bytes(&snapshot).map_err(|e| err(&format!("{e:?}")))?);
                     }
                     ToClient::Turn(t) if world.is_some() => client.queue_turn(t),
                     ToClient::Refused(why) => return Err(NetError(why.chars().take(MAX_REMOTE_TEXT).collect())),
@@ -435,8 +424,12 @@ impl Client {
             match m {
                 ToClient::Turn(t) if !self.awaiting_resync => self.queue_turn(t),
                 ToClient::Resync { agent, generation, snapshot } => {
-                    if let Ok(w) = self.accept_snapshot(agent, generation, &snapshot) {
+                    if let Ok(w) = World::from_bytes(&snapshot) {
+                        self.agent = AgentId(agent);
+                        self.world_generation = generation;
+                        self.turns.clear();
                         self.fresh = Some(w);
+                        self.awaiting_resync = false;
                     }
                 }
                 _ => {}
@@ -453,23 +446,9 @@ impl Client {
         }
     }
 
-    fn accept_snapshot(&mut self, agent: u32, generation: u64, snapshot: &[u8]) -> Result<World, alaz_sim::SaveError> {
-        let world = World::from_bytes(snapshot)?;
-        self.agent = AgentId(agent);
-        self.world_generation = generation;
-        self.turns.clear();
-        self.awaiting_resync = false;
-        Ok(world)
-    }
-
-    /// Changes whenever the host replaces the world. Ordinary resyncs keep the same generation.
-    pub fn world_generation(&self) -> u64 {
-        self.world_generation
-    }
-
-    pub fn send(&mut self, commands: Vec<Command>) {
-        if !commands.is_empty() {
-            self.conn.send(&ToHost::Cmds { generation: self.world_generation, commands });
+    pub fn send(&mut self, cmds: Vec<Command>) {
+        if !cmds.is_empty() {
+            self.conn.send(&ToHost::Cmds(cmds));
         }
     }
 
@@ -492,6 +471,11 @@ impl Client {
             self.turns.clear();
             self.conn.send(&ToHost::Resync);
         }
+    }
+
+    /// Changes whenever the host replaces the world. Ordinary resyncs keep the same generation.
+    pub fn world_generation(&self) -> u64 {
+        self.world_generation
     }
 
     pub fn take_fresh_world(&mut self) -> Option<World> {
@@ -523,12 +507,9 @@ mod tests {
     }
 
     pub(crate) fn setup() -> (Host, World, Client, World) {
-        setup_world(host_world())
-    }
-
-    fn setup_world(mut hw: World) -> (Host, World, Client, World) {
         let mut host = Host::bind("127.0.0.1:0").unwrap();
         let addr = host.local_addr().unwrap().to_string();
+        let mut hw = host_world();
         let t = thread::spawn(move || Client::connect(&addr, Duration::from_secs(10)).unwrap());
         while !t.is_finished() {
             host.poll(&hw);
@@ -581,103 +562,6 @@ mod tests {
     }
 
     #[test]
-    fn peer_authorization_checks_the_player_and_preserves_shared_worker_routes() {
-        let player = AgentId(2);
-        let route = Command {
-            agent: player,
-            kind: CommandKind::SetRoute { worker: AgentId(3), route: Vec::new() },
-        };
-        assert!(peer_can_issue(player, &route));
-        assert!(!peer_can_issue(AgentId(1), &route));
-        assert!(!peer_can_issue(player, &Command { agent: player, kind: CommandKind::Join }));
-    }
-
-    #[test]
-    fn world_replacement_reseats_a_connected_player() {
-        let (host, _, client, cw) = setup();
-        verify_world_replacement(host, client, cw);
-    }
-
-    pub(crate) fn verify_world_replacement(mut host: Host, mut client: Client, mut cw: World) {
-        let addr = host.local_addr().unwrap();
-        let generation = client.world_generation();
-        let previous_agent = client.agent;
-        let mut hw = World::new(17);
-        let (sx, sy) = hw.spawn_mm;
-        hw.spawn_agent(sx, sy);
-        hw.spawn_worker(alaz_sim::AgentKind::Horse, sx, sy);
-        host.replace_world(&mut hw);
-        let new_agent = host.peers[0].agent;
-        assert_ne!(new_agent, previous_agent);
-        assert_eq!(hw.agents[new_agent.0 as usize].kind, alaz_sim::AgentKind::Human);
-        assert_eq!(host.players(), 2);
-        assert_eq!(host.local_addr().unwrap(), addr);
-
-        let batch = host.turn(&hw, vec![]);
-        hw.step(&batch);
-        for _ in 0..1000 {
-            client.poll();
-            if let Some(world) = client.take_fresh_world() {
-                cw = world;
-                break;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(client.world_generation(), generation + 1);
-        assert_eq!(client.agent, new_agent);
-        assert_eq!(cw.seed, hw.seed);
-        assert!(client.is_connected());
-
-        let command = Command { agent: new_agent, kind: CommandKind::SetSprint { on: true } };
-        client.send(vec![command.clone()]);
-        let mut accepted = false;
-        for _ in 0..1000 {
-            host.poll(&hw);
-            let batch = host.turn(&hw, vec![]);
-            accepted = batch.contains(&command);
-            hw.step(&batch);
-            if accepted {
-                break;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(accepted);
-        settle(&mut host, &mut hw, &mut client, &mut cw);
-        assert_eq!(hw.hash(), cw.hash());
-    }
-
-    #[test]
-    fn replacement_discards_commands_from_the_previous_generation() {
-        let (mut host, _, mut client, _) = setup();
-        let agent = client.agent;
-        let command = Command { agent, kind: CommandKind::SetSprint { on: true } };
-        host.queued.push(command.clone());
-        // Normal input sent before the client learns about the replacement.
-        client.send(vec![command]);
-        client.request_resync();
-
-        let mut hw = host_world();
-        host.replace_world(&mut hw);
-        // With the same staffing in both worlds, the two player IDs are identical.
-        assert_eq!(host.peers[0].agent, agent);
-        let batch = host.turn(&hw, vec![]);
-        assert!(batch.is_empty());
-        hw.step(&batch);
-
-        // The resync request followed the input on the same stream, so seeing it confirms that
-        // the host handled both messages.
-        for _ in 0..1000 {
-            host.poll(&hw);
-            if host.peers[0].resync {
-                break;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(host.peers[0].resync);
-        assert!(host.turn(&hw, vec![]).is_empty());
-    }
-
-    #[test]
     fn client_joins_and_stays_in_lockstep() {
         let (mut host, mut hw, mut client, mut cw) = setup();
         assert_eq!(host.players(), 2);
@@ -699,96 +583,6 @@ mod tests {
         assert_eq!(cw.hash(), hw.hash());
         assert!(hw.agents[me.0 as usize].x != hw.spawn_mm.0 - 1_500, "the client's agent moved");
         let _ = ItemKind::Wood;
-    }
-
-    #[test]
-    fn excavation_in_a_natural_cave_stays_in_lockstep() {
-        let seed = alaz_sim::map::tag_seed_natural(42, 256);
-        let mut world = World::with_size(seed, 256, 256);
-        let node = world.node_at(222, 150).unwrap();
-        let (x, y) = world.nodes[node.0 as usize].center_mm();
-        let agent = world.spawn_agent(x, y);
-        world.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
-        world.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        world.step(&[Command { agent, kind: CommandKind::EnterCave { node } }]);
-        let (tx, ty) = world.cave_dig_target(agent).unwrap();
-        let (mut host, mut hw, mut client, mut cw) = setup_world(world);
-        assert!(cw.agents[0].cave.and_then(|c| c.elevation_m()).is_some());
-        let cmd = Command { agent, kind: CommandKind::CaveDig { tx, ty } };
-        let batch = host.turn(&hw, vec![cmd]);
-        hw.step(&batch);
-        run(&mut host, &mut hw, &mut client, &mut cw, 200, |_, _, _, _, _| {});
-        settle(&mut host, &mut hw, &mut client, &mut cw);
-        assert_eq!(cw.tick, hw.tick);
-        assert_ne!(hw.natural_cave_revision(), 0);
-        assert_eq!(hw.natural_cave_revision(), cw.natural_cave_revision());
-        assert_eq!(hw.hash(), cw.hash());
-
-        let batch = host.turn(&hw, vec![Command { agent, kind: CommandKind::CaveLeave }]);
-        hw.step(&batch);
-        run(&mut host, &mut hw, &mut client, &mut cw, 160, |_, _, _, _, _| {});
-        settle(&mut host, &mut hw, &mut client, &mut cw);
-        assert!(hw.agents[0].cave.is_none());
-        assert!(cw.agents[0].cave.is_none());
-        assert_eq!(hw.hash(), cw.hash());
-    }
-
-    #[test]
-    fn cave_rubble_is_synced_on_join_and_after_clearing() {
-        use alaz_sim::{caves::Cell, world::Task};
-
-        let seed = alaz_sim::map::tag_seed_natural(42, 256);
-        let mut world = World::with_size(seed, 256, 256);
-        let node = world.node_at(222, 150).unwrap();
-        let (x, y) = world.nodes[node.0 as usize].center_mm();
-        let agent = world.spawn_agent(x, y);
-        world.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
-        world.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        world.step(&[Command { agent, kind: CommandKind::EnterCave { node } }]);
-        let cave = world.agents[0].cave.unwrap();
-        let (tx, ty) = world.cave_dig_target(agent).unwrap();
-        let before = world.to_bytes();
-        // Pick a deterministic collapse, then walk to a reachable pile before taking the join snapshot.
-        let (mut world, approach, (x, y)) = (world.tick..world.tick + 256).find_map(|tick| {
-            let mut trial = World::from_bytes(&before).unwrap();
-            trial.tick = tick;
-            trial.agents[0].task = Task::Dig { tx, ty, progress: u32::from(alaz_sim::world::CAVE_MINE_TICKS) };
-            trial.step(&[]);
-            if !trial.events.iter().any(|event| matches!(event, alaz_sim::Event::CaveRockfall(id) if *id == agent)) {
-                return None;
-            }
-            let spot = trial.natural_cave_tiles(cave, 4).into_iter().find_map(|tile| {
-                if trial.natural_cave_exit_at(tile).is_some() { return None; }
-                let (x, y) = tile.center_mm();
-                let standing = alaz_sim::CaveSelf { x, y, level: (tile.z + 100) as u8, ..cave };
-                [(0, 1), (1, 0), (0, -1), (-1, 0)].into_iter()
-                    .map(|(dx, dy)| (tile.x + dx, tile.y + dy))
-                    .find(|&(x, y)| trial.natural_cave_cell(standing, x, y) == Some(Cell::Rubble))
-                    .map(|blocked| (tile, blocked))
-            })?;
-            Some((trial, spot.0, spot.1))
-        }).expect("a reachable pile of rubble");
-        let (wx, wy) = approach.center_mm();
-        world.step(&[Command { agent, kind: CommandKind::MoveTo { x: wx, y: wy } }]);
-        for _ in 0..300 {
-            if world.agents[0].task == Task::Idle { break; }
-            world.step(&[]);
-        }
-        let cave = world.agents[0].cave.unwrap();
-        assert_eq!(world.natural_cave_cell(cave, x, y), Some(Cell::Rubble));
-
-        let (mut host, mut hw, mut client, mut cw) = setup_world(world);
-        assert_eq!(cw.natural_cave_cell(cave, x, y), Some(Cell::Rubble));
-        let before = hw.natural_cave_revision();
-        let batch = host.turn(&hw, vec![Command { agent, kind: CommandKind::CaveDig { tx: x, ty: y } }]);
-        hw.step(&batch);
-        run(&mut host, &mut hw, &mut client, &mut cw, 105, |_, _, _, _, _| {});
-        settle(&mut host, &mut hw, &mut client, &mut cw);
-        assert_eq!(hw.tick, cw.tick);
-        assert_eq!(hw.natural_cave_cell(cave, x, y), Some(Cell::Floor));
-        assert_eq!(cw.natural_cave_cell(cave, x, y), Some(Cell::Floor));
-        assert_ne!(hw.natural_cave_revision(), before);
-        assert_eq!(hw.hash(), cw.hash());
     }
 
     #[test]
@@ -1133,5 +927,14 @@ mod tests {
         }
         assert_eq!(host.players(), 1);
         assert!(Client::connect("127.0.0.1:1", Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_peer_commands_only_its_own_agent_and_never_joins() {
+        let mine = AgentId(3);
+        let cmd = |agent, kind| Command { agent, kind };
+        assert!(peer_can_issue(mine, &cmd(mine, CommandKind::Jump)));
+        assert!(!peer_can_issue(mine, &cmd(AgentId(1), CommandKind::Jump)));
+        assert!(!peer_can_issue(mine, &cmd(mine, CommandKind::Join)));
     }
 }

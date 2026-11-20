@@ -1430,7 +1430,7 @@ impl App {
                 self.net = Net::Host(host);
                 self.say(format!("Sunucu açık: {}:{port}", lan_ip_text()));
             }
-            M::HostOnline { slot, new } => {
+            M::HostOnline { slot, port: _, new } => {
                 let started = !matches!(self.net, Net::Host(_));
                 if started {
                     // online-only: the code is the only way in, so no LAN port and no discovery beacon

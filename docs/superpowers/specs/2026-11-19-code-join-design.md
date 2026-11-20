@@ -1,6 +1,6 @@
 # Kodla internetten katılma: tasarım
 
-Tarih: 2026-11-19. Bağlı plan: `2026-11-19-openworld-ideas-roadmap.md`, Proje 3.
+Tarih: 2026-11-19. Durum: **onay bekliyor**. Bağlı plan: `2026-11-19-openworld-ideas-roadmap.md`, Proje 3.
 
 ## Amaç ve neden
 Bugün çok oyunculu yalnızca aynı ağda (LAN) çalışıyor. Başka şehirdeki bir arkadaşın katılması için sunucu kuranın
@@ -10,14 +10,14 @@ Kod yalnızca sahibinin doğrudan verdiği arkadaşlara gidecek (Discord'da herk
 
 ## Hedefler
 - İki oyuncu, hiçbiri port açmadan, kodla bağlanır.
-- LAN ve internet aynı lockstep oyun protokolünü kullanır. Aracı bu mesajları yorumlamadan iletir.
-- Sunucu her oyuncu komutunun bağlantıya atanmış karaktere ait olduğunu doğrular. Oyuncu ortak işçi komutlarında işçiyi hedef olarak seçebilir.
+- Lockstep protokolü (`ToHost`/`ToClient`, `Turn`) ve oyun mantığı değişmez.
 - LAN yolu ve "Ağdaki oyunlar" listesi aynen çalışmaya devam eder.
 - Aracı sunucu küçük, tek ikili dosya, ücretsiz bir bulut VM'inde `relay.alazlab.com` adresinde çalışır.
 
 ## Hedef olmayanlar
 - Hesap, arkadaş listesi, davet bildirimi (Essential gibi). Yerine kod.
 - Doğrudan bağlantı / NAT delme (ICE). Aracı her durumda çalışır; doğrudan bağlantı ileride eklenebilir.
+- Yabancı oyuncuya karşı denetim. Güven modeli bugünkü gibi: bir istemci her karakteri yönetebilir, sunucu denetlemez.
 - Sohbet, sunucu listesi, herkese açık eşleme.
 
 ## Kaçınılacak sonuçlar (çalışsa bile başarısızlık sayılır)
@@ -99,7 +99,7 @@ Builder ilk iş tipik bir dünyanın boyutunu ölçer; büyükse sıkıştırma 
 **Ölçüm (2026-11-19):** `World::to_bytes()`, varsayılan harita 256x256, seed 5, 3 oyuncu, release derleme
 (`cargo test -p alaz-net --release --test snapshot_size -- --ignored --nocapture`; test süresi yaklaşık 3 sn):
 tick 0 = 7745 bayt, tick 1000 = 7912 bayt, tick 20000 = 7958 bayt (yaklaşık 8 KB).
-Bu ölçümdeki dünya 2 MiB sınırının altında kaldı. Oyun protokolü 7, bağlantıya atanan oyuncuyu ve dünya değiştiğinde yeni oturumu taşır.
+Eşik 2 MiB; ölçüm eşiğin yaklaşık 260 kat altında. **Sıkıştırma gerekmiyor**, `PROTOCOL` 2 kalır.
 
 ### Test
 - Aracı için yerel testler: eşleme, tünel aktarımı, yanlış kod, dolu oda, süre aşımı, hız ve bağlantı sınırları (kendinden imzalı sertifikayla).
