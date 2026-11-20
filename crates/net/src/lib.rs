@@ -6,6 +6,11 @@
 //! Trust model: friends on one team. Clients may command any agent, the host does not police it.
 
 pub mod discovery;
+mod relay_client;
+mod stream;
+
+pub use alaz_relay_proto::Code;
+pub use relay_client::RelayStatus;
 
 use alaz_sim::{AgentId, Command, CommandKind, World};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -13,11 +18,21 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
+use stream::Stream;
 
 pub const PROTOCOL: u32 = 2;
 pub const DEFAULT_PORT: u16 = 7777;
+pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
 const MAX_FRAME: usize = 64 << 20;
+/// A connection that has not said Hello is a stranger: a Hello is a few bytes, so it may buffer this much.
+const MAX_PRE_HELLO: usize = 4 << 10;
+/// Client to host frames are commands and never need more; host to client keeps `MAX_FRAME` for snapshots.
+const MAX_FROM_CLIENT: usize = 1 << 20;
+/// Turns a client may hold unapplied before it treats the host as broken (minutes of lag; a resync is cheaper).
+const MAX_TURN_BACKLOG: usize = 10_000;
+/// Longest error text from a remote peer shown to the player.
+const MAX_REMOTE_TEXT: usize = 200;
 const MAX_OUTBOX: usize = 64 << 20;
 
 #[derive(Serialize, Deserialize)]
@@ -56,18 +71,20 @@ pub fn apply_turn(world: &mut World, turn: &Turn) -> bool {
 
 /// Non-blocking, length-prefixed message pipe.
 struct Conn {
-    stream: TcpStream,
+    stream: Stream,
     rbuf: Vec<u8>,
     wbuf: Vec<u8>,
     wpos: usize,
     dead: bool,
+    /// Largest frame accepted from the peer; also bounds how much `recv` buffers.
+    limit: usize,
 }
 
 impl Conn {
-    fn new(stream: TcpStream) -> io::Result<Self> {
-        stream.set_nonblocking(true)?;
-        stream.set_nodelay(true)?;
-        Ok(Self { stream, rbuf: Vec::new(), wbuf: Vec::new(), wpos: 0, dead: false })
+    fn new(stream: Stream, limit: usize) -> io::Result<Self> {
+        stream.tcp().set_nonblocking(true)?;
+        stream.tcp().set_nodelay(true)?;
+        Ok(Self { stream, rbuf: Vec::new(), wbuf: Vec::new(), wpos: 0, dead: false, limit })
     }
 
     fn send<T: Serialize>(&mut self, msg: &T) {
@@ -90,6 +107,10 @@ impl Conn {
         if self.wpos == self.wbuf.len() {
             self.wbuf.clear();
             self.wpos = 0;
+            // TLS may still hold encrypted bytes the socket refused earlier; a plain stream ignores this
+            if !self.dead {
+                let _ = self.stream.flush();
+            }
         }
         if self.wbuf.len() - self.wpos > MAX_OUTBOX {
             self.dead = true;
@@ -99,7 +120,8 @@ impl Conn {
     fn recv<T: DeserializeOwned>(&mut self) -> Vec<T> {
         self.flush();
         let mut chunk = [0u8; 64 * 1024];
-        while !self.dead {
+        // a peer that streams faster than we parse must not grow the buffer without bound
+        while !self.dead && self.rbuf.len() <= self.limit + 4 {
             match self.stream.read(&mut chunk) {
                 Ok(0) => self.dead = true,
                 Ok(n) => self.rbuf.extend_from_slice(&chunk[..n]),
@@ -112,7 +134,7 @@ impl Conn {
         let mut at = 0;
         while self.rbuf.len() - at >= 4 {
             let len = u32::from_le_bytes(self.rbuf[at..at + 4].try_into().unwrap()) as usize;
-            if len > MAX_FRAME {
+            if len > self.limit {
                 self.dead = true;
                 break;
             }
@@ -145,13 +167,57 @@ pub struct Host {
     queued: Vec<Command>,
     joins_queued: u32,
     beacon: Option<(discovery::Beacon, String)>,
+    relay: Option<relay_client::RelayLink>,
 }
 
 impl Host {
     pub fn bind(addr: impl ToSocketAddrs) -> io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
-        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None })
+        Ok(Self { listener, waiting: Vec::new(), peers: Vec::new(), queued: Vec::new(), joins_queued: 0, beacon: None, relay: None })
+    }
+
+    /// A host that only the relay can reach: loopback, any free port, no LAN discovery. The relay
+    /// tunnels arrive over outgoing connections, so nothing listens on the network.
+    pub fn bind_online_only() -> io::Result<Self> {
+        Self::bind(("127.0.0.1", 0))
+    }
+
+    /// True when the lockstep listener accepts connections from other machines (LAN hosting).
+    pub fn lan_open(&self) -> bool {
+        self.listener.local_addr().is_ok_and(|a| !a.ip().is_loopback())
+    }
+
+    /// Open this world to the internet through the relay. Returns at once; follow `relay_status`.
+    /// `relay` is a `host:port`. This does not read `ALAZ_RELAY`: callers pass `alaz_net::relay_address()`.
+    pub fn open_relay(&mut self, relay: &str) -> Result<(), NetError> {
+        self.open_relay_with(relay, relay_client::PING_EVERY)
+    }
+
+    pub(crate) fn open_relay_with(&mut self, relay: &str, ping_every: Duration) -> Result<(), NetError> {
+        if relay_client::host_part(relay).is_none() {
+            return Err(NetError("röle adresi geçersiz".into()));
+        }
+        // dropping the old link closes its control connection first, so the old code dies
+        self.relay = None;
+        self.relay = Some(relay_client::RelayLink::start(relay, ping_every));
+        Ok(())
+    }
+
+    pub fn relay_status(&self) -> RelayStatus {
+        self.relay.as_ref().map_or(RelayStatus::Closed, |l| l.status())
+    }
+
+    /// Replace the code; the old one stops working. Players already connected stay.
+    pub fn relay_new_code(&mut self) {
+        if let Some(l) = &self.relay {
+            l.request_new_code();
+        }
+    }
+
+    /// Stop accepting people through the relay. Players already connected stay.
+    pub fn relay_close(&mut self) {
+        self.relay = None;
     }
 
     /// Answer LAN discovery queries on UDP `port`. On error hosting is unaffected, only discovery stays off.
@@ -176,8 +242,15 @@ impl Host {
             beacon.answer(tcp_port, self.peers.len() as u32 + 1, label);
         }
         while let Ok((stream, _)) = self.listener.accept() {
-            if let Ok(c) = Conn::new(stream) {
+            if let Ok(c) = Conn::new(Stream::Plain(stream), MAX_PRE_HELLO) {
                 self.waiting.push((c, Instant::now()));
+            }
+        }
+        if let Some(link) = &self.relay {
+            while let Some(stream) = link.try_tunnel() {
+                if let Ok(c) = Conn::new(stream, MAX_PRE_HELLO) {
+                    self.waiting.push((c, Instant::now()));
+                }
             }
         }
         let mut still = Vec::new();
@@ -189,6 +262,7 @@ impl Host {
                     self.joins_queued += 1;
                     self.queued.push(Command { agent: AgentId(agent), kind: CommandKind::Join });
                     conn.send(&ToClient::Welcome { agent, snapshot: world.to_bytes() });
+                    conn.limit = MAX_FROM_CLIENT;
                     self.peers.push(Peer { conn, resync: false });
                 }
                 Some(ToHost::Hello { .. }) => {
@@ -200,13 +274,15 @@ impl Host {
             }
         }
         self.waiting = still;
+        let known = world.agents.len() + self.joins_queued as usize;
         for p in &mut self.peers {
             for m in p.conn.recv::<ToHost>() {
                 match m {
                     // clients can never spawn players themselves
-                    ToHost::Cmds(cmds) => {
-                        self.queued.extend(cmds.into_iter().filter(|c| c.kind != CommandKind::Join))
-                    }
+                    // an agent id that names nobody can only be forged or stale, and the sim need not survive it
+                    ToHost::Cmds(cmds) => self
+                        .queued
+                        .extend(cmds.into_iter().filter(|c| c.kind != CommandKind::Join && (c.agent.0 as usize) < known)),
                     ToHost::Resync => p.resync = true,
                     ToHost::Hello { .. } => {}
                 }
@@ -244,6 +320,11 @@ impl std::fmt::Display for NetError {
     }
 }
 
+/// The relay to use: `ALAZ_RELAY=host:port` (tests, self-hosting) or the public one.
+pub fn relay_address() -> String {
+    std::env::var("ALAZ_RELAY").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| DEFAULT_RELAY.to_string())
+}
+
 pub struct Client {
     conn: Conn,
     turns: VecDeque<Turn>,
@@ -262,8 +343,27 @@ impl Client {
             .next()
             .ok_or_else(|| NetError("adres çözülemedi".into()))?;
         let stream = TcpStream::connect_timeout(&sock, timeout).map_err(|e| err(&e))?;
+        stream::set_keepalive(&stream);
+        Self::handshake(Stream::Plain(stream), timeout)
+    }
+
+    /// Join through the relay with the code a host gave. `timeout` covers DNS, TCP, TLS, pairing and the handshake.
+    pub fn connect_code(code: &str, timeout: Duration) -> Result<(Client, World), NetError> {
+        Self::connect_code_via(&relay_address(), code, timeout)
+    }
+
+    pub(crate) fn connect_code_via(relay: &str, code: &str, timeout: Duration) -> Result<(Client, World), NetError> {
+        let until = Instant::now() + timeout;
+        let code = Code::parse(code).ok_or_else(|| NetError("kod geçersiz".into()))?;
+        let target = relay_client::Target::resolve(relay, until)?;
+        let stream = relay_client::join(&target, code, until)?;
+        Self::handshake(stream, until.saturating_duration_since(Instant::now()))
+    }
+
+    fn handshake(stream: Stream, timeout: Duration) -> Result<(Client, World), NetError> {
+        let err = |e: &dyn std::fmt::Display| NetError(format!("{e}"));
         let mut client = Client {
-            conn: Conn::new(stream).map_err(|e| err(&e))?,
+            conn: Conn::new(stream, MAX_FRAME).map_err(|e| err(&e))?,
             turns: VecDeque::new(),
             fresh: None,
             awaiting_resync: false,
@@ -279,8 +379,8 @@ impl Client {
                         client.agent = AgentId(agent);
                         world = Some(World::from_bytes(&snapshot).map_err(|e| err(&format!("{e:?}")))?);
                     }
-                    ToClient::Turn(t) if world.is_some() => client.turns.push_back(t),
-                    ToClient::Refused(why) => return Err(NetError(why)),
+                    ToClient::Turn(t) if world.is_some() => client.queue_turn(t),
+                    ToClient::Refused(why) => return Err(NetError(why.chars().take(MAX_REMOTE_TEXT).collect())),
                     _ => {}
                 }
             }
@@ -296,7 +396,7 @@ impl Client {
     pub fn poll(&mut self) {
         for m in self.conn.recv::<ToClient>() {
             match m {
-                ToClient::Turn(t) if !self.awaiting_resync => self.turns.push_back(t),
+                ToClient::Turn(t) if !self.awaiting_resync => self.queue_turn(t),
                 ToClient::Resync { snapshot } => {
                     if let Ok(w) = World::from_bytes(&snapshot) {
                         self.turns.clear();
@@ -306,6 +406,15 @@ impl Client {
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn queue_turn(&mut self, t: Turn) {
+        if self.turns.len() >= MAX_TURN_BACKLOG {
+            self.turns.clear();
+            self.conn.dead = true;
+        } else {
+            self.turns.push_back(t);
         }
     }
 
@@ -350,19 +459,21 @@ impl Client {
 }
 
 #[cfg(test)]
+mod relay_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
     use alaz_sim::{ItemKind, NodeKind};
     use std::thread;
 
-    fn host_world() -> World {
+    pub(crate) fn host_world() -> World {
         let mut w = World::new(5);
         let (sx, sy) = w.spawn_mm;
         w.spawn_agent(sx, sy);
         w
     }
 
-    fn setup() -> (Host, World, Client, World) {
+    pub(crate) fn setup() -> (Host, World, Client, World) {
         let mut host = Host::bind("127.0.0.1:0").unwrap();
         let addr = host.local_addr().unwrap().to_string();
         let mut hw = host_world();
@@ -378,7 +489,7 @@ mod tests {
     }
 
     /// Run host turns, let the client follow, optionally with a per-tick hook.
-    fn run(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World, ticks: u32, mut hook: impl FnMut(u32, &mut Host, &mut World, &mut Client, &mut World)) {
+    pub(crate) fn run(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World, ticks: u32, mut hook: impl FnMut(u32, &mut Host, &mut World, &mut Client, &mut World)) {
         for i in 0..ticks {
             hook(i, host, hw, client, cw);
             host.poll(hw);
@@ -397,7 +508,7 @@ mod tests {
         }
     }
 
-    fn settle(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World) {
+    pub(crate) fn settle(host: &mut Host, hw: &mut World, client: &mut Client, cw: &mut World) {
         for _ in 0..2000 {
             if cw.tick == hw.tick {
                 break;
@@ -502,6 +613,262 @@ mod tests {
         settle(&mut host, &mut hw, &mut client, &mut cw);
         assert_eq!(cw.tick, hw.tick);
         assert_eq!(cw.hash(), hw.hash());
+    }
+
+    fn pump(host: &mut Host, w: &World, rounds: u32) {
+        for _ in 0..rounds {
+            host.poll(w);
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn oversize_pre_hello_data_is_dropped_quickly() {
+        let mut host = Host::bind("127.0.0.1:0").unwrap();
+        let mut s = TcpStream::connect(host.local_addr().unwrap()).unwrap();
+        // a plausible header for a 1 MB frame, then more than the 4 KiB a stranger may buffer
+        let mut junk = 1_000_000u32.to_le_bytes().to_vec();
+        junk.extend_from_slice(&[7u8; 6000]);
+        s.write_all(&junk).unwrap();
+        let w = host_world();
+        let t = Instant::now();
+        pump(&mut host, &w, 20);
+        assert!(host.waiting.is_empty(), "stranger still buffered after {:?}", t.elapsed());
+        assert_eq!(host.players(), 1);
+        s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut b = [0u8; 8];
+        assert!(matches!(s.read(&mut b), Ok(0) | Err(_)), "socket still open");
+    }
+
+    #[test]
+    fn client_frame_over_1_mib_kills_only_that_peer() {
+        let (mut host, mut hw, mut client, mut cw) = setup();
+        let addr = host.local_addr().unwrap();
+        let mut raw = TcpStream::connect(addr).unwrap();
+        let hello = postcard::to_allocvec(&ToHost::Hello { protocol: PROTOCOL }).unwrap();
+        raw.write_all(&(hello.len() as u32).to_le_bytes()).unwrap();
+        raw.write_all(&hello).unwrap();
+        for _ in 0..200 {
+            host.poll(&hw);
+            let c = host.turn(&hw, vec![]);
+            hw.step(&c);
+            if host.players() == 3 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(host.players(), 3);
+        raw.write_all(&1_048_577u32.to_le_bytes()).unwrap();
+        raw.write_all(&[1u8; 64]).unwrap();
+        run(&mut host, &mut hw, &mut client, &mut cw, 100, |_, _, _, _, _| {});
+        assert_eq!(host.players(), 2, "the oversize sender is gone");
+        assert!(client.is_connected(), "the other player is untouched");
+        settle(&mut host, &mut hw, &mut client, &mut cw);
+        assert_eq!(cw.hash(), hw.hash());
+    }
+
+    #[test]
+    fn turn_backlog_is_bounded() {
+        let (mut host, mut hw, mut client, _cw) = setup();
+        for _ in 0..MAX_TURN_BACKLOG + 200 {
+            let c = host.turn(&hw, vec![]);
+            hw.step(&c);
+        }
+        for _ in 0..200 {
+            client.poll();
+            if !client.is_connected() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!client.is_connected(), "a flooding host must not grow the queue without bound");
+        assert!(client.backlog() <= MAX_TURN_BACKLOG);
+    }
+
+    #[test]
+    fn long_remote_refusal_is_cut_to_200_chars() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap().to_string();
+        let server = thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let body = postcard::to_allocvec(&ToClient::Refused("ş".repeat(5000))).unwrap();
+            s.write_all(&(body.len() as u32).to_le_bytes()).unwrap();
+            s.write_all(&body).unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+        let e = Client::connect(&addr, Duration::from_secs(5)).err().expect("refused");
+        assert_eq!(e.0.chars().count(), 200);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn online_only_host_listens_on_loopback_and_lan_host_does_not() {
+        let online = Host::bind_online_only().unwrap();
+        let a = online.local_addr().unwrap();
+        assert!(a.ip().is_loopback() && a.port() != 0);
+        assert!(!online.lan_open());
+        let lan = Host::bind(("0.0.0.0", 0)).unwrap();
+        assert!(lan.lan_open());
+    }
+
+    fn keepalive_on(s: &TcpStream) -> bool {
+        let r = socket2::SockRef::from(s);
+        #[cfg(target_os = "linux")]
+        assert_eq!(r.keepalive_time().unwrap(), Duration::from_secs(30));
+        r.keepalive().unwrap()
+    }
+
+    #[test]
+    fn lan_client_socket_has_tcp_keepalive() {
+        let (_host, _hw, client, _cw) = setup();
+        assert!(keepalive_on(client.conn.stream.tcp()), "keepalive not set on the LAN client socket");
+    }
+
+    #[test]
+    fn forged_agent_ids_are_dropped_by_the_host() {
+        let (mut host, hw, mut client, _cw) = setup();
+        let me = client.agent;
+        client.send(vec![
+            Command { agent: AgentId(u32::MAX), kind: CommandKind::MoveTo { x: 0, y: 0 } },
+            Command { agent: AgentId(hw.agents.len() as u32 + 5), kind: CommandKind::Strike },
+            Command { agent: me, kind: CommandKind::Strike },
+        ]);
+        for _ in 0..100 {
+            host.poll(&hw);
+            if !host.queued.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(host.queued.len(), 1, "only the command naming a real agent survives: {:?}", host.queued);
+        assert_eq!(host.queued[0].agent, me);
+    }
+
+    /// Every command shape a peer could send, with extreme fields. A panic in release aborts the game.
+    fn hostile_commands() -> Vec<CommandKind> {
+        use alaz_sim::{BuildingKind, Goal, Milestone, RouteStep};
+        let items = [ItemKind::ALL[0], ItemKind::ALL[ItemKind::ALL.len() - 1]];
+        let b = [BuildingKind::ALL[0], BuildingKind::ALL[BuildingKind::ALL.len() - 1]];
+        let mut v = vec![
+            CommandKind::MoveTo { x: 1_000_000_000, y: -1_000_000_000 },
+            CommandKind::Walk { x: -1_000_000_000, y: 1_000_000_000 },
+            CommandKind::Gather { node: alaz_sim::NodeId(u32::MAX) },
+            CommandKind::Hunt { wild: u32::MAX },
+            CommandKind::Drink { tx: i32::MIN, ty: i32::MAX },
+            CommandKind::Drink { tx: -1, ty: -1 },
+            CommandKind::Craft { recipe: alaz_sim::RecipeId(u16::MAX) },
+            CommandKind::Combine { items: [255; 4] },
+            CommandKind::Combine { items: [0; 4] },
+            CommandKind::Strike,
+            CommandKind::StrikeAt { angle: u16::MAX, power: u8::MAX },
+            CommandKind::StrikeLoose { angle: u16::MAX, power: u8::MAX },
+            CommandKind::Rub { pace: u8::MAX, grip: true },
+            CommandKind::PlaceAt { x: i16::MIN, y: i16::MAX },
+            CommandKind::Tighten { power: u8::MAX },
+            CommandKind::SetClock { minute: u16::MAX },
+            CommandKind::SkipToWeather { sky: u8::MAX },
+            CommandKind::SkipSeason,
+            CommandKind::Tame { wild: u32::MAX },
+            CommandKind::Feed { target: AgentId(u32::MAX) },
+            CommandKind::SetRoute { worker: AgentId(u32::MAX), route: vec![] },
+            CommandKind::SetRoute {
+                worker: AgentId(0),
+                route: (0..2000)
+                    .map(|i| match i % 3 {
+                        0 => RouteStep::Harvest { kind: NodeKind::Tree, x: i64::MAX, y: i64::MIN, radius_mm: i64::MAX },
+                        1 => RouteStep::Wait { ticks: u32::MAX },
+                        _ => RouteStep::Collect { building: u32::MAX, item: None },
+                    })
+                    .collect(),
+            },
+            CommandKind::EnterCave { node: alaz_sim::NodeId(u32::MAX) },
+            CommandKind::CaveDig { tx: i32::MAX, ty: i32::MIN },
+            CommandKind::CaveLeave,
+            CommandKind::SetSprint { on: true },
+            CommandKind::Refuel { building: u32::MAX },
+            CommandKind::Jump,
+            CommandKind::Split { body: u32::MAX },
+            CommandKind::Pick { body: u32::MAX },
+            CommandKind::Prospect,
+            CommandKind::Fish { tx: i32::MIN, ty: i32::MIN },
+            CommandKind::Relocate { building: u32::MAX, x: i64::MAX, y: i64::MIN },
+            CommandKind::Turn { building: u32::MAX },
+            CommandKind::Camp,
+            CommandKind::SetGoal { goal: None },
+            CommandKind::SetGoal { goal: Some(Goal::Reach(Milestone::ALL[Milestone::ALL.len() - 1])) },
+            CommandKind::Design { inputs: vec![], output: (items[0], 0) },
+            CommandKind::Design { inputs: vec![(items[1], u16::MAX); 500], output: (items[1], u16::MAX) },
+        ];
+        for it in items {
+            v.extend([
+                CommandKind::Eat { item: it },
+                CommandKind::Give { item: it, n: u16::MAX },
+                CommandKind::Hitch { worker: AgentId(u32::MAX), item: it },
+                CommandKind::Repair { item: it },
+                CommandKind::Drop { item: it, n: u16::MAX },
+                CommandKind::Load { building: u32::MAX, item: it, n: u16::MAX },
+                CommandKind::Collect { building: u32::MAX, item: Some(it) },
+            ]);
+        }
+        for k in b {
+            v.extend([
+                CommandKind::Build { kind: k, x: i64::MAX, y: i64::MIN },
+                CommandKind::Build { kind: k, x: 0, y: 0 },
+            ]);
+        }
+        for id in [0u32, 1, u32::MAX] {
+            v.extend([
+                CommandKind::StartJob { building: id, recipe: alaz_sim::RecipeId(u16::MAX) },
+                CommandKind::Deposit { building: id },
+                CommandKind::Collect { building: id, item: None },
+                CommandKind::SetAuto { building: id, recipe: Some(alaz_sim::RecipeId(u16::MAX)) },
+                CommandKind::SetAuto { building: id, recipe: None },
+            ]);
+        }
+        v
+    }
+
+    /// Known: the sim overflows in nav.rs (115, 273, 274) on i64-extreme MoveTo/Walk targets from a real agent.
+    fn extreme_moves() -> Vec<CommandKind> {
+        vec![
+            CommandKind::MoveTo { x: i64::MAX, y: i64::MIN },
+            CommandKind::MoveTo { x: i64::MIN, y: i64::MAX },
+            CommandKind::Walk { x: i64::MAX, y: i64::MAX },
+            CommandKind::Walk { x: i64::MIN, y: i64::MIN },
+        ]
+    }
+
+    #[test]
+    #[ignore = "sim overflows on i64-extreme MoveTo/Walk (crates/sim/src/nav.rs); another session owns crates/sim"]
+    fn extreme_move_targets_do_not_panic_the_sim() {
+        assert_no_panics(extreme_moves());
+    }
+
+    #[test]
+    fn hostile_commands_do_not_panic_the_sim() {
+        assert_no_panics(hostile_commands());
+    }
+
+    fn assert_no_panics(kinds: Vec<CommandKind>) {
+        let base = host_world().to_bytes();
+        let mut panicked = Vec::new();
+        for agent in [0u32, 1, 7, u32::MAX] {
+            for kind in &kinds {
+                let cmd = Command { agent: AgentId(agent), kind: kind.clone() };
+                let mut w = World::from_bytes(&base).unwrap();
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    w.step(std::slice::from_ref(&cmd));
+                    for _ in 0..3 {
+                        w.step(&[]);
+                    }
+                }));
+                if r.is_err() {
+                    let s = format!("{cmd:?}");
+                    panicked.push(s.chars().take(160).collect::<String>());
+                }
+            }
+        }
+        assert!(panicked.is_empty(), "{} commands panic the sim:\n{}", panicked.len(), panicked.join("\n"));
     }
 
     #[test]

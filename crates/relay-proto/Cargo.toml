@@ -1,0 +1,9 @@
+[package]
+name = "alaz-relay-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+getrandom = "0.3"
+postcard = { version = "1.1.3", features = ["alloc"] }
+serde = { version = "1.0.229", features = ["derive"] }

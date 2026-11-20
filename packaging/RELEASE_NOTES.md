@@ -29,6 +29,17 @@ cd ALAZ-*-linux-x86_64
 
 Ayrıntılar için README'ye bak.
 
+## 0.6.0'da yeni
+
+**Kodla internetten katılma:** Port açmadan, internet üzerinden çok oyunculu oyun.
+- Çok oyunculu ekranında **Ağa aç** ile bir kod al (ör. `K7Q4-XM2P`). Arkadaşın **Kodla katıl** ile yazsın.
+- **Yeni kod:** yeni kod alır; eski kod hemen geçersiz olur.
+- **Ağı kapat:** kod geçersiz olur; ağda olan oyuncular oyunda kalır.
+- Bir odada en çok 8 oyuncu.
+- **Dikkat:** Kodu yalnız güvendiğin arkadaşlarınla paylaş. Kodu bilen herkes katılıp takımda oynayabilir.
+- **Sürüm:** Herkes aynı oyun sürümünü kullanmalı. Oyun protokolü 2 olarak kaldı; aracı protokolü (1) yeni. Farklı sürümler yine de senkron dışına düşebilir.
+- **LAN:** "Sunucu kur", "Ağdaki oyunlar" ve `--host`/`--join` eskisi gibi çalışır.
+
 ## 0.5.0'da yeni
 
 **Envanter penceresi:** Çanta, yapım, inşa ve makine artık tek pencerede. I, C, B ile ya da bir makineye tıklayarak açılır.
