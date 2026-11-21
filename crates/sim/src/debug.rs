@@ -497,7 +497,7 @@ impl Script {
                 w.tick += skip;
                 self.note(w, format!("  (debug) clock moved on {skip} ticks"));
             }
-            "tp" => match if arg(1) == "mouth" { mouth_spot(w, arg(2).parse().unwrap_or(0)) } else { teleport_spot(w, arg(1)) } {
+            "tp" => match if arg(1) == "mouth" { mouth_spot(w, arg(2).parse().unwrap_or(0), arg(3).parse().unwrap_or(4)) } else { teleport_spot(w, arg(1)) } {
                 Some((x, y)) => {
                     if let Some(ag) = w.agents.iter_mut().find(|x| x.id == me) {
                         ag.x = x;
@@ -549,12 +549,12 @@ pub fn free_spot(w: &World, a: &crate::world::Agent, kind: BuildingKind) -> Opti
 }
 
 /// A spot of a kind of ground, searched outward from the spawn.
-/// In front of the `n`th natural cave mouth (in node order): four tiles out from its threshold, away from the tunnel
-/// (nearer if that is water), to look at an entrance from outside.
-fn mouth_spot(w: &World, n: usize) -> Option<(i64, i64)> {
+/// In front of the `n`th natural cave mouth (in node order): `far` tiles (default 4) out from its threshold, away from the
+/// tunnel (nearer if that is water), to look at an entrance from outside: `tp mouth 1 2`.
+fn mouth_spot(w: &World, n: usize, far: i32) -> Option<(i64, i64)> {
     let mouth = (0..w.nodes.len() as u32).filter_map(|i| w.natural_mouth(i)).nth(n)?;
     let (tx, ty) = (mouth.threshold.x, mouth.threshold.y);
-    (1..=4).rev().find_map(|d| {
+    (1..=far.max(1)).rev().find_map(|d| {
         let (x, y) = (tx - mouth.direction.0 * d, ty - mouth.direction.1 * d);
         w.map.terrain(x, y).filter(|t| *t != Terrain::Water).map(|_| (x as i64 * TILE_MM + TILE_MM / 2, y as i64 * TILE_MM + TILE_MM / 2))
     })
