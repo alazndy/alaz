@@ -184,13 +184,40 @@ fn push_portals(out: &mut Mesh, world: &World, section: &CaveSection, edges: &Po
                 tile.y as f32 + 0.5 + direction.1 as f32 * (0.5 + proud - 0.28) + along.1 as f32 * side as f32 * (0.5 + 0.10 * jitter(16)),
             ];
             let shade = 0.88 + 0.22 * jitter(24);
-            let radii = [0.30 + 0.06 * jitter(4), (top - base) * 0.5, 0.30 + 0.06 * jitter(12)];
+            let radii = [0.36 + 0.07 * jitter(4), (top - base) * 0.5, 0.36 + 0.07 * jitter(12)];
             let radii = if direction.0 != 0 { radii } else { [radii[2], radii[1], radii[0]] };
             out.set_anchor(centre[0], centre[2]);
             let start = out.len();
             rock(out, centre, radii, PORTAL_ROCK.map(|c| c * shade), seed);
             mark_cave_geometry(&mut out.verts[start..], 1.0);
         }
+    }
+    // A mouth whose landing has no roof to hang a lintel on gets a free-standing arch across its threshold.
+    let hung: BTreeSet<(i32, i32)> = edges.iter().map(|(tile, _)| (tile.x, tile.y)).collect();
+    for i in 0..world.nodes.len() as u32 {
+        let Some(mouth) = world.natural_mouth(i) else { continue };
+        let (lx, ly) = mouth.landing.xy();
+        let threshold = mouth.threshold;
+        if hung.contains(&(lx as i32, ly as i32)) || !section.keys().any(|t| t.x == threshold.x && t.y == threshold.y) {
+            continue;
+        }
+        let (dx, dz) = mouth.direction;
+        let along = (-dz, dx);
+        let seed = alaz_sim::rng::hash2(world.seed ^ 0x4152, threshold.x, threshold.y) as u32;
+        let plane = [threshold.x as f32 + 0.5 + dx as f32 * 0.5, threshold.y as f32 + 0.5 + dz as f32 * 0.5];
+        let floor = f32::from(threshold.z);
+        // Whatever the hill is like here, the arch rises half a metre above it.
+        let top = (floor + 2.3).max(ground_height(world.seed, plane[0], plane[1]) + 0.5);
+        out.set_anchor(plane[0], plane[1]);
+        let start = out.len();
+        let swap = |r: [f32; 3]| if dx != 0 { r } else { [r[2], r[1], r[0]] };
+        for (k, side) in [1.0f32, -1.0].into_iter().enumerate() {
+            let shade = 0.9 + 0.2 * ((seed >> (8 * k)) & 255) as f32 / 255.0;
+            let centre = [plane[0] + along.0 as f32 * side * 0.68, (floor + top) * 0.5 - 0.1, plane[1] + along.1 as f32 * side * 0.68];
+            rock(out, centre, swap([0.36, (top - floor) * 0.5 + 0.1, 0.36]), PORTAL_ROCK.map(|c| c * shade), seed.rotate_left(k as u32 * 7));
+        }
+        rock(out, [plane[0], top - 0.1, plane[1]], swap([0.40, 0.28, 1.05]), PORTAL_ROCK, seed.rotate_left(19));
+        mark_cave_geometry(&mut out.verts[start..], 1.0);
     }
 }
 
@@ -447,6 +474,24 @@ mod tests {
             assert_eq!(v.uv[0], -3.0);
             assert!(v.color[2] > 0.25 && v.color[0] - v.color[2] < 0.05);
         }
+    }
+
+    #[test]
+    fn a_mouth_with_an_open_landing_gets_a_free_standing_arch() {
+        let world = World::with_size(alaz_sim::map::tag_seed_new_world(4, 128), 128, 128);
+        let mouth = (0..world.nodes.len() as u32).filter_map(|i| world.natural_mouth(i)).find(|m| m.threshold.x == 85 && m.threshold.y == 74).unwrap();
+        let t = mouth.threshold;
+        let section = collect_cave_entrances(&world, (t.x - 6, t.y - 6, t.x + 7, t.y + 7));
+        assert!(portal_edges(&world, &section).is_empty());
+        let light = cave_daylight(&world, &section);
+        let bare = build_scene(&world, &section, &light, &BTreeSet::new(), false);
+        let full = build_scene(&world, &section, &light, &BTreeSet::new(), true);
+        assert!(full.len() > bare.len());
+        // the arch stands on the threshold floor and reaches over the opening
+        let (low, high) = full[bare.len()..].iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v.pos[1]), h.max(v.pos[1])));
+        assert!(low < f32::from(t.z) + 0.5 && high > f32::from(t.z) + 2.0, "arch spans {low}..{high}");
+        let ground = ground_height(world.seed, t.x as f32 + 0.5 + mouth.direction.0 as f32 * 0.5, t.y as f32 + 0.5 + mouth.direction.1 as f32 * 0.5);
+        assert!(high > ground + 0.3, "arch top {high} is hidden by the hill at {ground}");
     }
 
     #[test]
