@@ -23,6 +23,7 @@ pub(super) struct NaturalCaveView {
     entrances: Arc<CaveSection>,
     floors: Arc<CaveSection>,
     daylight: Arc<BTreeMap<CaveTile, f32>>,
+    carve: Arc<EntranceCarve>,
     flooded: BTreeSet<CaveTile>,
     water_tick: u64,
     mesh: Option<(wgpu::Buffer, u32)>,
@@ -105,6 +106,7 @@ impl Renderer {
         };
         let same_floors = previous.filter(|v| v.key.seed == key.seed && Arc::ptr_eq(&v.floors, &floors));
         let daylight = same_floors.map_or_else(|| Arc::new(cave_daylight(world, &floors)), |v| Arc::clone(&v.daylight));
+        let carve = same_floors.map_or_else(|| Arc::new(entrance_carve(world, &floors)), |v| Arc::clone(&v.carve));
         let flooded = floors.keys().copied().filter(|&tile| world.natural_cave_flooded(tile)).collect();
         let mesh = if let Some(v) = same_floors.filter(|v| v.key.revision == key.revision && v.flooded == flooded) {
             v.mesh.clone()
@@ -114,7 +116,7 @@ impl Renderer {
             let vertices = build_cave_scene(world, &floors, &daylight, &flooded);
             Some((self.vertex_buffer(&vertices), vertices.len() as u32))
         };
-        self.natural_cave_view = Some(NaturalCaveView { key, entrances, floors, daylight, flooded, water_tick, mesh });
+        self.natural_cave_view = Some(NaturalCaveView { key, entrances, floors, daylight, carve, flooded, water_tick, mesh });
     }
 }
 
@@ -255,6 +257,46 @@ impl Renderer {
         self.surf_key = Some(key);
     }
 
+    /// Hollow the ground at the cave mouths: patch the changed tile corners into the height texture, and drop the
+    /// chunks whose ground was built or baked from the old heights.
+    fn apply_cave_carve(&mut self, world: &World, hx: i32, hy: i32) {
+        let desired = self.natural_cave_view.as_ref().map_or_else(Default::default, |v| Arc::clone(&v.carve));
+        let win = HWIN as i32;
+        if Arc::ptr_eq(&desired, &self.carve_applied) || (desired.is_empty() && self.carve_applied.is_empty()) || self.height_cpu.len() != (win * win * 4) as usize {
+            return;
+        }
+        let old = std::mem::replace(&mut self.carve_applied, Arc::clone(&desired));
+        let corners: BTreeSet<(i32, i32)> = old.keys().chain(desired.keys()).copied().collect();
+        let mut stale = BTreeSet::new();
+        for (tx, ty) in corners {
+            let (x, y) = (tx - hx, ty - hy);
+            if x < 0 || y < 0 || x >= win || y >= win {
+                continue;
+            }
+            let want = desired.get(&(tx, ty)).copied().unwrap_or_else(|| alaz_sim::elevation_mm(world.seed, tx, ty) as f32 / 1000.0);
+            let i = ((y * win + x) * 4) as usize;
+            if self.height_cpu[i] == want {
+                continue;
+            }
+            self.height_cpu[i] = want;
+            let mut target = self.height_tex.as_image_copy();
+            target.origin = wgpu::Origin3d { x: x as u32, y: y as u32, z: 0 };
+            self.queue.write_texture(
+                target,
+                bytemuck::cast_slice(&self.height_cpu[i..i + 4]),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16), rows_per_image: Some(1) },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            // a corner is part of the four tiles round it
+            for (ax, ay) in [(tx - 1, ty - 1), (tx, ty - 1), (tx - 1, ty), (tx, ty)] {
+                stale.insert((ax.div_euclid(CHUNK_TILES), ay.div_euclid(CHUNK_TILES)));
+            }
+        }
+        for key in stale {
+            self.chunks.remove(&key);
+        }
+    }
+
     pub fn render(
         &mut self,
         world: &World,
@@ -364,12 +406,15 @@ impl Renderer {
                 wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
             );
             self.tile_cpu = tiles;
+            self.height_cpu = data;
+            self.carve_applied = Arc::new(BTreeMap::new());
             self.height_at = Some((world.seed, hx, hy));
             // (the window was written bare: the surface layer goes on again)
             self.surf_wkey = None;
             self.surf_key = None;
             self.surf_on = false;
         }
+        self.apply_cave_carve(world, hx, hy);
         self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
         let mut g = [0f32; 164];
         g[..16].copy_from_slice(&snap_cam.view_proj(1.0).to_cols_array());

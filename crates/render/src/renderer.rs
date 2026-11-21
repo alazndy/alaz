@@ -211,6 +211,9 @@ pub struct Renderer {
     pub(crate) surf_on: bool,
     /// (seed, tile corner of the window's first texel) of what the height texture holds now
     pub(crate) height_at: Option<(u64, i32, i32)>,
+    /// The height window as the CPU wrote it, and the cave-mouth hollows patched into it (tile corner -> metres).
+    pub(crate) height_cpu: Vec<f32>,
+    pub(crate) carve_applied: Arc<std::collections::BTreeMap<(i32, i32), f32>>,
     pub(crate) weather_kind: f32,
     pub(crate) weather_amount: f32,
     pub(crate) wind: f32,
@@ -604,6 +607,8 @@ impl Renderer {
             surf_key: None,
             surf_on: false,
             height_at: None,
+            height_cpu: Vec::new(),
+            carve_applied: Arc::new(std::collections::BTreeMap::new()),
             weather_kind: 1.0,
             weather_amount: 0.0,
             wind: 0.0,

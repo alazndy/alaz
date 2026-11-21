@@ -62,6 +62,58 @@ pub(crate) fn collect_cave_entrances(world: &World, bounds: (i32, i32, i32, i32)
 
 pub(crate) type CaveSection = BTreeMap<CaveTile, Option<i16>>;
 
+/// Metres of ground carved away at a tile corner, by corner (x, y): where the gallery is open to the sky its floor is the
+/// ground itself, so the hillside leads down into the mouth and the roofed part of the gallery shows as a dark opening.
+pub(crate) type EntranceCarve = BTreeMap<(i32, i32), f32>;
+
+pub(crate) fn entrance_carve(world: &World, section: &CaveSection) -> EntranceCarve {
+    let mut carve = EntranceCarve::new();
+    for (&tile, ceiling) in section {
+        if ceiling.is_some() {
+            continue;
+        }
+        let floor = f32::from(tile.z);
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let corner = (tile.x + dx, tile.y + dy);
+            let base = alaz_sim::elevation_mm(world.seed, corner.0, corner.1) as f32 / 1000.0;
+            if floor < base {
+                carve.entry(corner).and_modify(|h| *h = h.min(floor)).or_insert(floor);
+            }
+        }
+    }
+    // A corner shared with a roofed tile stays above that roof and its slab, or the rock would poke out of the hillside.
+    for (&tile, ceiling) in section {
+        let Some(roof) = ceiling else { continue };
+        let lowest = f32::from(*roof) + LINTEL;
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let corner = (tile.x + dx, tile.y + dy);
+            if let Some(h) = carve.get_mut(&corner) {
+                *h = h.max(lowest);
+                if *h >= alaz_sim::elevation_mm(world.seed, corner.0, corner.1) as f32 / 1000.0 {
+                    carve.remove(&corner);
+                }
+            }
+        }
+    }
+    carve
+}
+
+/// The ground height with the entrance hollows in it: the same bilinear blend of tile corners the terrain is drawn with.
+pub(crate) fn carved_height(world: &World, carve: &EntranceCarve, x: f32, z: f32) -> f32 {
+    let (fx, fz) = (x.floor(), z.floor());
+    let (tx, tz) = (x - fx, z - fz);
+    let h = |dx: i32, dz: i32| {
+        let corner = (fx as i32 + dx, fz as i32 + dz);
+        carve.get(&corner).copied().unwrap_or_else(|| alaz_sim::elevation_mm(world.seed, corner.0, corner.1) as f32 / 1000.0)
+    };
+    let a = h(0, 0) + (h(1, 0) - h(0, 0)) * tx;
+    let b = h(0, 1) + (h(1, 1) - h(0, 1)) * tx;
+    a + (b - a) * tz
+}
+
+/// How thick the rock slab over a gallery mouth is drawn, so the roof has an edge to show above the opening.
+const LINTEL: f32 = 0.45;
+
 fn gallery_neighbor(section: &CaveSection, tile: CaveTile, ceiling: Option<i16>, (dx, dy): (i32, i32)) -> Option<(CaveTile, Option<i16>)> {
     [0, -1, 1].into_iter().find_map(|dz| {
         let next = CaveTile { x: tile.x + dx, y: tile.y + dy, z: tile.z + dz };
@@ -82,7 +134,7 @@ fn cave_face(out: &mut Mesh, points: [[f32; 3]; 3], color: [f32; 3], light: f32)
     out.extend_from_slice(&vertices);
 }
 
-fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, site: GalleryTile) {
+fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve: &EntranceCarve, site: GalleryTile) {
     const EDGES: [((i32, i32), [f32; 2], [f32; 2]); 4] = [
         ((0, -1), [0.0, 0.0], [1.0, 0.0]),
         ((1, 0), [1.0, 0.0], [1.0, 1.0]),
@@ -90,6 +142,10 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, site:
         ((-1, 0), [0.0, 1.0], [0.0, 0.0]),
     ];
     let GalleryTile { tile, ceiling, light, flooded } = site;
+    // Open to the sky: the carved ground is the floor, there is nothing to build.
+    if ceiling.is_none() {
+        return;
+    }
     let x = tile.x as f32;
     let z = tile.y as f32;
     let floor = f32::from(tile.z);
@@ -102,7 +158,7 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, site:
     let stone = [0.26, 0.23, 0.21];
     out.set_anchor(x + 0.5, z + 0.5);
     let pos = |[u, v]: [f32; 2], height: f32| [x + u, height, z + v];
-    let surface = |[u, v]: [f32; 2]| ground_height(world.seed, x + u, z + v);
+    let surface = |[u, v]: [f32; 2]| carved_height(world, carve, x + u, z + v);
     let center = pos([0.5, 0.5], floor);
     let mut edges = Vec::with_capacity(4);
 
@@ -128,12 +184,17 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, site:
             continue;
         }
         if let Some((next, _)) = neighbor {
-            // A roof ending at the lip exposes its thickness above the opening.
-            let next_open = world.map.cave_openings_at(next.x, next.y).any(|m| m.threshold == next);
-            if roof.is_some() && next_open {
-                let [u, v] = [pos(a, surface(a).max(cap[0][1])), pos(b, surface(b).max(cap[1][1]))];
+            // A roof ending at the open ground is a slab of rock above the opening: an edge and a top.
+            let next_sky = matches!(section.get(&next), Some(None));
+            // ...but only where a tunnel really goes on behind the lip. The sides of a crack in the ground are not mouths.
+            let tunnel_behind = [0i16, -1, 1].into_iter().any(|dz| {
+                matches!(section.get(&CaveTile { x: tile.x - direction.0, y: tile.y - direction.1, z: tile.z + dz }), Some(Some(_)))
+            });
+            if roof.is_some() && next_sky && tunnel_behind {
+                let [u, v] = [pos(a, cap[0][1] + LINTEL), pos(b, cap[1][1] + LINTEL)];
                 cave_face(out, [cap[1], cap[0], u], wall, light);
                 cave_face(out, [cap[1], u, v], wall, light);
+                cave_face(out, [pos([0.5, 0.5], roof.unwrap_or(floor) + LINTEL), u, v], wall, light);
             }
             continue;
         }
@@ -207,13 +268,13 @@ pub(crate) fn cave_daylight(world: &World, section: &CaveSection) -> BTreeMap<Ca
     }
     while let Some((tile, steps)) = open.pop_front() {
         let next_steps = steps + 1;
-        if next_steps >= 7 {
+        if next_steps >= 4 {
             continue;
         }
         for direction in [(0, 1), (1, 0), (0, -1), (-1, 0)] {
             if let Some((next, _)) = gallery_neighbor(section, tile, section[&tile], direction)
                 && let std::collections::btree_map::Entry::Vacant(entry) = light.entry(next) {
-                let intensity = 1.0 - next_steps as f32 / 7.0;
+                let intensity = 1.0 - next_steps as f32 / 4.0;
                 entry.insert(intensity * intensity);
                 open.push_back((next, next_steps));
             }
@@ -231,9 +292,10 @@ fn mark_cave_geometry(vertices: &mut [Vertex], light: f32) {
 
 pub(crate) fn build_cave_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, f32>, flooded: &BTreeSet<CaveTile>) -> Vec<Vertex> {
     let mut out = Mesh::new();
+    let carve = entrance_carve(world, section);
     for (&tile, &ceiling) in section {
         let light = light.get(&tile).copied().unwrap_or(0.0);
-        push_gallery_tile(&mut out, world, section, GalleryTile { tile, ceiling, light, flooded: flooded.contains(&tile) });
+        push_gallery_tile(&mut out, world, section, &carve, GalleryTile { tile, ceiling, light, flooded: flooded.contains(&tile) });
         if world.natural_cave_rubble_at(tile) {
             let start = out.len();
             let (x, z) = (tile.x as f32, tile.y as f32);
@@ -281,29 +343,17 @@ mod tests {
             let section = collect_cave_entrances(&world, (tile.x - 2, tile.y - 2, tile.x + 3, tile.y + 3));
             let light = cave_daylight(&world, &section);
             let mesh = build_cave_scene(&world, &section, &light, &BTreeSet::new());
-            let x = tile.x as f32 + 0.5;
-            let z = tile.y as f32 + 0.5;
-            let (dx, dz) = (mouth.direction.0 as f32, mouth.direction.1 as f32);
-            let at = |v: &Vertex| (v.pos[0] - x) * dx + (v.pos[2] - z) * dz;
-
-            assert!(mesh.iter().any(|v| v.pos == [x, f32::from(tile.z), z]));
-            let (lx, ly) = mouth.landing.xy();
-            assert!(mesh.iter().any(|v| v.pos == [lx as f32 + 0.5, f32::from(mouth.landing.z), ly as f32 + 0.5]));
-            for side in [-0.5, 0.5] {
-                let front_x = x - dx * 0.5 + side * dz;
-                let front_z = z - dz * 0.5 - side * dx;
-                let surface = ground_height(world.seed, front_x, front_z);
-                assert!(mesh.iter().any(|v| v.pos == [front_x, surface, front_z]));
-            }
-
-            // A full-height face across the shared edge would hide the landing from the approach.
-            let seam_floor = f32::from(tile.z + mouth.landing.z) * 0.5;
-            for face in mesh.chunks_exact(3).filter(|face| face.iter().all(|v| {
-                at(v) == 0.5 && ((v.pos[0] - x) * dz - (v.pos[2] - z) * dx).abs() <= 0.5
-            })) {
-                let low = face.iter().map(|v| v.pos[1]).fold(f32::INFINITY, f32::min);
-                let high = face.iter().map(|v| v.pos[1]).fold(f32::NEG_INFINITY, f32::max);
-                assert!(low >= seam_floor + 1.0 || high <= seam_floor + 0.1);
+            // Open ground is not built: the hillside itself is lowered to the mouth's floor...
+            let carve = entrance_carve(&world, &section);
+            assert!(!carve.is_empty());
+            let base = alaz_sim::elevation_mm(world.seed, tile.x, tile.y) as f32 / 1000.0;
+            let carved = carved_height(&world, &carve, tile.x as f32, tile.y as f32);
+            assert!(carved <= base);
+            // ...and no rock of the gallery stands above that ground by more than the lintel slab.
+            assert!(!mesh.is_empty());
+            for v in &mesh {
+                let ground = carved_height(&world, &carve, v.pos[0], v.pos[2]);
+                assert!(v.pos[1] <= ground + LINTEL + 0.05, "vertex {:?} stands {} above the ground", v.pos, v.pos[1] - ground);
             }
         }
     }

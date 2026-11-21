@@ -70,9 +70,6 @@ pub(crate) fn tile_spr(art: &Art, t: Terrain, h: u32) -> Spr {
 pub(crate) fn build_terrain(out: &mut Mesh, art: &Art, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
     for ty in y0..y1 {
         for tx in x0..x1 {
-            if world.map.surface_cave_gap(tx, ty) {
-                continue;
-            }
             let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
             let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
             let s = tile_spr(art, t, h);
