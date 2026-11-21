@@ -81,12 +81,23 @@ pub(crate) fn entrance_carve(world: &World, section: &CaveSection) -> EntranceCa
             }
         }
     }
-    // A corner shared with a roofed tile stays above that roof and its slab, or the rock would poke out of the hillside.
+    // The corners along a portal's lip are left carved: the hillside is cut away there and shows a rock face over the opening.
+    let lip: BTreeSet<(i32, i32)> = portal_edges(world, section)
+        .into_iter()
+        .flat_map(|(tile, (dx, dy))| {
+            let (x, y) = (tile.x + i32::from(dx > 0), tile.y + i32::from(dy > 0));
+            if dx != 0 { [(x, tile.y), (x, tile.y + 1)] } else { [(tile.x, y), (tile.x + 1, y)] }
+        })
+        .collect();
+    // Any other corner shared with a roofed tile stays above that roof and its slab, or the rock would poke out of the hillside.
     for (&tile, ceiling) in section {
         let Some(roof) = ceiling else { continue };
         let lowest = f32::from(*roof) + LINTEL;
         for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
             let corner = (tile.x + dx, tile.y + dy);
+            if lip.contains(&corner) {
+                continue;
+            }
             if let Some(h) = carve.get_mut(&corner) {
                 *h = h.max(lowest);
                 if *h >= alaz_sim::elevation_mm(world.seed, corner.0, corner.1) as f32 / 1000.0 {
@@ -247,11 +258,12 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve
             let next_sky = matches!(section.get(&next), Some(None));
             // ...but only where a tunnel really goes on behind the lip.
             if roof.is_some() && next_sky && tunnel_behind(world, tile, direction) {
-                let [u, v] = [pos(a, cap[0][1] + LINTEL), pos(b, cap[1][1] + LINTEL)];
+                // The rock face over the opening reaches up to the hillside it is cut from.
+                let hill = |p: [f32; 2]| ground_height(world.seed, x + p[0], z + p[1]);
+                let [u, v] = [pos(a, hill(a).max(cap[0][1] + LINTEL)), pos(b, hill(b).max(cap[1][1] + LINTEL))];
                 // (outer rock, lit by the open sky whatever the dark inside)
                 cave_face(out, [cap[1], cap[0], u], PORTAL_ROCK, 1.0);
                 cave_face(out, [cap[1], u, v], PORTAL_ROCK, 1.0);
-                cave_face(out, [pos([0.5, 0.5], roof.unwrap_or(floor) + LINTEL), u, v], PORTAL_ROCK, 1.0);
             }
             continue;
         }
@@ -371,7 +383,12 @@ fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, 
         }
     }
     // Nothing of the gallery shows above the hillside: a face that would poke out is pressed down just under the ground.
+    // (The rock of a portal is the one thing that stands proud: its lintel is the hillside's edge over the opening.)
+    let portal_tiles: BTreeSet<(i32, i32)> = portal_edges(world, section).into_iter().map(|(tile, _)| (tile.x, tile.y)).collect();
     for v in &mut out.verts {
+        if portal_tiles.contains(&(v.pos[0].floor() as i32, v.pos[2].floor() as i32)) {
+            continue;
+        }
         let ground = carved_height(world, &carve, v.pos[0], v.pos[2]);
         v.pos[1] = v.pos[1].min(ground - 0.03);
     }
