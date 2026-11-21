@@ -127,24 +127,35 @@ const SIDES: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 
 /// This roofed tile is the landing of a cave mouth whose threshold lies in `direction`: a tunnel runs on behind it. (The
 /// sides of a crack in the ground are not mouths and get no portal.)
-fn tunnel_behind(world: &World, tile: CaveTile, direction: (i32, i32)) -> bool {
-    let (nx, ny) = (tile.x + direction.0, tile.y + direction.1);
-    world.map.cave_openings_at(nx, ny).any(|m| m.threshold.x == nx && m.threshold.y == ny && {
-        let (lx, ly) = m.landing.xy();
-        (lx as i32, ly as i32) == (tile.x, tile.y)
-    })
+fn tunnel_behind(mouths: &BTreeSet<((i32, i32), (i32, i32))>, tile: CaveTile, direction: (i32, i32)) -> bool {
+    mouths.contains(&((tile.x + direction.0, tile.y + direction.1), (tile.x, tile.y)))
 }
 
+/// The cave mouths the world defines (one per mouth node), as (threshold tile, landing tile). A crack in the ground
+/// has many openings to the surface, but only these are entrances.
+fn real_mouths(world: &World) -> BTreeSet<((i32, i32), (i32, i32))> {
+    (0..world.nodes.len() as u32)
+        .filter_map(|i| world.natural_mouth(i))
+        .map(|m| {
+            let (lx, ly) = m.landing.xy();
+            ((m.threshold.x, m.threshold.y), (lx as i32, ly as i32))
+        })
+        .collect()
+}
+
+type PortalEdges = BTreeSet<(CaveTile, (i32, i32))>;
+
 /// The roofed tiles whose edge faces open ground with a tunnel behind: (tile, direction, roof height).
-fn portal_edges(world: &World, section: &CaveSection) -> BTreeSet<(CaveTile, (i32, i32))> {
+fn portal_edges(world: &World, section: &CaveSection) -> PortalEdges {
     let mut edges = BTreeSet::new();
+    let mouths = real_mouths(world);
     for (&tile, &ceiling) in section {
         if ceiling.is_none() {
             continue;
         }
         for direction in SIDES {
             let next = gallery_neighbor(section, tile, ceiling, direction).map(|(n, _)| n);
-            if next.is_some_and(|n| matches!(section.get(&n), Some(None))) && tunnel_behind(world, tile, direction) {
+            if next.is_some_and(|n| matches!(section.get(&n), Some(None))) && tunnel_behind(&mouths, tile, direction) {
                 edges.insert((tile, direction));
             }
         }
@@ -153,9 +164,8 @@ fn portal_edges(world: &World, section: &CaveSection) -> BTreeSet<(CaveTile, (i3
 }
 
 /// The two rock jambs standing at the ends of every run of portal edges.
-fn push_portals(out: &mut Mesh, world: &World, section: &CaveSection) {
-    let edges = portal_edges(world, section);
-    for &(tile, direction) in &edges {
+fn push_portals(out: &mut Mesh, world: &World, section: &CaveSection, edges: &PortalEdges) {
+    for &(tile, direction) in edges {
         let Some(Some(roof)) = section.get(&tile) else { continue };
         let along = (-direction.1, direction.0);
         for side in [1, -1] {
@@ -204,7 +214,7 @@ fn cave_face(out: &mut Mesh, points: [[f32; 3]; 3], color: [f32; 3], light: f32)
     out.extend_from_slice(&vertices);
 }
 
-fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve: &EntranceCarve, site: GalleryTile) {
+fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve: &EntranceCarve, portals: &PortalEdges, site: GalleryTile) {
     const EDGES: [((i32, i32), [f32; 2], [f32; 2]); 4] = [
         ((0, -1), [0.0, 0.0], [1.0, 0.0]),
         ((1, 0), [1.0, 0.0], [1.0, 1.0]),
@@ -257,7 +267,7 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve
             // A roof ending at the open ground is a slab of rock above the opening: an edge and a top.
             let next_sky = matches!(section.get(&next), Some(None));
             // ...but only where a tunnel really goes on behind the lip.
-            if roof.is_some() && next_sky && tunnel_behind(world, tile, direction) {
+            if roof.is_some() && next_sky && portals.contains(&(tile, direction)) {
                 // The rock face over the opening reaches up to the hillside it is cut from.
                 let hill = |p: [f32; 2]| ground_height(world.seed, x + p[0], z + p[1]);
                 let [u, v] = [pos(a, hill(a).max(cap[0][1] + LINTEL)), pos(b, hill(b).max(cap[1][1] + LINTEL))];
@@ -366,9 +376,10 @@ pub(crate) fn build_cave_scene(world: &World, section: &CaveSection, light: &BTr
 fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, f32>, flooded: &BTreeSet<CaveTile>, portals: bool) -> Vec<Vertex> {
     let mut out = Mesh::new();
     let carve = entrance_carve(world, section);
+    let portal_set = portal_edges(world, section);
     for (&tile, &ceiling) in section {
         let light = light.get(&tile).copied().unwrap_or(0.0);
-        push_gallery_tile(&mut out, world, section, &carve, GalleryTile { tile, ceiling, light, flooded: flooded.contains(&tile) });
+        push_gallery_tile(&mut out, world, section, &carve, &portal_set, GalleryTile { tile, ceiling, light, flooded: flooded.contains(&tile) });
         if world.natural_cave_rubble_at(tile) {
             let start = out.len();
             let (x, z) = (tile.x as f32, tile.y as f32);
@@ -384,7 +395,7 @@ fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, 
     }
     // Nothing of the gallery shows above the hillside: a face that would poke out is pressed down just under the ground.
     // (The rock of a portal is the one thing that stands proud: its lintel is the hillside's edge over the opening.)
-    let portal_tiles: BTreeSet<(i32, i32)> = portal_edges(world, section).into_iter().map(|(tile, _)| (tile.x, tile.y)).collect();
+    let portal_tiles: BTreeSet<(i32, i32)> = portal_set.iter().map(|(tile, _)| (tile.x, tile.y)).collect();
     for v in &mut out.verts {
         if portal_tiles.contains(&(v.pos[0].floor() as i32, v.pos[2].floor() as i32)) {
             continue;
@@ -393,7 +404,7 @@ fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, 
         v.pos[1] = v.pos[1].min(ground - 0.03);
     }
     if portals {
-        push_portals(&mut out, world, section);
+        push_portals(&mut out, world, section, &portal_set);
     }
     out.verts
 }
