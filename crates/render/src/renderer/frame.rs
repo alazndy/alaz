@@ -287,8 +287,8 @@ impl Renderer {
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16), rows_per_image: Some(1) },
                 wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
             );
-            // a corner is part of the four tiles round it
-            for (ax, ay) in [(tx - 1, ty - 1), (tx, ty - 1), (tx - 1, ty), (tx, ty)] {
+            // the smooth surface reaches two tiles either side of a corner
+            for (ax, ay) in [(tx - 2, ty - 2), (tx + 1, ty - 2), (tx - 2, ty + 1), (tx + 1, ty + 1)] {
                 stale.insert((ax.div_euclid(CHUNK_TILES), ay.div_euclid(CHUNK_TILES)));
             }
         }

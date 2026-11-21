@@ -106,13 +106,27 @@ pub(crate) fn pre_lift(world: &World, verts: &mut [Vertex]) {
     }
 }
 
-pub fn ground_height(seed: u64, x: f32, z: f32) -> f32 {
+fn cubic4(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
+    b + 0.5 * t * (c - a + t * (2.0 * a - 5.0 * b + 4.0 * c - d + t * (3.0 * (b - c) + d - a)))
+}
+
+/// The ground's surface: a smooth Catmull-Rom blend through the tile corners `corner(x, z)`, held inside the range of
+/// its own cell's corners so a hill never overshoots. `ground_h` in shader.wgsl is the same formula.
+pub(crate) fn smooth_height(corner: impl Fn(i32, i32) -> f32, x: f32, z: f32) -> f32 {
     let (fx, fz) = (x.floor(), z.floor());
     let (tx, tz) = (x - fx, z - fz);
-    let h = |dx: i32, dz: i32| alaz_sim::elevation_mm(seed, fx as i32 + dx, fz as i32 + dz) as f32 / 1000.0;
-    let a = h(0, 0) + (h(1, 0) - h(0, 0)) * tx;
-    let b = h(0, 1) + (h(1, 1) - h(0, 1)) * tx;
-    a + (b - a) * tz
+    let (ix, iz) = (fx as i32, fz as i32);
+    let rows: [f32; 4] = std::array::from_fn(|j| {
+        let y = iz + j as i32 - 1;
+        cubic4(corner(ix - 1, y), corner(ix, y), corner(ix + 1, y), corner(ix + 2, y), tx)
+    });
+    let h = cubic4(rows[0], rows[1], rows[2], rows[3], tz);
+    let cell = [corner(ix, iz), corner(ix + 1, iz), corner(ix, iz + 1), corner(ix + 1, iz + 1)];
+    h.clamp(cell.iter().copied().fold(f32::INFINITY, f32::min), cell.iter().copied().fold(f32::NEG_INFINITY, f32::max))
+}
+
+pub fn ground_height(seed: u64, x: f32, z: f32) -> f32 {
+    smooth_height(|cx, cz| alaz_sim::elevation_mm(seed, cx, cz) as f32 / 1000.0, x, z)
 }
 
 /// Which painted material a surface of this colour is made of: 0 none, 1 wood, 2 leaves, 3 stone, 4 skin and cloth.

@@ -67,14 +67,27 @@ fn shore_at(p: vec2<f32>) -> f32 {
 }
 
 // bilinear ground height at a point on the map (the same surface the terrain tiles are cut from, up to the triangle split)
+fn cubic4(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
+    return b + 0.5 * t * (c - a + t * (2.0 * a - 5.0 * b + 4.0 * c - d + t * (3.0 * (b - c) + d - a)));
+}
+// The ground height: a smooth (Catmull-Rom) surface through the tile corners, kept inside the range of its own cell's
+// corners so a hill never overshoots. The CPU's `smooth_height` (mesh/common.rs) is the same formula.
 fn ground_h(p: vec2<f32>) -> f32 {
     let q = p - globals.hwin.xy;
     let f = floor(q);
     let t = q - f;
     let i = vec2<i32>(f);
-    let a = mix(corner_h(i), corner_h(i + vec2<i32>(1, 0)), t.x);
-    let b = mix(corner_h(i + vec2<i32>(0, 1)), corner_h(i + vec2<i32>(1, 1)), t.x);
-    return mix(a, b, t.y);
+    var rows: array<f32, 4>;
+    for (var j = 0; j < 4; j++) {
+        let y = i.y + j - 1;
+        rows[j] = cubic4(corner_h(vec2<i32>(i.x - 1, y)), corner_h(vec2<i32>(i.x, y)), corner_h(vec2<i32>(i.x + 1, y)), corner_h(vec2<i32>(i.x + 2, y)), t.x);
+    }
+    let h = cubic4(rows[0], rows[1], rows[2], rows[3], t.y);
+    let c00 = corner_h(i);
+    let c10 = corner_h(i + vec2<i32>(1, 0));
+    let c01 = corner_h(i + vec2<i32>(0, 1));
+    let c11 = corner_h(i + vec2<i32>(1, 1));
+    return clamp(h, min(min(c00, c10), min(c01, c11)), max(max(c00, c10), max(c01, c11)));
 }
 
 struct VIn {

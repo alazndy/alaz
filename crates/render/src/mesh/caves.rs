@@ -98,17 +98,13 @@ pub(crate) fn entrance_carve(world: &World, section: &CaveSection) -> EntranceCa
     carve
 }
 
-/// The ground height with the entrance hollows in it: the same bilinear blend of tile corners the terrain is drawn with.
+/// The ground height with the entrance hollows in it: the same smooth surface the terrain is drawn with.
 pub(crate) fn carved_height(world: &World, carve: &EntranceCarve, x: f32, z: f32) -> f32 {
-    let (fx, fz) = (x.floor(), z.floor());
-    let (tx, tz) = (x - fx, z - fz);
-    let h = |dx: i32, dz: i32| {
-        let corner = (fx as i32 + dx, fz as i32 + dz);
-        carve.get(&corner).copied().unwrap_or_else(|| alaz_sim::elevation_mm(world.seed, corner.0, corner.1) as f32 / 1000.0)
-    };
-    let a = h(0, 0) + (h(1, 0) - h(0, 0)) * tx;
-    let b = h(0, 1) + (h(1, 1) - h(0, 1)) * tx;
-    a + (b - a) * tz
+    smooth_height(
+        |cx, cz| carve.get(&(cx, cz)).copied().unwrap_or_else(|| alaz_sim::elevation_mm(world.seed, cx, cz) as f32 / 1000.0),
+        x,
+        z,
+    )
 }
 
 /// How thick the rock slab over a gallery mouth is drawn, so the roof has an edge to show above the opening.
