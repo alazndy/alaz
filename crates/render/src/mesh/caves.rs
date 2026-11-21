@@ -109,6 +109,74 @@ pub(crate) fn carved_height(world: &World, carve: &EntranceCarve, x: f32, z: f32
 
 /// How thick the rock slab over a gallery mouth is drawn, so the roof has an edge to show above the opening.
 const LINTEL: f32 = 0.45;
+/// The grey of the hillside's own rock, for the lintel and the jambs: the dark gallery inside stays brown.
+const PORTAL_ROCK: [f32; 3] = [0.36, 0.35, 0.34];
+
+const SIDES: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+
+/// A tunnel goes on behind the lip of this roofed tile, seen from `direction` (the sides of a crack in the ground are
+/// not mouths).
+fn tunnel_behind(world: &World, section: &CaveSection, tile: CaveTile, direction: (i32, i32)) -> bool {
+    // (a mouth's landing tile is the last one of the section: its tunnel runs on outside it)
+    let (nx, ny) = (tile.x + direction.0, tile.y + direction.1);
+    let landing_of_mouth = world.map.cave_openings_at(nx, ny).any(|m| m.threshold.x == nx && m.threshold.y == ny && {
+        let (lx, ly) = m.landing.xy();
+        (lx as i32, ly as i32) == (tile.x, tile.y)
+    });
+    landing_of_mouth
+        || [0i16, -1, 1].into_iter().any(|dz| {
+            matches!(section.get(&CaveTile { x: tile.x - direction.0, y: tile.y - direction.1, z: tile.z + dz }), Some(Some(_)))
+        })
+}
+
+/// The roofed tiles whose edge faces open ground with a tunnel behind: (tile, direction, roof height).
+fn portal_edges(world: &World, section: &CaveSection) -> BTreeSet<(CaveTile, (i32, i32))> {
+    let mut edges = BTreeSet::new();
+    for (&tile, &ceiling) in section {
+        if ceiling.is_none() {
+            continue;
+        }
+        for direction in SIDES {
+            let next = gallery_neighbor(section, tile, ceiling, direction).map(|(n, _)| n);
+            if next.is_some_and(|n| matches!(section.get(&n), Some(None))) && tunnel_behind(world, section, tile, direction) {
+                edges.insert((tile, direction));
+            }
+        }
+    }
+    edges
+}
+
+/// The two rock jambs standing at the ends of every run of portal edges.
+fn push_portals(out: &mut Mesh, world: &World, section: &CaveSection) {
+    let edges = portal_edges(world, section);
+    for &(tile, direction) in &edges {
+        let Some(Some(roof)) = section.get(&tile) else { continue };
+        let along = (-direction.1, direction.0);
+        for side in [1, -1] {
+            let beside = CaveTile { x: tile.x + along.0 * side, y: tile.y + along.1 * side, ..tile };
+            if edges.iter().any(|&(t, d)| d == direction && t.x == beside.x && t.y == beside.y && (t.z - tile.z).abs() <= 1) {
+                continue;
+            }
+            let seed = alaz_sim::rng::hash2(world.seed ^ 0x504F, tile.x * 4 + side, tile.y * 4 + direction.0 * 2 + direction.1) as u32;
+            let jitter = |salt: u32| ((seed >> salt) & 255) as f32 / 255.0;
+            let base = f32::from(tile.z) - 0.15;
+            let top = f32::from(*roof) + LINTEL + 0.12 * jitter(0);
+            let proud = 0.10 + 0.10 * jitter(8);
+            let centre = [
+                tile.x as f32 + 0.5 + direction.0 as f32 * (0.5 + proud - 0.28) + along.0 as f32 * side as f32 * (0.5 + 0.10 * jitter(16)),
+                (base + top) * 0.5,
+                tile.y as f32 + 0.5 + direction.1 as f32 * (0.5 + proud - 0.28) + along.1 as f32 * side as f32 * (0.5 + 0.10 * jitter(16)),
+            ];
+            let shade = 0.88 + 0.22 * jitter(24);
+            let radii = [0.30 + 0.06 * jitter(4), (top - base) * 0.5, 0.30 + 0.06 * jitter(12)];
+            let radii = if direction.0 != 0 { radii } else { [radii[2], radii[1], radii[0]] };
+            out.set_anchor(centre[0], centre[2]);
+            let start = out.len();
+            rock(out, centre, radii, PORTAL_ROCK.map(|c| c * shade), seed);
+            mark_cave_geometry(&mut out.verts[start..], 1.0);
+        }
+    }
+}
 
 fn gallery_neighbor(section: &CaveSection, tile: CaveTile, ceiling: Option<i16>, (dx, dy): (i32, i32)) -> Option<(CaveTile, Option<i16>)> {
     [0, -1, 1].into_iter().find_map(|dz| {
@@ -182,15 +250,13 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve
         if let Some((next, _)) = neighbor {
             // A roof ending at the open ground is a slab of rock above the opening: an edge and a top.
             let next_sky = matches!(section.get(&next), Some(None));
-            // ...but only where a tunnel really goes on behind the lip. The sides of a crack in the ground are not mouths.
-            let tunnel_behind = [0i16, -1, 1].into_iter().any(|dz| {
-                matches!(section.get(&CaveTile { x: tile.x - direction.0, y: tile.y - direction.1, z: tile.z + dz }), Some(Some(_)))
-            });
-            if roof.is_some() && next_sky && tunnel_behind {
+            // ...but only where a tunnel really goes on behind the lip.
+            if roof.is_some() && next_sky && tunnel_behind(world, section, tile, direction) {
                 let [u, v] = [pos(a, cap[0][1] + LINTEL), pos(b, cap[1][1] + LINTEL)];
-                cave_face(out, [cap[1], cap[0], u], wall, light);
-                cave_face(out, [cap[1], u, v], wall, light);
-                cave_face(out, [pos([0.5, 0.5], roof.unwrap_or(floor) + LINTEL), u, v], wall, light);
+                // (outer rock, lit by the open sky whatever the dark inside)
+                cave_face(out, [cap[1], cap[0], u], PORTAL_ROCK, 1.0);
+                cave_face(out, [cap[1], u, v], PORTAL_ROCK, 1.0);
+                cave_face(out, [pos([0.5, 0.5], roof.unwrap_or(floor) + LINTEL), u, v], PORTAL_ROCK, 1.0);
             }
             continue;
         }
@@ -287,6 +353,10 @@ fn mark_cave_geometry(vertices: &mut [Vertex], light: f32) {
 }
 
 pub(crate) fn build_cave_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, f32>, flooded: &BTreeSet<CaveTile>) -> Vec<Vertex> {
+    build_scene(world, section, light, flooded, true)
+}
+
+fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, f32>, flooded: &BTreeSet<CaveTile>, portals: bool) -> Vec<Vertex> {
     let mut out = Mesh::new();
     let carve = entrance_carve(world, section);
     for (&tile, &ceiling) in section {
@@ -304,6 +374,9 @@ pub(crate) fn build_cave_scene(world: &World, section: &CaveSection, light: &BTr
             }
             mark_cave_geometry(&mut out.verts[start..], light);
         }
+    }
+    if portals {
+        push_portals(&mut out, world, section);
     }
     out.verts
 }
@@ -331,6 +404,24 @@ mod tests {
     use alaz_sim::map::tag_seed_natural;
 
     #[test]
+    fn a_portal_stands_between_two_jambs_and_is_lit_by_the_sky() {
+        let world = World::with_size(tag_seed_natural(4, 256), 256, 256);
+        let tile = world.map.natural_cave_mouth(38, 230).unwrap().threshold;
+        let section = collect_cave_entrances(&world, (tile.x - 2, tile.y - 2, tile.x + 3, tile.y + 3));
+        let edges = portal_edges(&world, &section);
+        assert!(!edges.is_empty());
+        let light = cave_daylight(&world, &section);
+        let bare = build_scene(&world, &section, &light, &BTreeSet::new(), false);
+        let full = build_scene(&world, &section, &light, &BTreeSet::new(), true);
+        assert!(full.len() > bare.len());
+        // everything added is outer rock: full daylight, and not brown
+        for v in &full[bare.len()..] {
+            assert_eq!(v.uv[0], -3.0);
+            assert!(v.color[2] > 0.25 && v.color[0] - v.color[2] < 0.05);
+        }
+    }
+
+    #[test]
     fn natural_portals_join_the_surface_and_show_the_gallery() {
         for (seed, (tx, ty)) in [(4, (38, 230)), (42, (222, 150))] {
             let world = World::with_size(tag_seed_natural(seed, 256), 256, 256);
@@ -338,7 +429,7 @@ mod tests {
             let tile = mouth.threshold;
             let section = collect_cave_entrances(&world, (tile.x - 2, tile.y - 2, tile.x + 3, tile.y + 3));
             let light = cave_daylight(&world, &section);
-            let mesh = build_cave_scene(&world, &section, &light, &BTreeSet::new());
+            let mesh = build_scene(&world, &section, &light, &BTreeSet::new(), false);
             // Open ground is not built: the hillside itself is lowered to the mouth's floor...
             let carve = entrance_carve(&world, &section);
             assert!(!carve.is_empty());
