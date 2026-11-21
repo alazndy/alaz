@@ -114,19 +114,14 @@ const PORTAL_ROCK: [f32; 3] = [0.36, 0.35, 0.34];
 
 const SIDES: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
 
-/// A tunnel goes on behind the lip of this roofed tile, seen from `direction` (the sides of a crack in the ground are
-/// not mouths).
-fn tunnel_behind(world: &World, section: &CaveSection, tile: CaveTile, direction: (i32, i32)) -> bool {
-    // (a mouth's landing tile is the last one of the section: its tunnel runs on outside it)
+/// This roofed tile is the landing of a cave mouth whose threshold lies in `direction`: a tunnel runs on behind it. (The
+/// sides of a crack in the ground are not mouths and get no portal.)
+fn tunnel_behind(world: &World, tile: CaveTile, direction: (i32, i32)) -> bool {
     let (nx, ny) = (tile.x + direction.0, tile.y + direction.1);
-    let landing_of_mouth = world.map.cave_openings_at(nx, ny).any(|m| m.threshold.x == nx && m.threshold.y == ny && {
+    world.map.cave_openings_at(nx, ny).any(|m| m.threshold.x == nx && m.threshold.y == ny && {
         let (lx, ly) = m.landing.xy();
         (lx as i32, ly as i32) == (tile.x, tile.y)
-    });
-    landing_of_mouth
-        || [0i16, -1, 1].into_iter().any(|dz| {
-            matches!(section.get(&CaveTile { x: tile.x - direction.0, y: tile.y - direction.1, z: tile.z + dz }), Some(Some(_)))
-        })
+    })
 }
 
 /// The roofed tiles whose edge faces open ground with a tunnel behind: (tile, direction, roof height).
@@ -138,7 +133,7 @@ fn portal_edges(world: &World, section: &CaveSection) -> BTreeSet<(CaveTile, (i3
         }
         for direction in SIDES {
             let next = gallery_neighbor(section, tile, ceiling, direction).map(|(n, _)| n);
-            if next.is_some_and(|n| matches!(section.get(&n), Some(None))) && tunnel_behind(world, section, tile, direction) {
+            if next.is_some_and(|n| matches!(section.get(&n), Some(None))) && tunnel_behind(world, tile, direction) {
                 edges.insert((tile, direction));
             }
         }
@@ -251,7 +246,7 @@ fn push_gallery_tile(out: &mut Mesh, world: &World, section: &CaveSection, carve
             // A roof ending at the open ground is a slab of rock above the opening: an edge and a top.
             let next_sky = matches!(section.get(&next), Some(None));
             // ...but only where a tunnel really goes on behind the lip.
-            if roof.is_some() && next_sky && tunnel_behind(world, section, tile, direction) {
+            if roof.is_some() && next_sky && tunnel_behind(world, tile, direction) {
                 let [u, v] = [pos(a, cap[0][1] + LINTEL), pos(b, cap[1][1] + LINTEL)];
                 // (outer rock, lit by the open sky whatever the dark inside)
                 cave_face(out, [cap[1], cap[0], u], PORTAL_ROCK, 1.0);
@@ -374,6 +369,11 @@ fn build_scene(world: &World, section: &CaveSection, light: &BTreeMap<CaveTile, 
             }
             mark_cave_geometry(&mut out.verts[start..], light);
         }
+    }
+    // Nothing of the gallery shows above the hillside: a face that would poke out is pressed down just under the ground.
+    for v in &mut out.verts {
+        let ground = carved_height(world, &carve, v.pos[0], v.pos[2]);
+        v.pos[1] = v.pos[1].min(ground - 0.03);
     }
     if portals {
         push_portals(&mut out, world, section);
