@@ -920,9 +920,9 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>, exposure: f32) -> vec3<f32>
     } else {
         lit = col * (0.5 + 0.6 * v.glow);
     }
-    let p = globals.light.w;
-    let lum = dot(lit, vec3<f32>(0.30, 0.59, 0.11));
-    return pow(max(mix(vec3<f32>(lum), lit, 0.28 + 0.72 * p), vec3<f32>(0.0)), vec3<f32>(2.2));
+    // Seen from outside, a gallery fades into the haze like everything else. Underground the roof cut is on and the
+    // haze is left out, so a cave's own far walls are not painted the grey of the open sky.
+    return finish(lit, v.wpos, clamp(globals.cave.y, 0.0, 1.0));
 }
 
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
