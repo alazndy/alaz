@@ -334,12 +334,26 @@ fn material(v: VOut) -> vec3<f32> {
     return clamp(vec3<f32>(1.0) + (k - vec3<f32>(1.0)) * grain, vec3<f32>(0.35), vec3<f32>(1.7));
 }
 
+// Fine relief of the ground, a few centimetres high: two octaves of value noise. It only bends the light (the surface
+// the feet and the props stand on stays smooth), so nothing has to agree with it.
+fn ground_relief(p: vec2<f32>) -> f32 {
+    return (vnoise(p * 1.7) - 0.5) * 0.10 + (vnoise(p * 4.3 + vec2<f32>(7.7, 3.1)) - 0.5) * 0.05;
+}
+fn ground_bump(w: vec2<f32>) -> vec2<f32> {
+    let e = 0.12;
+    return vec2<f32>(
+        ground_relief(w + vec2<f32>(e, 0.0)) - ground_relief(w - vec2<f32>(e, 0.0)),
+        ground_relief(w + vec2<f32>(0.0, e)) - ground_relief(w - vec2<f32>(0.0, e)),
+    ) / (2.0 * e);
+}
+
 // surface direction of the ground at a point, from the height map
 fn ground_n(w: vec2<f32>) -> vec3<f32> {
     let e = 1.0;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
     let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
-    return normalize(vec3<f32>(-gx, 1.0, -gz));
+    let b = ground_bump(w);
+    return normalize(vec3<f32>(-(gx + b.x), 1.0, -(gz + b.y)));
 }
 
 // light from the sky and the sun on a surface facing `n` at `wp`: a cool sky above and warm bounce from the ground
@@ -550,7 +564,7 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     let cap = smoothstep(11.5, 14.5, alt - steep * 3.0 + 1.2 * vnoise(w * 0.4));
     col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cap * 0.92);
     r.col = col;
-    r.g = vec2<f32>(gx, gz);
+    r.g = vec2<f32>(gx, gz) + ground_bump(w);
     // puddles form on flat ground away from the shore, below the snow line; never on the sand of a water tile
     let puddles = steep < 0.25 && beach < -0.7 && cap < 0.5 && mine.z > 0.5;
     r.state = select(select(0.0, 1.0, puddles), 3.0, pooled);
