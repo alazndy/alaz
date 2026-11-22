@@ -661,10 +661,21 @@ const GEN_V2_TAG: u64 = 0xA1A2;
 const GEN_V2_CAVES_TAG: u64 = 0xA1A4;
 const GEN_V3_CAVES_TAG: u64 = 0xA1A5;
 const GEN_SMALL_CAVES_TAG: u64 = 0xA1A6;
+/// A small world made by the fourth generator: the small-world caves of 0xA1A6 on land shaped by gradient noise.
+const GEN_SMALL_V4_TAG: u64 = 0xA1A7;
+
+/// Was this world made by the fourth generator?
+pub fn gen_v4(seed: u64) -> bool {
+    seed >> 48 == GEN_SMALL_V4_TAG
+}
+
+fn small_caves_world(seed: u64) -> bool {
+    matches!(seed >> 48, GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG)
+}
 
 /// Does this world have rivers and lakes (the second generator, or the third)?
 pub fn gen_v2(seed: u64) -> bool {
-    matches!(seed >> 48, GEN_V2_TAG | GEN_V2_CAVES_TAG | GEN_SMALL_CAVES_TAG) || gen_v3(seed)
+    matches!(seed >> 48, GEN_V2_TAG | GEN_V2_CAVES_TAG | GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG) || gen_v3(seed)
 }
 
 /// The third generator's mark: continents and oceans, mountain ranges, climate belts.
@@ -676,13 +687,13 @@ pub fn gen_v3(seed: u64) -> bool {
 }
 
 pub fn has_natural_caves(seed: u64) -> bool {
-    matches!(seed >> 48, GEN_V2_CAVES_TAG | GEN_V3_CAVES_TAG | GEN_SMALL_CAVES_TAG)
+    matches!(seed >> 48, GEN_V2_CAVES_TAG | GEN_V3_CAVES_TAG | GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG)
 }
 
 /// A separate tag keeps saved node indices stable when entrance generation changes.
 pub fn tag_seed_new_world(seed: u64, size: i32) -> u64 {
     if (128..=256).contains(&size) {
-        return (seed & 0xFFFF_FFFF_FFFF) | GEN_SMALL_CAVES_TAG << 48;
+        return (seed & 0xFFFF_FFFF_FFFF) | GEN_SMALL_V4_TAG << 48;
     }
     tag_seed_natural(seed, size)
 }
@@ -699,7 +710,7 @@ pub fn tag_seed_v3(seed: u64) -> u64 {
 
 /// The land's height before rivers are cut, 0..=255 (below 95 is sea).
 pub fn raw_height(seed: u64, tx: i32, ty: i32) -> i32 {
-    if gen_v3(seed) { height_v3(seed, tx, ty) } else { fbm(seed ^ 0x1111, tx, ty) as i32 }
+    if gen_v4(seed) { height_v4(seed, tx, ty) } else if gen_v3(seed) { height_v3(seed, tx, ty) } else { fbm(seed ^ 0x1111, tx, ty) as i32 }
 }
 
 /// The third generator's land: continents a few kilometres across with oceans between, coasts bent and frayed by a
@@ -718,6 +729,63 @@ fn height_v3(seed: u64, x: i32, y: i32) -> i32 {
     let mountains = if land > 0 { (ridge - 150).max(0) * belt / 255 * 13 / 10 } else { 0 };
     let rolling = (hills - 128) * if land > 0 { 35 } else { 20 } / 100;
     (100 + land + rolling + mountains).clamp(0, 255)
+}
+
+/// The fourth generator's land, for worlds 128 to 256 tiles across: one landmass shaped by domain-warped gradient
+/// noise, rolling hills of several scales, and ridged mountain ranges. Same 0..=255 scale as the others (below 95 is sea,
+/// above 160 is rock), so rivers, climate, caves and the ledges work on it unchanged.
+fn height_v4(seed: u64, x: i32, y: i32) -> i32 {
+    let gn = |salt: u64, x: i32, y: i32, cell: i32| crate::rng::gradient_noise(seed ^ salt, x, y, cell) as i32;
+    // bend everything so no feature follows the noise grid
+    let wx = x + (gn(0x31, x, y, 90) - 128) * 30 / 128 + (gn(0x33, x, y, 24) - 128) * 6 / 128;
+    let wy = y + (gn(0x32, x, y, 90) - 128) * 30 / 128 + (gn(0x34, x, y, 24) - 128) * 6 / 128;
+    let broad = (gn(0x41, wx, wy, 140) * 4 + gn(0x42, wx, wy, 70) * 2 + gn(0x43, wx, wy, 36)) / 7;
+    let hills = (gn(0x51, wx, wy, 40) * 8 + gn(0x52, wx, wy, 20) * 4 + gn(0x53, wx, wy, 10) * 2 + gn(0x54, x, y, 5)) / 15;
+    // ridge lines: the crest of a fold in the noise
+    let ridge = 255 - (2 * gn(0x61, wx, wy, 64) - 255).abs();
+    let ridge2 = 255 - (2 * gn(0x62, wx, wy, 28) - 255).abs();
+    let belt = ((broad - 120) * 5).clamp(0, 255);
+    let land = (broad - 118) * 9 / 10;
+    let rolling = (hills - 128) * if land > 0 { 38 } else { 20 } / 100;
+    let mountains = if land > 0 { ((ridge - 180).max(0) * 2 + (ridge2 - 200).max(0)) * belt / 255 / 2 } else { 0 };
+    (106 + land + rolling + mountains).clamp(0, 255)
+}
+
+#[cfg(test)]
+mod v4_tests {
+    use super::*;
+
+    #[test]
+    fn the_fourth_generator_makes_sea_land_and_mountains_in_balance() {
+        let (mut n, mut sea, mut rock, mut peak) = (0, 0, 0, 0);
+        for seed in 1..=8u64 {
+            let s = tag_seed_new_world(seed, 256);
+            assert!(gen_v4(s) && gen_v2(s) && has_natural_caves(s));
+            for y in (0..256).step_by(2) {
+                for x in (0..256).step_by(2) {
+                    let h = raw_height(s, x, y);
+                    assert_eq!(h, raw_height(s, x, y));
+                    n += 1;
+                    sea += i32::from(h < 95);
+                    rock += i32::from(h > 160);
+                    peak += i32::from(h > 200);
+                }
+            }
+        }
+        let pct = |c: i32| c * 100 / n;
+        assert!((10..=28).contains(&pct(sea)), "sea {}%", pct(sea));
+        assert!((10..=28).contains(&pct(rock)), "rock {}%", pct(rock));
+        assert!(pct(peak) < 10, "peaks {}%", pct(peak));
+    }
+
+    #[test]
+    fn gradient_noise_is_smooth_and_bounded() {
+        for x in -50..50 {
+            let a = crate::rng::gradient_noise(7, x, 13, 24);
+            let b = crate::rng::gradient_noise(7, x + 1, 13, 24);
+            assert!((0..=255).contains(&a) && (a - b).abs() < 40, "{a} {b}");
+        }
+    }
 }
 
 /// The seed a new world gets: the second generator's mark on its top bits.
@@ -929,7 +997,7 @@ impl Map {
             tiles
         });
         let mut map = Self { w, h, tiles, seed, small_caves: None, cave_openings: Default::default() };
-        if seed >> 48 == GEN_SMALL_CAVES_TAG && (128..=256).contains(&w) && (128..=256).contains(&h) {
+        if small_caves_world(seed) && (128..=256).contains(&w) && (128..=256).contains(&h) {
             map.small_caves = crate::cave_terrain::SmallWorldCaves::generate(&map);
         }
         map

@@ -25,6 +25,32 @@ pub fn value_noise(seed: u64, x: i32, y: i32, cell: i32) -> i64 {
     lerp(top, bot, sy)
 }
 
+/// Gradient (Perlin-style) noise in 0..=255 with lattice spacing `cell` tiles. Unlike value noise it has no bumps on
+/// the lattice points, so it shows no grid lines. Integer-only: the quintic fade and the gradient dots are fixed point.
+pub fn gradient_noise(seed: u64, x: i32, y: i32, cell: i32) -> i64 {
+    let (cx, cy) = (x.div_euclid(cell), y.div_euclid(cell));
+    let fx = (x.rem_euclid(cell) as i64) * 1024 / cell as i64;
+    let fy = (y.rem_euclid(cell) as i64) * 1024 / cell as i64;
+    // 6t^5 - 15t^4 + 10t^3 in 0..=1024
+    let fade = |t: i64| {
+        let t2 = t * t / 1024;
+        let t3 = t2 * t / 1024;
+        t3 * ((t * (t * 6 - 15 * 1024) / 1024) + 10 * 1024) / 1024
+    };
+    // eight directions of length 1024
+    const G: [(i64, i64); 8] = [(1024, 0), (-1024, 0), (0, 1024), (0, -1024), (724, 724), (-724, 724), (724, -724), (-724, -724)];
+    let dot = |ix: i32, iy: i32, dx: i64, dy: i64| {
+        let (gx, gy) = G[(hash2(seed, ix, iy) & 7) as usize];
+        (gx * dx + gy * dy) / 1024
+    };
+    let (sx, sy) = (fade(fx), fade(fy));
+    let lerp = |a: i64, b: i64, t: i64| a + (b - a) * t / 1024;
+    let top = lerp(dot(cx, cy, fx, fy), dot(cx + 1, cy, fx - 1024, fy), sx);
+    let bot = lerp(dot(cx, cy + 1, fx, fy - 1024), dot(cx + 1, cy + 1, fx - 1024, fy - 1024), sx);
+    let v = lerp(top, bot, sy);
+    (128 + v * 190 / 1024).clamp(0, 255)
+}
+
 /// Signed value noise in -1024..=1023 with independent lattice spacing on each axis.
 pub(crate) fn value_noise_3d(seed: u64, point: [i64; 3], spacing: [i64; 3]) -> i32 {
     let axis = |p: i64, step: i64| {

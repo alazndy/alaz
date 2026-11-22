@@ -478,11 +478,19 @@ mod tests {
 
     #[test]
     fn a_mouth_with_an_open_landing_gets_a_free_standing_arch() {
-        let world = World::with_size(alaz_sim::map::tag_seed_new_world(4, 128), 128, 128);
-        let mouth = (0..world.nodes.len() as u32).filter_map(|i| world.natural_mouth(i)).find(|m| m.threshold.x == 85 && m.threshold.y == 74).unwrap();
+        // some mouth in some small world opens straight onto open ground, with no roof to hang a portal on
+        let (world, mouth, section) = (1..60u64)
+            .find_map(|seed| {
+                let world = World::with_size(alaz_sim::map::tag_seed_new_world(seed, 128), 128, 128);
+                (0..world.nodes.len() as u32).filter_map(|i| world.natural_mouth(i)).find_map(|m| {
+                    let t = m.threshold;
+                    let section = collect_cave_entrances(&world, (t.x - 6, t.y - 6, t.x + 7, t.y + 7));
+                    let open_landing = section.get(&m.landing).is_some_and(Option::is_none);
+                    (open_landing && portal_edges(&world, &section).is_empty()).then(|| (world.clone(), m, section))
+                })
+            })
+            .expect("a mouth with an open landing");
         let t = mouth.threshold;
-        let section = collect_cave_entrances(&world, (t.x - 6, t.y - 6, t.x + 7, t.y + 7));
-        assert!(portal_edges(&world, &section).is_empty());
         let light = cave_daylight(&world, &section);
         let bare = build_scene(&world, &section, &light, &BTreeSet::new(), false);
         let full = build_scene(&world, &section, &light, &BTreeSet::new(), true);
