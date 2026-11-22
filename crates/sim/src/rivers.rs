@@ -22,6 +22,8 @@ pub(crate) struct RiverMap {
     height: Vec<u8>,
     /// Which way the water runs on a river tile (index into NEIGHBOURS), 255 elsewhere.
     flow: Vec<u8>,
+    /// Tiles to the nearest water (the sea, a lake or a river), up to 8.
+    shore: Vec<u8>,
 }
 
 impl RiverMap {
@@ -30,6 +32,17 @@ impl RiverMap {
             Some(i) => i32::from(self.height[i]),
             None => crate::map::raw_height(seed, x, y),
         }
+    }
+
+    /// How many tiles the nearest water is, up to 8 (and 8 beyond the map).
+    pub(crate) fn shore(&self, x: i32, y: i32) -> i32 {
+        Self::at(x, y).map_or(8, |i| i32::from(self.shore[i]))
+    }
+
+    /// The steepest rise to a neighbouring tile corner in raw height units.
+    pub(crate) fn steepness(&self, seed: u64, x: i32, y: i32) -> i32 {
+        let h = self.height(seed, x, y);
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().map(|(dx, dy)| (self.height(seed, x + dx, y + dy) - h).abs()).max().unwrap_or(0)
     }
 
     /// The way the water of a river tile runs, as a unit step (nothing for the sea, lakes and dry land).
@@ -139,5 +152,23 @@ fn build(seed: u64) -> RiverMap {
             }
         }
     }
-    RiverMap { height, flow }
+    // distance to water, a few sweeps of a chamfer transform
+    let mut shore = vec![8u8; CELLS];
+    for i in 0..CELLS {
+        if height[i] < SEA as u8 {
+            shore[i] = 0;
+        }
+    }
+    for pass in 0..2 {
+        let range: Vec<usize> = if pass == 0 { (0..CELLS).collect() } else { (0..CELLS).rev().collect() };
+        for i in range {
+            let (x, y) = (i as i32 % SIDE, i as i32 / SIDE);
+            for (dx, dy) in NEIGHBOURS {
+                if let Some(n) = RiverMap::at(x + dx, y + dy) {
+                    shore[i] = shore[i].min(shore[n].saturating_add(1));
+                }
+            }
+        }
+    }
+    RiverMap { height, flow, shore }
 }

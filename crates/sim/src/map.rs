@@ -819,6 +819,23 @@ mod v4_tests {
     }
 
     #[test]
+    fn fourth_generator_ground_has_every_kind_and_sand_stays_by_water() {
+        let s = tag_seed_new_world(4, 256);
+        let mut count = [0; 5];
+        let mut far_sand = 0;
+        let rivers = crate::rivers::river_map(s);
+        for y in 0..256 {
+            for x in 0..256 {
+                let t = terrain_at(s, x, y);
+                count[t as usize] += 1;
+                far_sand += i32::from(t == Terrain::Sand && rivers.shore(x, y) > 4 && raw_height(s, x, y) >= 99);
+            }
+        }
+        assert!(count.iter().all(|&c| c > 2_000), "{count:?}");
+        assert!(far_sand * 4 < count[Terrain::Sand as usize], "{far_sand} of {} sand tiles are far from water", count[Terrain::Sand as usize]);
+    }
+
+    #[test]
     fn gradient_noise_is_smooth_and_bounded() {
         for x in -50..50 {
             let a = crate::rng::gradient_noise(7, x, 13, 24);
@@ -1258,6 +1275,32 @@ pub fn terrain_at(seed: u64, x: i32, y: i32) -> Terrain {
     terrain_raw(seed, x, y, h, 0, 0)
 }
 
+/// The fourth generator's ground: bare rock where it is high or steep, sand only on shores and in dry flats, and
+/// forest where the ground is damp: broad patches of moisture, wetter beside water.
+fn terrain_v4(seed: u64, x: i32, y: i32, h: i32) -> Terrain {
+    let rivers = crate::rivers::river_map(seed);
+    if h < 95 {
+        return Terrain::Water;
+    }
+    let shore = rivers.shore(x, y);
+    // a 1 raw unit step is 90 to 170 mm of height; more than 7 units to a neighbour is a steep face
+    if h > 160 || (h >= 108 && shore > 2 && rivers.steepness(seed, x, y) > 6) {
+        return Terrain::Rock;
+    }
+    let gn = |salt: u64, cell: i32| crate::rng::gradient_noise(seed ^ salt, x, y, cell) as i32;
+    let moist = (gn(0x2222, 40) * 3 + gn(0x2223, 14)) / 4 + (6 - shore).max(0) * 7 - (h - 108).max(0) / 3;
+    if h < 99 || (shore <= 2 && h < 108) {
+        Terrain::Sand
+    } else if h < 108 && moist < 120 {
+        // dry flat country
+        Terrain::Sand
+    } else if moist > 140 {
+        Terrain::Forest
+    } else {
+        Terrain::Grass
+    }
+}
+
 /// The ground worked out, given the tile's height and (third generator) its climate.
 fn terrain_raw(seed: u64, x: i32, y: i32, h: i32, warm: i32, wet: i32) -> Terrain {
     if gen_v3(seed) {
@@ -1278,6 +1321,9 @@ fn terrain_raw(seed: u64, x: i32, y: i32, h: i32, warm: i32, wet: i32) -> Terrai
         } else {
             Terrain::Grass
         };
+    }
+    if gen_v4(seed) {
+        return terrain_v4(seed, x, y, h);
     }
     let height = h as i64;
     let moist = fbm(seed ^ 0x2222, x, y);
