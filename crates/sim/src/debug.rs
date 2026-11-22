@@ -502,6 +502,8 @@ impl Script {
                     if let Some(ag) = w.agents.iter_mut().find(|x| x.id == me) {
                         ag.x = x;
                         ag.y = y;
+                        // a stale height would leave the body (and the camera that follows it) under the hill
+                        ag.z = i64::from(crate::map::elevation_at_mm(w.seed, x, y));
                         ag.task = crate::world::Task::Idle;
                     }
                     self.note(w, format!("  (debug) moved to ({}, {}) m", x / 1000, y / 1000));
