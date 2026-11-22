@@ -4252,6 +4252,50 @@ fn dump_v2_map() {
     std::fs::write(path, out).unwrap();
 }
 
+/// A river of the fourth generator carries a swimmer along its drainage, and the drainage leads on to the sea or a lake.
+#[test]
+fn fourth_generator_rivers_carry_a_swimmer_downstream() {
+    let seed = crate::map::tag_seed_new_world(4, 256);
+    let mut w = World::with_size(seed, 256, 256);
+    let (sx, sy) = w.spawn_mm;
+    w.spawn_agent(sx, sy);
+    let spot = (2..254).flat_map(|ty| (2..254).map(move |tx| (tx, ty))).find(|&(tx, ty)| crate::map::water_depth(&w.map, tx, ty) == 2 && crate::map::current_mm(&w.map, tx, ty) != (0, 0));
+    let (tx, ty) = spot.expect("a river deep enough to swim");
+    let (cx, cy) = crate::map::current_mm(&w.map, tx, ty);
+    let (x0, y0) = (tx as i64 * 1000 + 500, ty as i64 * 1000 + 500);
+    w.agents[0].x = x0;
+    w.agents[0].y = y0;
+    w.agents[0].stamina = MAX_STAT;
+    for _ in 0..30 {
+        w.step(&[]);
+        w.agents[0].stamina = MAX_STAT;
+    }
+    let along = (w.agents[0].x - x0) * cx + (w.agents[0].y - y0) * cy;
+    eprintln!("SWIM from ({tx},{ty}) current ({cx},{cy}) moved ({}, {}) along {along}", w.agents[0].x - x0, w.agents[0].y - y0);
+    assert!(along > 0, "carried downstream");
+    // following the drainage from here stays in water until it meets the sea, a lake or the map edge
+    let (mut x, mut y) = (tx, ty);
+    let mut ended = false;
+    for _ in 0..2_000 {
+        match crate::map::current_mm(&w.map, x, y) {
+            (0, 0) => {
+                ended = true;
+                break;
+            }
+            (dx, dy) => {
+                x += dx.signum() as i32;
+                y += dy.signum() as i32;
+            }
+        }
+        if !(0..256).contains(&x) || !(0..256).contains(&y) {
+            ended = true;
+            break;
+        }
+    }
+    assert!(ended, "the river never reaches the sea");
+    assert!(!(0..256).contains(&x) || !(0..256).contains(&y) || w.map.terrain(x, y) == Some(Terrain::Water), "ends on dry land at ({x},{y})");
+}
+
 /// Water behaves as water: rivers flow downhill, a swimmer is carried, tires and in the end goes under; things put
 /// in a river float off downstream; routes still go round water, and animals and bots stay out of it.
 #[test]
