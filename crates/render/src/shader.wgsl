@@ -456,7 +456,28 @@ fn tile_of(t: vec2<i32>) -> vec2<i32> {
 fn tile_at(t: vec2<i32>) -> vec4<f32> {
     var v = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0);
     v.z = v.z - 16.0 * floor(v.z / 16.0);
+    // a river tile's shade channel carries its current (see flow_at_tile); the ground only sees plain shade
+    if (v.w > 1.5) { v.w = 1.0; }
     return v;
+}
+
+// the current of a water tile in metres a second: its shade channel holds 2 + (x + 16) * 40 + (y + 16), with x and y
+// in mm a tick; 1 is still water and anything below 1.5 is land shade
+fn flow_at_tile(t: vec2<i32>) -> vec2<f32> {
+    let w = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0).w;
+    if (w < 1.5) { return vec2<f32>(0.0); }
+    let n = w - 2.0;
+    let a = floor(n / 40.0);
+    return vec2<f32>(a - 16.0, n - a * 40.0 - 16.0) * 0.06;
+}
+
+// the current at a point, blended from tile centre to tile centre so it does not change in steps
+fn flow_vec(p: vec2<f32>) -> vec2<f32> {
+    let qs = p - vec2<f32>(0.5);
+    let t0 = vec2<i32>(floor(qs));
+    let fr = qs - floor(qs);
+    return mix(mix(flow_at_tile(t0), flow_at_tile(t0 + vec2<i32>(1, 0)), fr.x),
+               mix(flow_at_tile(t0 + vec2<i32>(0, 1)), flow_at_tile(t0 + vec2<i32>(1, 1)), fr.x), fr.y);
 }
 
 // the surface layer the sim keeps for a tile: the surface in the low three bits (1 mud, 2 puddle, 3 ice, 4 ash,
@@ -739,6 +760,22 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         // whitecaps only on the highest crests, and only once the wind is fresh
         if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(vec2<f32>(tx) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
             col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);
+        }
+        // a river: streaks of lighter water stretched along the current and carried with it. Two copies a half cycle
+        // apart fade in and out, so the pattern keeps moving without smearing as the current changes direction.
+        let fv = flow_vec(q);
+        let spd = length(fv);
+        if (spd > 0.02) {
+            let dir = fv / spd;
+            let perp = vec2<f32>(-dir.y, dir.x);
+            var streak = 0.0;
+            for (var i = 0; i < 2; i++) {
+                let cyc = fract(clock * 0.22 + f32(i) * 0.5);
+                let uv = q - fv * (cyc * 4.5);
+                let s = vec2<f32>(dot(uv, dir) * 0.6, dot(uv, perp) * 3.2) + f32(i) * vec2<f32>(7.3, 2.1);
+                streak += (1.0 - abs(2.0 * cyc - 1.0)) * smoothstep(0.58, 0.82, vnoise(s));
+            }
+            col = mix(col, vec3<f32>(0.78, 0.90, 0.93), 0.4 * streak * smoothstep(0.02, 0.08, spd) * (1.0 - 0.5 * deep));
         }
         let band = abs(n1 - n2);
         if (band < 0.05) { col = col * 1.16 + vec3<f32>(0.03, 0.05, 0.05); }

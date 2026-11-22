@@ -120,6 +120,16 @@ impl Renderer {
     }
 }
 
+/// The shade channel of a water tile: 1.0 for still water, and for a river 2.0 plus the current (mm a tick, each
+/// component -16..=16) packed as (x + 16) * 40 + (y + 16). The shader decodes it in `flow_at_tile`; land never sees it
+/// because `tile_at` hides anything above 1.5.
+pub(super) fn water_flow_code((cx, cy): (i64, i64)) -> f32 {
+    if (cx, cy) == (0, 0) {
+        return 1.0;
+    }
+    2.0 + ((cx.clamp(-16, 16) + 16) * 40 + (cy.clamp(-16, 16) + 16)) as f32
+}
+
 const TRACK_SPACING_M: f32 = 0.8;
 const TRACK_LIFETIME_TICKS: u64 = 12 * alaz_sim::time::TICKS_PER_SECOND;
 const MAX_TRACK_MARKS: usize = 768;
@@ -167,6 +177,17 @@ impl TrackStepper {
 mod track_tests {
     use super::*;
     use glam::Vec2;
+
+    #[test]
+    fn a_rivers_current_survives_the_trip_through_the_tile_texture() {
+        assert_eq!(water_flow_code((0, 0)), 1.0);
+        for (cx, cy) in [(5, 0), (-5, 0), (0, 7), (3, -4), (-16, 16), (99, -99)] {
+            let n = water_flow_code((cx, cy)) - 2.0;
+            let a = (n / 40.0).floor();
+            let (dx, dy) = (a - 16.0, n - a * 40.0 - 16.0);
+            assert_eq!((dx, dy), (cx.clamp(-16, 16) as f32, cy.clamp(-16, 16) as f32));
+        }
+    }
 
     #[test]
     fn paw_marks_stay_at_footfalls_when_animal_turns_or_stops() {
@@ -395,7 +416,7 @@ impl Renderer {
                     let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
                     let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
                     let s = tile_spr(&self.art, t, h);
-                    let k = if t == Terrain::Water { 1.0 } else { tile_shade(world, tx, ty) };
+                    let k = if t == Terrain::Water { water_flow_code(alaz_sim::map::current_mm(&world.map, tx, ty)) } else { tile_shade(world, tx, ty) };
                     [s.x as f32, s.y as f32, t as u8 as f32, k]
                 })
                 .collect();
