@@ -15,6 +15,7 @@ mod items_serde;
 mod nav;
 pub mod physics;
 pub mod rng;
+mod rivers;
 pub mod rules;
 pub mod save;
 pub mod surface;

@@ -799,6 +799,26 @@ mod v4_tests {
     }
 
     #[test]
+    fn rivers_drain_downhill_into_the_sea_or_a_lake() {
+        let s = tag_seed_new_world(4, 256);
+        let map = crate::rivers::river_map(s);
+        let (mut rivers, mut lost) = (0, 0);
+        for y in 0..256 {
+            for x in 0..256 {
+                let Some((dx, dy)) = map.flow(x, y) else { continue };
+                rivers += 1;
+                // the next tile of the river is water too, unless the river runs off the map
+                let (nx, ny) = (x + dx, y + dy);
+                let off = !(0..256).contains(&nx) || !(0..256).contains(&ny);
+                lost += i32::from(!off && terrain_at(s, nx, ny) != Terrain::Water);
+            }
+        }
+        assert!(rivers > 100, "only {rivers} river tiles");
+        assert!(lost * 20 < rivers, "{lost} of {rivers} river tiles run onto dry land");
+        assert!(crate::rivers::river_map(s).height(s, 10, 10) == height_field(s, 10, 10));
+    }
+
+    #[test]
     fn gradient_noise_is_smooth_and_bounded() {
         for x in -50..50 {
             let a = crate::rng::gradient_noise(7, x, 13, 24);
@@ -908,6 +928,9 @@ thread_local! {
 }
 
 fn height_field_uncached(seed: u64, tx: i32, ty: i32) -> i32 {
+    if gen_v4(seed) {
+        return crate::rivers::river_map(seed).height(seed, tx, ty);
+    }
     let h = raw_height(seed, tx, ty);
     if !gen_v2(seed) || h <= 94 {
         return h;
@@ -1195,6 +1218,13 @@ pub fn current_mm(map: &Map, tx: i32, ty: i32) -> (i64, i64) {
     let seed = map.seed;
     if !gen_v2(seed) || map.terrain(tx, ty) != Some(Terrain::Water) {
         return (0, 0);
+    }
+    if gen_v4(seed) {
+        // the water of a river tile runs the way the drainage does; the sea and lakes stand still
+        let Some((dx, dy)) = crate::rivers::river_map(seed).flow(tx, ty) else { return (0, 0) };
+        let speed = 4 + (raw_height(seed, tx, ty) as i64 - 95).clamp(0, 60) / 10;
+        let k = if dx != 0 && dy != 0 { 707 } else { 1000 };
+        return (i64::from(dx) * k * speed / 1000, i64::from(dy) * k * speed / 1000);
     }
     let raw = |x: i32, y: i32| raw_height(seed, x, y) as i64;
     // the sea and lakes: water that was water before any river was cut, or a lake hollow
