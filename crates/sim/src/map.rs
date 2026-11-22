@@ -747,7 +747,7 @@ fn height_v4(seed: u64, x: i32, y: i32) -> i32 {
     let belt = ((broad - 120) * 5).clamp(0, 255);
     let land = (broad - 118) * 9 / 10;
     let rolling = (hills - 128) * if land > 0 { 38 } else { 20 } / 100;
-    let mountains = if land > 0 { ((ridge - 180).max(0) * 2 + (ridge2 - 200).max(0)) * belt / 255 / 2 } else { 0 };
+    let mountains = if land > 0 { ((ridge - 165).max(0) * 2 / 3 + (ridge2 - 205).max(0) / 6) * belt / 255 } else { 0 };
     (106 + land + rolling + mountains).clamp(0, 255)
 }
 
@@ -776,6 +776,26 @@ mod v4_tests {
         assert!((10..=28).contains(&pct(sea)), "sea {}%", pct(sea));
         assert!((10..=28).contains(&pct(rock)), "rock {}%", pct(rock));
         assert!(pct(peak) < 10, "peaks {}%", pct(peak));
+    }
+
+    #[test]
+    fn terraces_make_some_cliffs_and_mostly_walkable_slopes() {
+        let (mut rock, mut cliffs) = (0, 0);
+        for seed in 1..=6u64 {
+            let s = tag_seed_new_world(seed, 256);
+            for y in (0..255).step_by(1) {
+                for x in 0..255 {
+                    if raw_height(s, x, y) <= 160 {
+                        continue;
+                    }
+                    rock += 1;
+                    let here = elevation_mm(s, x, y);
+                    cliffs += i32::from((elevation_mm(s, x + 1, y) - here).abs() >= CLIFF_MM || (elevation_mm(s, x, y + 1) - here).abs() >= CLIFF_MM);
+                }
+            }
+        }
+        let pct = cliffs * 1000 / rock;
+        assert!((5..=300).contains(&pct), "cliffs {pct} per mille of rock tiles");
     }
 
     #[test]
@@ -936,6 +956,9 @@ fn ledge_rise(seed: u64, i: i32) -> i32 {
 /// The rocky heights climb in ledges: in some places a sheer drop between two levels (a cliff), in others the same
 /// rise spread out into a scree ramp, so every height can still be walked up somewhere.
 fn ledges(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
+    if gen_v4(seed) {
+        return terraces(seed, tx, ty, h);
+    }
     let r = h - LEDGE_FROM;
     if r <= 0 {
         return 0;
@@ -947,6 +970,28 @@ fn ledges(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
     let n = crate::rng::value_noise(seed ^ 0xC11F, tx, ty, 18) as i32;
     let sheer = ((n - 118) * 1000 / 30).clamp(0, 1000);
     (ramp * (1000 - sheer) + below * sheer) / 1000
+}
+
+/// The fourth generator's version of the ledges: strata that are bent by noise (so they do not run in concentric
+/// contour lines) and whose rise is a smooth slope, not a one-tile jump. Where the rock is sheer the slope is squeezed
+/// into under a tile and becomes a cliff; elsewhere it spreads over the whole step and can be walked.
+fn terraces(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
+    const STEP: i64 = 36_000;
+    // thousandths of a raw height unit, bent by up to five units
+    let bend = (crate::rng::gradient_noise(seed ^ 0xC1, tx, ty, 20) - 128) * 40;
+    let phase = (i64::from(h - 150) * 1000 + bend).max(0);
+    if phase == 0 {
+        return 0;
+    }
+    let (q, frac) = (phase / STEP, phase % STEP * 1024 / STEP);
+    let rise = |i: i32| 1_100 + (crate::rng::hash2(seed ^ 0x1ED7, i, 0) % 1_400) as i32;
+    let below: i32 = (0..q as i32).map(rise).sum();
+    let sheer = ((crate::rng::gradient_noise(seed ^ 0xC11F, tx, ty, 22) - 170) * 1000 / 20).clamp(0, 1000);
+    // the rise happens in the last `width` of the step
+    let width = 1024 - sheer * 800 / 1000;
+    let u = (frac - (1024 - width)).max(0) * 1024 / width;
+    let smooth = u * u * (3 * 1024 - 2 * u) / (1024 * 1024);
+    below + (i64::from(rise(q as i32)) * smooth / 1024) as i32
 }
 
 /// How much the ground drops between two neighbouring tile corners for it to count as a cliff (mm).
