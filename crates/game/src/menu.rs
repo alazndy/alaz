@@ -150,6 +150,11 @@ impl Menu {
         m
     }
 
+    /// Opens the version screen directly (the screenshot tool has no click to do it).
+    pub(crate) fn open_update_screen(&mut self) {
+        self.update_screen = true;
+    }
+
     pub fn refresh(&mut self) {
         for i in 0..self.slots.len() {
             self.slots[i] = crate::saveio::slot_info(i as u8 + 1);
