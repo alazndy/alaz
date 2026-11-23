@@ -151,14 +151,23 @@ pub fn relaunch() {
 }
 
 fn live_check(channel: Channel) -> Result<Option<Update>, String> {
+    check_against(channel, &Version::current())
+}
+
+fn check_against(channel: Channel, current: &Version) -> Result<Option<Update>, String> {
     let platform = Platform::current().ok_or("there is no package for this system")?;
     let body = net::get(net::RELEASES_URL, net::MAX_LIST_BYTES)?;
     let text = String::from_utf8(body).map_err(|_| "the release list is not text".to_string())?;
     let releases = release::parse_releases(&text)?;
-    Ok(release::pick_update(&releases, &Version::current(), channel, platform))
+    Ok(release::pick_update(&releases, current, channel, platform))
 }
 
 fn live_install(update: &Update) -> Result<Next, String> {
+    install_into(update, &std::env::current_exe().map_err(|e| e.to_string())?)
+}
+
+/// The whole install, with the program to replace as a parameter so a test can aim it at a copy.
+fn install_into(update: &Update, target: &std::path::Path) -> Result<Next, String> {
     let platform = Platform::current().ok_or("there is no package for this system")?;
     // the name comes from the network: it must be a plain file name before it is joined to a path
     let name = &update.package.name;
@@ -172,7 +181,7 @@ fn live_install(update: &Update) -> Result<Next, String> {
     let file = stage.join(name);
     std::fs::write(&file, &bytes).map_err(|e| format!("could not save the package: {e}"))?;
     match platform {
-        Platform::LinuxX86_64 => install::install_linux(&file, &stage, &std::env::current_exe().map_err(|e| e.to_string())?),
+        Platform::LinuxX86_64 => install::install_linux(&file, &stage, target),
         Platform::WindowsInstaller => install::install_windows(&file),
     }
 }
@@ -274,6 +283,26 @@ mod tests {
         s.start_check();
         wait(&mut s);
         assert!(matches!(s.phase, Phase::Failed(_)));
+    }
+
+    /// Talks to the real GitHub: `XDG_DATA_HOME=$(mktemp -d) cargo test -p alaz -- --ignored real_release`. Needs the v0.6.0-rc.1 pre-release.
+    #[test]
+    #[ignore]
+    #[cfg(target_os = "linux")]
+    fn real_release_is_found_verified_and_installed() {
+        let old = Version::parse("0.5.0").unwrap();
+        let preview = check_against(Channel::Preview, &old).unwrap().expect("the preview channel sees the pre-release");
+        assert_eq!(preview.version.to_string(), "0.6.0-rc.1");
+        let stable = check_against(Channel::Stable, &old).unwrap();
+        assert!(stable.is_none(), "the stable channel must not offer a pre-release: {stable:?}");
+        let root = std::env::temp_dir().join(format!("alaz-e2e-{}", std::process::id()));
+        let target = root.join("bin/alaz");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "old").unwrap();
+        assert_eq!(install_into(&preview, &target).unwrap(), Next::Restart);
+        let bytes = std::fs::read(&target).unwrap();
+        assert!(bytes.starts_with(b"\x7fELF"), "the installed file is a real program");
+        eprintln!("installed {} bytes at {}", bytes.len(), target.display());
     }
 
     #[test]
