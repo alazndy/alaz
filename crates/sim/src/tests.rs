@@ -4296,6 +4296,25 @@ fn fourth_generator_rivers_carry_a_swimmer_downstream() {
     assert!(!(0..256).contains(&x) || !(0..256).contains(&y) || w.map.terrain(x, y) == Some(Terrain::Water), "ends on dry land at ({x},{y})");
 }
 
+/// The current runs across the whole width of a river, not just along its middle line: nearly every tile of moving water
+/// has moving water beside it (a one-tile line running aslant has none), and the banks run slower than the middle.
+#[test]
+fn fourth_generator_current_fills_the_width_of_a_river() {
+    let seed = crate::map::tag_seed_new_world(7, 256);
+    let w = World::with_size(seed, 256, 256);
+    let cur = |x: i32, y: i32| crate::map::current_mm(&w.map, x, y);
+    let moving: Vec<(i32, i32)> = (2..254).flat_map(|y| (2..254).map(move |x| (x, y))).filter(|&(x, y)| cur(x, y) != (0, 0)).collect();
+    assert!(moving.len() > 300, "a world of rivers, got {}", moving.len());
+    let side_by_side = moving.iter().filter(|&&(x, y)| [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| cur(x + dx, y + dy) != (0, 0))).count();
+    assert!(side_by_side * 10 >= moving.len() * 9, "{side_by_side} of {} moving tiles have a neighbour", moving.len());
+    let speed = |p: &(i32, i32)| {
+        let (cx, cy) = cur(p.0, p.1);
+        cx.abs().max(cy.abs())
+    };
+    let (slow, fast) = (moving.iter().map(speed).min().unwrap(), moving.iter().map(speed).max().unwrap());
+    assert!(slow < fast, "banks and middle run at one speed ({slow})");
+}
+
 /// Water behaves as water: rivers flow downhill, a swimmer is carried, tires and in the end goes under; things put
 /// in a river float off downstream; routes still go round water, and animals and bots stay out of it.
 #[test]

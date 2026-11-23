@@ -22,6 +22,8 @@ pub(crate) struct RiverMap {
     height: Vec<u8>,
     /// Which way the water runs on a river tile (index into NEIGHBOURS), 255 elsewhere.
     flow: Vec<u8>,
+    /// How much of the current a river water tile has, in percent: full along the middle, weaker toward the banks.
+    strength: Vec<u8>,
     /// Tiles to the nearest water (the sea, a lake or a river), up to 8.
     shore: Vec<u8>,
 }
@@ -49,6 +51,11 @@ impl RiverMap {
     pub(crate) fn flow(&self, x: i32, y: i32) -> Option<(i32, i32)> {
         let code = self.flow[Self::at(x, y)?];
         NEIGHBOURS.get(usize::from(code)).copied()
+    }
+
+    /// The share of the current (percent) that the water of this tile carries.
+    pub(crate) fn strength(&self, x: i32, y: i32) -> i32 {
+        Self::at(x, y).map_or(100, |i| i32::from(self.strength[i]))
     }
 
     fn at(x: i32, y: i32) -> Option<usize> {
@@ -115,11 +122,16 @@ fn build(seed: u64) -> RiverMap {
     }
     let mut height: Vec<u8> = raw.iter().map(|&h| h as u8).collect();
     let mut flow = vec![255u8; CELLS];
+    let mut strength = vec![100u8; CELLS];
+    // the nearest river middle (in thousandths of a tile) that has given a tile its current
+    let mut nearest = vec![i32::MAX; CELLS];
+    let mut lake = vec![false; CELLS];
     // lakes: hollows of the lower country that rain fills at least three units deep
     for i in 0..CELLS {
         let depth = ((filled[i] - key[i]) / 64) as i32;
         if depth >= 3 && (SEA + 5..150).contains(&raw[i]) {
             height[i] = 94;
+            lake[i] = true;
         }
     }
     // rivers: cut into the lowlands, widening with the water they carry
@@ -133,6 +145,7 @@ fn build(seed: u64) -> RiverMap {
             let step = (p as i32 % SIDE - x, p as i32 / SIDE - y);
             flow[i] = NEIGHBOURS.iter().position(|&d| d == step).map_or(255, |k| k as u8);
         }
+        let code = flow[i];
         // half the water's width in thousandths of a tile: a stream is about two tiles across, a big river five
         let core = 700 + 500 * ((drain[i] / RIVER_AT).isqrt() as i32).min(3);
         let bank = core + 3000;
@@ -148,6 +161,12 @@ fn build(seed: u64) -> RiverMap {
                 let h = i32::from(height[n]);
                 if h > 94 {
                     height[n] = (94 + (h - 94) * t / 1000).min(h) as u8;
+                }
+                // the whole width of the water runs with the river, the banks more slowly than the middle
+                if code != 255 && !lake[n] && raw[n] >= SEA && height[n] < SEA as u8 && d < nearest[n] {
+                    nearest[n] = d;
+                    flow[n] = code;
+                    strength[n] = (100 - 70 * d / (core + 1000)).clamp(30, 100) as u8;
                 }
             }
         }
@@ -170,5 +189,5 @@ fn build(seed: u64) -> RiverMap {
             }
         }
     }
-    RiverMap { height, flow, shore }
+    RiverMap { height, flow, strength, shore }
 }

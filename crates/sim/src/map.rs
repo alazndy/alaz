@@ -1239,7 +1239,8 @@ pub fn current_mm(map: &Map, tx: i32, ty: i32) -> (i64, i64) {
     if gen_v4(seed) {
         // the water of a river tile runs the way the drainage does; the sea and lakes stand still
         let Some((dx, dy)) = crate::rivers::river_map(seed).flow(tx, ty) else { return (0, 0) };
-        let speed = 4 + (raw_height(seed, tx, ty) as i64 - 95).clamp(0, 60) / 10;
+        let share = i64::from(crate::rivers::river_map(seed).strength(tx, ty));
+        let speed = (4 + (raw_height(seed, tx, ty) as i64 - 95).clamp(0, 60) / 10) * share / 100;
         let k = if dx != 0 && dy != 0 { 707 } else { 1000 };
         return (i64::from(dx) * k * speed / 1000, i64::from(dy) * k * speed / 1000);
     }
