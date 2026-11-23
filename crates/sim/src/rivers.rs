@@ -244,8 +244,11 @@ fn lay_fords(drain: &[u32], flow: &[u8], raw: &[i32], lake: &[bool], height: &mu
         if a + b - 1 > FORD_ACROSS {
             continue;
         }
+        // along a slanting current the bar is a 2 x 2 block at every step, so that its tiles touch by their sides and do
+        // not form a chequerboard that meets only at corners
+        let thick: Vec<(i32, i32)> = if fx != 0 && fy != 0 { vec![(0, 0), (fx, 0), (0, fy), (fx, fy)] } else { vec![(0, 0), (fx, fy)] };
         let line: Vec<usize> = (-(b - 1)..a)
-            .flat_map(|k| [(0, 0), (fx, fy)].map(|(ox, oy)| (x + k * across.0 + ox, y + k * across.1 + oy)))
+            .flat_map(|k| thick.iter().map(move |&(ox, oy)| (x + k * across.0 + ox, y + k * across.1 + oy)))
             .filter_map(|(tx, ty)| RiverMap::at(tx, ty))
             .collect();
         // never across a lake or the sea, and both banks must be dry land

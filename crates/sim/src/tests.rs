@@ -4343,7 +4343,10 @@ fn fourth_generator_streams_have_fords_that_can_be_walked() {
     let walkable = fords.iter().find(|&&(lo, hi)| {
         let (dx, dy) = ((hi.0 - lo.0).signum(), (hi.1 - lo.1).signum());
         let steps = (hi.0 - lo.0).abs().max((hi.1 - lo.1).abs());
-        (0..=steps).all(|k| w.map.terrain(lo.0 + k * dx, lo.1 + k * dy).is_some_and(|t| t != Terrain::Water))
+        let dry = |x: i32, y: i32| w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water);
+        // and each diagonal step has dry ground at one of its two corners, so the bar is no chequerboard
+        (0..=steps).all(|k| dry(lo.0 + k * dx, lo.1 + k * dy))
+            && (0..steps).all(|k| dx == 0 || dy == 0 || dry(lo.0 + (k + 1) * dx, lo.1 + k * dy) || dry(lo.0 + k * dx, lo.1 + (k + 1) * dy))
     });
     let &(lo, hi) = walkable.expect("a ford whose whole bar is dry");
     let mid = |t: (i32, i32)| (t.0 as i64 * 1000 + 500, t.1 as i64 * 1000 + 500);
