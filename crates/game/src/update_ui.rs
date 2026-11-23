@@ -150,6 +150,26 @@ pub fn relaunch() {
     }
 }
 
+/// A failure in plain Turkish for the version screen. The English text from the updater stays under it as the detail,
+/// because it names the exact step that failed.
+pub fn explain(err: &str) -> &'static str {
+    const CASES: [(&str, &str); 12] = [
+        ("network error", "Sunucuya bağlanılamadı. İnternet bağlantını kontrol et."),
+        ("could not read the answer", "Sunucunun cevabı okunamadı. Biraz sonra yeniden dene."),
+        ("the server answered", "Sunucu hata döndürdü. Biraz sonra yeniden dene."),
+        ("does not match", "İndirilen dosya sağlama toplamıyla uyuşmadı. Güvenlik için kurulmadı."),
+        ("no checksum listed", "Bu sürümün sağlama toplamı listede yok. Güvenlik için kurulmadı."),
+        ("address not allowed", "Beklenmeyen bir adres görüldü. Güvenlik için durduruldu."),
+        ("too many redirects", "Sunucu çok kez yönlendirdi. Güvenlik için durduruldu."),
+        ("larger than allowed", "İndirilen dosya beklenenden büyük. Durduruldu."),
+        ("release list could not be read", "Sürüm listesi okunamadı."),
+        ("no package for this system", "Bu sistem için hazır bir paket yok."),
+        ("unsafe package name", "Paket adı güvenli değil. Kurulmadı."),
+        ("setup program", "Kurulum programı başlatılamadı."),
+    ];
+    CASES.iter().find(|(key, _)| err.contains(key)).map_or("Kurulum tamamlanamadı. Eski sürüm olduğu gibi duruyor.", |(_, text)| text)
+}
+
 fn live_check(channel: Channel) -> Result<Option<Update>, String> {
     check_against(channel, &Version::current())
 }
@@ -303,6 +323,16 @@ mod tests {
         let bytes = std::fs::read(&target).unwrap();
         assert!(bytes.starts_with(b"\x7fELF"), "the installed file is a real program");
         eprintln!("installed {} bytes at {}", bytes.len(), target.display());
+    }
+
+    #[test]
+    fn failures_are_explained_in_turkish() {
+        assert!(explain("network error: timed out").starts_with("Sunucuya"));
+        assert!(explain("checksum of ALAZ-0.6.0.tar.gz does not match").contains("sağlama toplamı"));
+        assert!(explain("the server answered 404").contains("Sunucu hata"));
+        assert!(explain("could not start the setup program: denied").contains("başlatılamadı"));
+        assert!(explain("tar failed: x").contains("Eski sürüm"), "anything else falls back to a safe line");
+        assert!(explain("unsafe package name: ../x").contains("güvenli değil"));
     }
 
     #[test]

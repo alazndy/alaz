@@ -854,7 +854,8 @@ impl Menu {
                         ui.label(egui::RichText::new(format!("{} indiriliyor ve kuruluyor…", update.version)).color(note));
                     }
                     Phase::Failed(err) => {
-                        ui.colored_label(Color32::from_rgb(240, 110, 110), format!("Olmadı: {err}"));
+                        ui.colored_label(Color32::from_rgb(240, 110, 110), crate::update_ui::explain(err));
+                        ui.label(egui::RichText::new(err.as_str()).size(13.0).color(note));
                     }
                     Phase::Done(_) => {
                         ui.label(egui::RichText::new("Kuruldu. Yeni sürümle başlamak için oyunu yeniden başlat.").color(INK));
