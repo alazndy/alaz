@@ -37,7 +37,6 @@ pub(crate) struct RiverMap {
     #[cfg_attr(not(test), allow(dead_code))]
     fords: Vec<((i32, i32), (i32, i32))>,
     /// Gravel laid across a ford: dry ground the stream still runs over, so its drainage carries on through it.
-    #[cfg_attr(not(test), allow(dead_code))]
     gravel: Vec<bool>,
     /// Tiles to the nearest water (the sea, a lake or a river), up to 8.
     shore: Vec<u8>,
@@ -74,7 +73,6 @@ impl RiverMap {
     }
 
     /// The two banks of every ford, as the dry tile on each side of the gravel bar.
-    #[cfg(test)]
     pub(crate) fn is_gravel(&self, x: i32, y: i32) -> bool {
         Self::at(x, y).is_some_and(|i| self.gravel[i])
     }

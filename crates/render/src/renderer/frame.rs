@@ -413,7 +413,11 @@ impl Renderer {
             let tiles: Vec<f32> = (0..HWIN as i32 * HWIN as i32)
                 .flat_map(|i| {
                     let (tx, ty) = (hx + i % HWIN as i32, hy + i / HWIN as i32);
-                    let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
+                    let mut t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
+                    // the gravel of a ford wears the stone ground: grey pebbles in the stream, not a bar of sand
+                    if t == Terrain::Sand && alaz_sim::map::is_ford_gravel(&world.map, tx, ty) {
+                        t = Terrain::Rock;
+                    }
                     let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
                     let s = tile_spr(&self.art, t, h);
                     let k = if t == Terrain::Water { water_flow_code(alaz_sim::map::current_mm(&world.map, tx, ty)) } else { tile_shade(world, tx, ty) };

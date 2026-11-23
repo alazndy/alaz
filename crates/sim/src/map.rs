@@ -1219,6 +1219,11 @@ pub fn node_anchor_mm(seed: u64, tx: i32, ty: i32) -> (i64, i64) {
     (tx as i64 * TILE_MM + TILE_MM / 2 + jit(3), ty as i64 * TILE_MM + TILE_MM / 2 + jit(7))
 }
 
+/// Is this tile the gravel of a ford: dry ground laid across a stream (fourth generator only)?
+pub fn is_ford_gravel(map: &Map, tx: i32, ty: i32) -> bool {
+    gen_v4(map.seed) && crate::rivers::river_map(map.seed).is_gravel(tx, ty) && map.terrain(tx, ty).is_some_and(|t| t != Terrain::Water)
+}
+
 /// How deep the water on a tile is, as a body feels it: 0 dry land, 1 shallow (land within a tile: wade), 2 deep
 /// (swim).
 pub fn water_depth(map: &Map, tx: i32, ty: i32) -> u8 {
