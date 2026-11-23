@@ -31,6 +31,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 
 - The start screen has a version screen (`crates/game/src/update_ui.rs`, logic in `crates/updater`). It reads GitHub's release list once per start (`ALAZ_NO_UPDATE_CHECK=1` turns it off) and installs only after the player presses the button and the download matches `SHA256SUMS`. Tags with a dash (`v0.6.0-rc.1`) are pre-releases and belong to the Preview channel. No update from a running game.
 - Run dependency audits with `~/.cargo/bin/cargo-audit audit` (not on PATH). Open warnings: `heapless` 0.7.17 through `postcard` (needs a `postcard` upgrade that may touch the net protocol), `atomic-polyfill`, `ttf-parser`.
+- Wild animals (not wolves) go to drink: in thirsty spells of 6 epochs (1 spell in 3, picked from seed and animal id) `Wild::wander` aims at `nearest_bank`, a fixed-order ring scan of 20 tiles. No new saved field, so old saves still load. Fish already existed (`fish_school`, any water with depth 1 or more, rod or spear) and also work in fourth-generator water (test added).
 
 ## Important Links & Paths
 
@@ -65,3 +66,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-20] [Codex Kaira]: Reduced cave upload work and integrated the relay with world replacement and command ownership.
 - [2026-11-20] [Codex Kaira]: Added item and recipe pages, source lookup, recipe navigation, and the U shortcut.
 - [2026-11-20] [Codex Kaira]: Added the discovery tree with rules-based prerequisites. Goals and the Book share the same next discovery.
+- [2026-11-24] [Claude Kaira]: Animals drink at river banks. Added a fishing test for fourth-generator water, `--ui-shot` shots of the version screen, version 0.6.0-rc.1 (pre-release published, installed end to end against GitHub), PR #4 open. Titan checkout is `~/Projects/alaz`.
