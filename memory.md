@@ -25,10 +25,14 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Keep the exact cave floor selection when caching meshes. Upload only changed height regions when the texture origin stays fixed.
 - Build the surface opening mesh from nearby seeded floors and ceilings. Share floor edges across chunks so the gallery remains visible through the mouth.
 - Share player ownership and world generation checks between direct and relayed connections.
+- Fourth-generator worlds (small, seed tag 0xA1A7) get rivers and lakes from a priority flood over the 256 x 256 domain. Integer math only, so every peer gets the same water.
+- A river's current covers its whole width and is weaker toward the banks. A swimmer is carried along the drainage.
+- Fords are bars of gravel laid across a river, so walkers and routes cross dry-shod. The drainage runs on through them. Gravel is sand terrain in the sim and is drawn as stone. Rivers wider than 9 tiles have no ford yet.
 
 ## Important Links & Paths
 
 - Source and project description are in `gitrepo.md` and `README.md`.
+- Rivers, lakes, current and fords are in `crates/sim/src/rivers.rs`. The water shader streaks are in `crates/render/src/shader.wgsl`.
 - Density and navigation are in `crates/sim/src/cave_terrain.rs` and `crates/sim/src/cave_terrain/`.
 
 ## Current Focus
@@ -42,6 +46,7 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 
 ## Change Log & Agent Trail
 
+- [2026-11-23] [Claude Kaira]: Added rivers and lakes, a current across the full river width, fords of gravel (small and bigger rivers), and stone drawing for ford gravel. Pushed `feat/seamless-caves`. Open: animals and fish at the water, bridges for rivers over 9 tiles wide, rivers in older worlds, and a check of the moving streaks.
 - [2026-11-20] [Codex Kaira]: Replaced the entrance back wall with the real gallery mesh. Added a regression test for the open seam and the landing geometry.
 - [2026-11-20] [Codex Kaira]: Unified walking coordinates, route search, and step speed. Added density-based entrances, a horizontal cutaway, save format 33, and protocol 4. Surface orders resume after the player walks out. Preserve distinct entrance thresholds to prevent repeated transitions.
 - [2026-11-19] [Codex Kaira]: Connected natural cave terrain to entrances, walking, excavation, rendering, and saved state.
