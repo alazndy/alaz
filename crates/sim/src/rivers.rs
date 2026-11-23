@@ -16,12 +16,15 @@ const SEA: i32 = 95;
 const RIVER_AT: u32 = 420;
 /// Rivers are only cut into the lowlands: water stands at sea level, so a river high in the hills would be a canyon.
 const RIVER_BELOW: i32 = 165;
-/// A ford is only laid where the stream is still small: the water it carries is under this many times RIVER_AT.
-const FORD_BELOW: u32 = 4;
-/// Fords on one river lie at least this many tiles apart (the larger of the two distances).
-const FORD_APART: i32 = 24;
+/// A ford is only laid where the water is under this many times RIVER_AT: past that a river is too big to wade.
+const FORD_BELOW: u32 = 16;
+/// Streams under this many times RIVER_AT are small: they get a ford every FORD_APART_SMALL tiles, a bigger river
+/// one every FORD_APART_BIG, because a wide ford is a bigger work of the land.
+const SMALL_BELOW: u32 = 4;
+const FORD_APART_SMALL: i32 = 24;
+const FORD_APART_BIG: i32 = 40;
 /// A ford is at most this many tiles of water across.
-const FORD_ACROSS: i32 = 5;
+const FORD_ACROSS: i32 = 9;
 const NEIGHBOURS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 
 pub(crate) struct RiverMap {
@@ -232,7 +235,8 @@ fn lay_fords(drain: &[u32], flow: &[u8], raw: &[i32], lake: &[bool], height: &mu
             continue;
         }
         let (x, y) = (i as i32 % SIDE, i as i32 / SIDE);
-        if fords.iter().any(|&((ax, ay), _)| (ax - x).abs().max((ay - y).abs()) < FORD_APART) {
+        let apart = if drain[i] < RIVER_AT * SMALL_BELOW { FORD_APART_SMALL } else { FORD_APART_BIG };
+        if fords.iter().any(|&((ax, ay), _)| (ax - x).abs().max((ay - y).abs()) < apart) {
             continue;
         }
         // across the stream, at right angles to its current

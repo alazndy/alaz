@@ -4339,6 +4339,8 @@ fn fourth_generator_streams_have_fords_that_can_be_walked() {
             assert!(w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water), "a dry bank at ({x},{y})");
         }
     }
+    // some river is wider than a small stream can be (5 tiles of water), and still has a ford
+    assert!(fords.iter().any(|&(lo, hi)| (hi.0 - lo.0).abs().max((hi.1 - lo.1).abs()) > 6), "no ford across a bigger river");
     // the ford's bar, straight between its banks, is all dry
     let walkable = fords.iter().find(|&&(lo, hi)| {
         let (dx, dy) = ((hi.0 - lo.0).signum(), (hi.1 - lo.1).signum());
