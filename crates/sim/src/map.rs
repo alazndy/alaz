@@ -810,7 +810,7 @@ mod v4_tests {
                 // the next tile of the river is water too, unless the river runs off the map
                 let (nx, ny) = (x + dx, y + dy);
                 let off = !(0..256).contains(&nx) || !(0..256).contains(&ny);
-                lost += i32::from(!off && terrain_at(s, nx, ny) != Terrain::Water);
+                lost += i32::from(!off && terrain_at(s, nx, ny) != Terrain::Water && !map.is_gravel(nx, ny));
             }
         }
         assert!(rivers > 100, "only {rivers} river tiles");

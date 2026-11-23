@@ -4277,7 +4277,13 @@ fn fourth_generator_rivers_carry_a_swimmer_downstream() {
     let (mut x, mut y) = (tx, ty);
     let mut ended = false;
     for _ in 0..2_000 {
-        match crate::map::current_mm(&w.map, x, y) {
+        let river = crate::rivers::river_map(seed);
+        // a ford is dry gravel that the stream still runs over: its drainage carries on through it
+        let current = match crate::map::current_mm(&w.map, x, y) {
+            (0, 0) if river.is_gravel(x, y) => river.flow(x, y).map_or((0, 0), |(dx, dy)| (dx as i64, dy as i64)),
+            c => c,
+        };
+        match current {
             (0, 0) => {
                 ended = true;
                 break;
@@ -4313,6 +4319,47 @@ fn fourth_generator_current_fills_the_width_of_a_river() {
     };
     let (slow, fast) = (moving.iter().map(speed).min().unwrap(), moving.iter().map(speed).max().unwrap());
     assert!(slow < fast, "banks and middle run at one speed ({slow})");
+}
+
+/// A small stream has fords: bars of dry gravel laid across the water, kept apart, with dry banks on both sides, and a
+/// walker goes over one without getting wet.
+#[test]
+fn fourth_generator_streams_have_fords_that_can_be_walked() {
+    let seed = crate::map::tag_seed_new_world(7, 256);
+    let (mut w, a) = {
+        let mut w = World::with_size(seed, 256, 256);
+        let (sx, sy) = w.spawn_mm;
+        let a = w.spawn_agent(sx, sy);
+        (w, a)
+    };
+    let fords = crate::rivers::river_map(seed).fords().to_vec();
+    assert!(fords.len() >= 2, "a few fords, got {}", fords.len());
+    for &(lo, hi) in &fords {
+        for (x, y) in [lo, hi] {
+            assert!(w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water), "a dry bank at ({x},{y})");
+        }
+    }
+    // the ford's bar, straight between its banks, is all dry
+    let walkable = fords.iter().find(|&&(lo, hi)| {
+        let (dx, dy) = ((hi.0 - lo.0).signum(), (hi.1 - lo.1).signum());
+        let steps = (hi.0 - lo.0).abs().max((hi.1 - lo.1).abs());
+        (0..=steps).all(|k| w.map.terrain(lo.0 + k * dx, lo.1 + k * dy).is_some_and(|t| t != Terrain::Water))
+    });
+    let &(lo, hi) = walkable.expect("a ford whose whole bar is dry");
+    let mid = |t: (i32, i32)| (t.0 as i64 * 1000 + 500, t.1 as i64 * 1000 + 500);
+    w.agents[0].x = mid(lo).0;
+    w.agents[0].y = mid(lo).1;
+    w.step(&[cmd(a, CommandKind::MoveTo { x: mid(hi).0, y: mid(hi).1 })]);
+    let mut wet = false;
+    for _ in 0..900 {
+        w.step(&[]);
+        wet |= w.map.terrain_mm(w.agents[0].x, w.agents[0].y) == Some(Terrain::Water);
+        if (w.agents[0].x - mid(hi).0).abs().max((w.agents[0].y - mid(hi).1).abs()) < 700 {
+            break;
+        }
+    }
+    assert!(!wet, "waded or swam across");
+    assert!((w.agents[0].x - mid(hi).0).abs().max((w.agents[0].y - mid(hi).1).abs()) < 700, "did not arrive");
 }
 
 /// Water behaves as water: rivers flow downhill, a swimmer is carried, tires and in the end goes under; things put

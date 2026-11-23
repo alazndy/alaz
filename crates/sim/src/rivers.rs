@@ -16,6 +16,12 @@ const SEA: i32 = 95;
 const RIVER_AT: u32 = 420;
 /// Rivers are only cut into the lowlands: water stands at sea level, so a river high in the hills would be a canyon.
 const RIVER_BELOW: i32 = 165;
+/// A ford is only laid where the stream is still small: the water it carries is under this many times RIVER_AT.
+const FORD_BELOW: u32 = 4;
+/// Fords on one river lie at least this many tiles apart (the larger of the two distances).
+const FORD_APART: i32 = 24;
+/// A ford is at most this many tiles of water across.
+const FORD_ACROSS: i32 = 5;
 const NEIGHBOURS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 
 pub(crate) struct RiverMap {
@@ -24,6 +30,12 @@ pub(crate) struct RiverMap {
     flow: Vec<u8>,
     /// How much of the current a river water tile has, in percent: full along the middle, weaker toward the banks.
     strength: Vec<u8>,
+    /// Where the stream can be crossed on foot: the land just outside each bar of gravel laid across a ford.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fords: Vec<((i32, i32), (i32, i32))>,
+    /// Gravel laid across a ford: dry ground the stream still runs over, so its drainage carries on through it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    gravel: Vec<bool>,
     /// Tiles to the nearest water (the sea, a lake or a river), up to 8.
     shore: Vec<u8>,
 }
@@ -56,6 +68,17 @@ impl RiverMap {
     /// The share of the current (percent) that the water of this tile carries.
     pub(crate) fn strength(&self, x: i32, y: i32) -> i32 {
         Self::at(x, y).map_or(100, |i| i32::from(self.strength[i]))
+    }
+
+    /// The two banks of every ford, as the dry tile on each side of the gravel bar.
+    #[cfg(test)]
+    pub(crate) fn is_gravel(&self, x: i32, y: i32) -> bool {
+        Self::at(x, y).is_some_and(|i| self.gravel[i])
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fords(&self) -> &[((i32, i32), (i32, i32))] {
+        &self.fords
     }
 
     fn at(x: i32, y: i32) -> Option<usize> {
@@ -171,6 +194,9 @@ fn build(seed: u64) -> RiverMap {
             }
         }
     }
+    let before = height.clone();
+    let fords = lay_fords(&drain, &flow, &raw, &lake, &mut height);
+    let gravel: Vec<bool> = (0..CELLS).map(|i| height[i] != before[i]).collect();
     // distance to water, a few sweeps of a chamfer transform
     let mut shore = vec![8u8; CELLS];
     for i in 0..CELLS {
@@ -189,5 +215,49 @@ fn build(seed: u64) -> RiverMap {
             }
         }
     }
-    RiverMap { height, flow, strength, shore }
+    RiverMap { height, flow, strength, fords, gravel, shore }
+}
+
+/// Fords where a small stream runs: a bar of gravel two tiles thick laid straight across the water, so that a walker
+/// (and a route) can cross dry-shod. Streams are chosen by their water (small ones only, where a crossing is natural)
+/// and kept apart. Returns the dry tile on each side of every ford.
+fn lay_fords(drain: &[u32], flow: &[u8], raw: &[i32], lake: &[bool], height: &mut [u8]) -> Vec<((i32, i32), (i32, i32))> {
+    // gravel stands just above the water, as sand
+    const BAR: u8 = 97;
+    let wet = |height: &[u8], x: i32, y: i32| RiverMap::at(x, y).is_some_and(|i| height[i] < SEA as u8);
+    let mut fords: Vec<((i32, i32), (i32, i32))> = Vec::new();
+    for i in 0..CELLS {
+        let Some(&(fx, fy)) = NEIGHBOURS.get(usize::from(flow[i])) else { continue };
+        if drain[i] >= RIVER_AT * FORD_BELOW || height[i] >= SEA as u8 {
+            continue;
+        }
+        let (x, y) = (i as i32 % SIDE, i as i32 / SIDE);
+        if fords.iter().any(|&((ax, ay), _)| (ax - x).abs().max((ay - y).abs()) < FORD_APART) {
+            continue;
+        }
+        // across the stream, at right angles to its current
+        let across = (-fy, fx);
+        let reach = |sign: i32| -> Option<i32> {
+            (1..=FORD_ACROSS + 1).find(|&k| !wet(height, x + sign * k * across.0, y + sign * k * across.1))
+        };
+        let (Some(a), Some(b)) = (reach(1), reach(-1)) else { continue };
+        if a + b - 1 > FORD_ACROSS {
+            continue;
+        }
+        let line: Vec<usize> = (-(b - 1)..a)
+            .flat_map(|k| [(0, 0), (fx, fy)].map(|(ox, oy)| (x + k * across.0 + ox, y + k * across.1 + oy)))
+            .filter_map(|(tx, ty)| RiverMap::at(tx, ty))
+            .collect();
+        // never across a lake or the sea, and both banks must be dry land
+        let (lo, hi) = ((x - b * across.0, y - b * across.1), (x + a * across.0, y + a * across.1));
+        let dry = |(tx, ty): (i32, i32)| RiverMap::at(tx, ty).is_some_and(|n| height[n] >= SEA as u8);
+        if line.iter().any(|&n| lake[n] || raw[n] < SEA) || !dry(lo) || !dry(hi) {
+            continue;
+        }
+        for n in line {
+            height[n] = height[n].max(BAR);
+        }
+        fords.push((lo, hi));
+    }
+    fords
 }
