@@ -94,7 +94,15 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # the game's updater checks every download against this list before it installs anything
+      - name: Sağlama toplamları
+        working-directory: dist
+        run: sha256sum ALAZ-* > SHA256SUMS && cat SHA256SUMS
+      # a tag with a dash (v0.6.0-rc.1) is a pre-release: only the "Önizleme" channel of the updater sees it
       - name: Sürüm sayfası
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "A.L.A.Z ${GITHUB_REF_NAME#v}" --notes-file packaging/RELEASE_NOTES.md
+        run: |
+          flag=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flag="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" dist/* $flag --title "A.L.A.Z ${GITHUB_REF_NAME#v}" --notes-file packaging/RELEASE_NOTES.md

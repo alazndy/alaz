@@ -68,16 +68,20 @@ pub fn install_windows(setup: &Path) -> Result<Next, String> {
     Ok(Next::Exit)
 }
 
+/// The game's own data folder (`%APPDATA%\ALAZ`, or `~/.local/share/alaz` on Linux).
+pub fn data_dir() -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        Ok(PathBuf::from(std::env::var_os("APPDATA").ok_or("APPDATA is not set")?).join("ALAZ"))
+    } else if let Some(data) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        Ok(PathBuf::from(data).join("alaz"))
+    } else {
+        Ok(PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join(".local/share/alaz"))
+    }
+}
+
 /// A fresh folder for a download, under the game's own data folder.
 pub fn stage_dir() -> Result<PathBuf, String> {
-    let base = if cfg!(windows) {
-        PathBuf::from(std::env::var_os("APPDATA").ok_or("APPDATA is not set")?).join("ALAZ")
-    } else if let Some(data) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-        PathBuf::from(data).join("alaz")
-    } else {
-        PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join(".local/share/alaz")
-    };
-    stage_dir_in(&base.join("update"))
+    stage_dir_in(&data_dir()?.join("update"))
 }
 
 fn stage_dir_in(parent: &Path) -> Result<PathBuf, String> {

@@ -72,6 +72,7 @@ dependencies = [
  "alaz-net",
  "alaz-render",
  "alaz-sim",
+ "alaz-updater",
  "cpal",
  "egui_kittest",
  "libc",

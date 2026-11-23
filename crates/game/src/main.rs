@@ -33,6 +33,7 @@ mod story;
 mod style;
 mod ui_art;
 mod uishot;
+mod update_ui;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -924,7 +925,12 @@ impl App {
             app.knap.journal.book_open = true;
         }
         if show_menu && app.perf.as_ref().is_none_or(|p| p.bench_secs.is_none()) {
-            app.menu = Some(menu::Menu::new(false));
+            let mut menu = menu::Menu::new(false);
+            // one read-only look at GitHub's release list per start; ALAZ_NO_UPDATE_CHECK=1 turns it off
+            if std::env::var_os("ALAZ_NO_UPDATE_CHECK").is_none() && std::env::var_os("ALAZ_PILOT").is_none() {
+                menu.updater.start_check();
+            }
+            app.menu = Some(menu);
             app.no_save = true;
         }
         if app.perf.as_ref().is_some_and(|p| p.bench_secs.is_some()) {
