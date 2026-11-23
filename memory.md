@@ -29,9 +29,13 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - A river's current covers its whole width and is weaker toward the banks. A swimmer is carried along the drainage.
 - Fords are bars of gravel laid across a river, so walkers and routes cross dry-shod. The drainage runs on through them. Gravel is sand terrain in the sim and is drawn as stone. Rivers wider than 9 tiles have no ford yet.
 
+- The start screen has a version screen (`crates/game/src/update_ui.rs`, logic in `crates/updater`). It reads GitHub's release list once per start (`ALAZ_NO_UPDATE_CHECK=1` turns it off) and installs only after the player presses the button and the download matches `SHA256SUMS`. Tags with a dash (`v0.6.0-rc.1`) are pre-releases and belong to the Preview channel. No update from a running game.
+- Run dependency audits with `~/.cargo/bin/cargo-audit audit` (not on PATH). Open warnings: `heapless` 0.7.17 through `postcard` (needs a `postcard` upgrade that may touch the net protocol), `atomic-polyfill`, `ttf-parser`.
+
 ## Important Links & Paths
 
 - Source and project description are in `gitrepo.md` and `README.md`.
+- Updater: `crates/updater/` (version order, release pick, checksum, guarded download, install). Release workflow: `.github/workflows/release.yml` (builds `SHA256SUMS`).
 - Rivers, lakes, current and fords are in `crates/sim/src/rivers.rs`. The water shader streaks are in `crates/render/src/shader.wgsl`.
 - Density and navigation are in `crates/sim/src/cave_terrain.rs` and `crates/sim/src/cave_terrain/`.
 
@@ -46,6 +50,7 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 
 ## Change Log & Agent Trail
 
+- [2026-11-23] [Claude Kaira]: Added the updater crate and the version screen (check, channel choice, checked install). The workflow now publishes `SHA256SUMS` and marks dash tags as pre-releases. Updated `url` to 2.5.9 after `cargo audit`. Not yet tested: a real release with `SHA256SUMS` (needs a tag such as `v0.6.0-rc.1`), the Windows installer path, and the screen by eye.
 - [2026-11-23] [Claude Kaira]: Added rivers and lakes, a current across the full river width, fords of gravel (small and bigger rivers), and stone drawing for ford gravel. Pushed `feat/seamless-caves`. Open: animals and fish at the water, bridges for rivers over 9 tiles wide, rivers in older worlds, and a check of the moving streaks.
 - [2026-11-20] [Codex Kaira]: Replaced the entrance back wall with the real gallery mesh. Added a regression test for the open seam and the landing geometry.
 - [2026-11-20] [Codex Kaira]: Unified walking coordinates, route search, and step speed. Added density-based entrances, a horizontal cutaway, save format 33, and protocol 4. Surface orders resume after the player walks out. Preserve distinct entrance thresholds to prevent repeated transitions.
