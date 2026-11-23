@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sim", "crates/render", "crates/net", "crates/game", "crates/relay-proto", "crates/relay"]
+members = ["crates/sim", "crates/render", "crates/net", "crates/game", "crates/relay-proto", "crates/relay", "crates/updater"]
 
 [workspace.package]
 version = "0.5.0"
