@@ -4990,6 +4990,34 @@ fn small_new_worlds_have_ores() {
     }
 }
 
+/// The fourth generator's rivers and lakes hold schools too, and a fish can be landed from their banks.
+#[test]
+fn fourth_generator_water_has_fish_to_catch() {
+    let seed = crate::map::tag_seed_new_world(7, 256);
+    let mut w = World::with_size(seed, 256, 256);
+    let (sx, sy) = w.spawn_mm;
+    w.spawn_agent(sx, sy);
+    w.learn_everything();
+    w.wild.retain(|x| x.species != WildSpecies::Wolf);
+    let a = w.agents[0].id;
+    let schools = (0..256).step_by(5).flat_map(|y| (0..256).step_by(5).map(move |x| (x, y))).filter(|&(x, y)| crate::map::fish_school(&w.map, x, y)).count();
+    assert!(schools >= 5, "schools in the new water, got {schools}");
+    let (tx, ty) = ((sx / 1000) as i32, (sy / 1000) as i32);
+    let (fx, fy) = crate::map::school_near(&w.map, tx, ty, 200).expect("a school of fish");
+    let bank = (-4..=4i32).flat_map(|dy| (-4..=4i32).map(move |dx| (fx + dx, fy + dy))).find(|&(x, y)| w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water)).expect("a bank by the school");
+    w.agents[0].x = bank.0 as i64 * 1000 + 500;
+    w.agents[0].y = bank.1 as i64 * 1000 + 500;
+    give(&mut w, ItemKind::FishingRod, 1);
+    w.step(&[cmd(a, CommandKind::Fish { tx: fx, ty: fy })]);
+    for _ in 0..60 * 60 {
+        w.step(&[]);
+        if count(&w, 0, ItemKind::RawFish) >= 1 {
+            break;
+        }
+    }
+    assert!(count(&w, 0, ItemKind::RawFish) >= 1, "no fish landed");
+}
+
 /// Fishing: a rod or a spear by a school; refused without one, or where there are no fish; the catch cooks over a
 /// fire and feeds the protein group.
 #[test]
