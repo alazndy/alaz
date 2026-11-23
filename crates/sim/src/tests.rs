@@ -4323,6 +4323,44 @@ fn fourth_generator_current_fills_the_width_of_a_river() {
 
 /// A small stream has fords: bars of dry gravel laid across the water, kept apart, with dry banks on both sides, and a
 /// walker goes over one without getting wet.
+/// A river too wide for a ford is crossed by a rock causeway: a dry bar from bank to bank that a person can walk.
+#[test]
+fn fourth_generator_wide_rivers_have_a_causeway() {
+    let seed = crate::map::tag_seed_new_world(7, 256);
+    let (mut w, a) = {
+        let mut w = World::with_size(seed, 256, 256);
+        let (sx, sy) = w.spawn_mm;
+        let a = w.spawn_agent(sx, sy);
+        (w, a)
+    };
+    let span = |&((lx, ly), (hx, hy)): &((i32, i32), (i32, i32))| (hx - lx).abs().max((hy - ly).abs());
+    let crossings = crate::rivers::river_map(seed).fords().to_vec();
+    let bridges: Vec<_> = crossings.iter().filter(|c| span(c) > 10).copied().collect();
+    assert!(!bridges.is_empty(), "a causeway over a wide river; {} crossings, widest {}", crossings.len(), crossings.iter().map(span).max().unwrap_or(0));
+    let dry = |w: &World, x: i32, y: i32| w.map.terrain(x, y).is_some_and(|t| t != Terrain::Water);
+    let walkable = bridges.iter().find(|&&(lo, hi)| {
+        let (dx, dy) = ((hi.0 - lo.0).signum(), (hi.1 - lo.1).signum());
+        let steps = span(&(lo, hi));
+        (0..=steps).all(|k| dry(&w, lo.0 + k * dx, lo.1 + k * dy))
+            && (0..steps).all(|k| dx == 0 || dy == 0 || dry(&w, lo.0 + (k + 1) * dx, lo.1 + k * dy) || dry(&w, lo.0 + k * dx, lo.1 + (k + 1) * dy))
+    });
+    let &(lo, hi) = walkable.expect("a causeway whose whole bar is dry");
+    let mid = |t: (i32, i32)| (t.0 as i64 * 1000 + 500, t.1 as i64 * 1000 + 500);
+    w.agents[0].x = mid(lo).0;
+    w.agents[0].y = mid(lo).1;
+    w.step(&[cmd(a, CommandKind::MoveTo { x: mid(hi).0, y: mid(hi).1 })]);
+    let mut waded = false;
+    for _ in 0..60 * 120 {
+        w.step(&[]);
+        waded |= w.map.terrain_mm(w.agents[0].x, w.agents[0].y) == Some(Terrain::Water);
+        if (w.agents[0].x - mid(hi).0).abs().max((w.agents[0].y - mid(hi).1).abs()) < 1_500 {
+            break;
+        }
+    }
+    assert!(!waded, "the walker stayed dry on the causeway");
+    assert!((w.agents[0].x - mid(hi).0).abs().max((w.agents[0].y - mid(hi).1).abs()) < 1_500, "reached the far bank");
+}
+
 #[test]
 fn fourth_generator_streams_have_fords_that_can_be_walked() {
     let seed = crate::map::tag_seed_new_world(7, 256);

@@ -25,6 +25,10 @@ const FORD_APART_SMALL: i32 = 24;
 const FORD_APART_BIG: i32 = 40;
 /// A ford is at most this many tiles of water across.
 const FORD_ACROSS: i32 = 9;
+/// A natural bridge, a rock causeway, crosses a river wider than a ford can: up to this many tiles of water, one
+/// every BRIDGE_APART tiles along the river.
+const BRIDGE_ACROSS: i32 = 24;
+const BRIDGE_APART: i32 = 60;
 const NEIGHBOURS: [(i32, i32); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 
 pub(crate) struct RiverMap {
@@ -196,7 +200,8 @@ fn build(seed: u64) -> RiverMap {
         }
     }
     let before = height.clone();
-    let fords = lay_fords(&drain, &flow, &raw, &lake, &mut height);
+    let mut fords = lay_fords(&drain, &flow, &raw, &lake, &mut height, Crossing::Ford);
+    fords.extend(lay_fords(&drain, &flow, &raw, &lake, &mut height, Crossing::Bridge));
     let gravel: Vec<bool> = (0..CELLS).map(|i| height[i] != before[i]).collect();
     // distance to water, a few sweeps of a chamfer transform
     let mut shore = vec![8u8; CELLS];
@@ -222,28 +227,41 @@ fn build(seed: u64) -> RiverMap {
 /// Fords where a small stream runs: a bar of gravel two tiles thick laid straight across the water, so that a walker
 /// (and a route) can cross dry-shod. Streams are chosen by their water (small ones only, where a crossing is natural)
 /// and kept apart. Returns the dry tile on each side of every ford.
-fn lay_fords(drain: &[u32], flow: &[u8], raw: &[i32], lake: &[bool], height: &mut [u8]) -> Vec<((i32, i32), (i32, i32))> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Crossing {
+    /// Gravel across a small stream.
+    Ford,
+    /// A rock causeway across a river too wide for a ford: the same bar of raised ground, longer.
+    Bridge,
+}
+
+fn lay_fords(drain: &[u32], flow: &[u8], raw: &[i32], lake: &[bool], height: &mut [u8], kind: Crossing) -> Vec<((i32, i32), (i32, i32))> {
     // gravel stands just above the water, as sand
     const BAR: u8 = 97;
     let wet = |height: &[u8], x: i32, y: i32| RiverMap::at(x, y).is_some_and(|i| height[i] < SEA as u8);
     let mut fords: Vec<((i32, i32), (i32, i32))> = Vec::new();
     for i in 0..CELLS {
         let Some(&(fx, fy)) = NEIGHBOURS.get(usize::from(flow[i])) else { continue };
-        if drain[i] >= RIVER_AT * FORD_BELOW || height[i] >= SEA as u8 {
+        if height[i] >= SEA as u8 || (kind == Crossing::Ford && drain[i] >= RIVER_AT * FORD_BELOW) || (kind == Crossing::Bridge && drain[i] < RIVER_AT * SMALL_BELOW) {
             continue;
         }
         let (x, y) = (i as i32 % SIDE, i as i32 / SIDE);
-        let apart = if drain[i] < RIVER_AT * SMALL_BELOW { FORD_APART_SMALL } else { FORD_APART_BIG };
+        let apart = match kind {
+            Crossing::Bridge => BRIDGE_APART,
+            Crossing::Ford if drain[i] < RIVER_AT * SMALL_BELOW => FORD_APART_SMALL,
+            Crossing::Ford => FORD_APART_BIG,
+        };
+        let limit = if kind == Crossing::Bridge { BRIDGE_ACROSS } else { FORD_ACROSS };
         if fords.iter().any(|&((ax, ay), _)| (ax - x).abs().max((ay - y).abs()) < apart) {
             continue;
         }
         // across the stream, at right angles to its current
         let across = (-fy, fx);
         let reach = |sign: i32| -> Option<i32> {
-            (1..=FORD_ACROSS + 1).find(|&k| !wet(height, x + sign * k * across.0, y + sign * k * across.1))
+            (1..=limit + 1).find(|&k| !wet(height, x + sign * k * across.0, y + sign * k * across.1))
         };
         let (Some(a), Some(b)) = (reach(1), reach(-1)) else { continue };
-        if a + b - 1 > FORD_ACROSS {
+        if a + b - 1 > limit || (kind == Crossing::Bridge && a + b - 1 <= FORD_ACROSS) {
             continue;
         }
         // along a slanting current the bar is a 2 x 2 block at every step, so that its tiles touch by their sides and do
