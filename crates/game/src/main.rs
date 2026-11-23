@@ -212,6 +212,11 @@ fn demo_setup(w: &mut World) -> Selection {
             w.agents[0].y = n.ty as i64 * 1000 + 2_500;
         }
     }
+    if let Some((tx, ty)) = std::env::var("ALAZ_DEMO_TILE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.parse::<i64>().ok()?, b.parse::<i64>().ok()?)))) {
+        // stand on an exact tile, to look at a place found by other means
+        w.agents[0].x = tx * 1000 + 500;
+        w.agents[0].y = ty * 1000 + 500;
+    }
     if let Ok(v) = std::env::var("ALAZ_DEMO_AT") {
         // "grass", "forest", "sand" or "peak": stand on the first such spot at least 6 tiles from other ground types
         let want = |tx: i32, ty: i32| -> bool {
