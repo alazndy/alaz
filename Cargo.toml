@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/sim", "crates/render", "crates/net", "crates/game", "crates/relay-proto", "crates/relay", "crates/updater"]
 
 [workspace.package]
-version = "0.6.0-rc.1"
+version = "0.6.0"
 edition = "2024"
 
 [profile.release]
