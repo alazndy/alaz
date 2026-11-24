@@ -33,6 +33,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Run dependency audits with `~/.cargo/bin/cargo-audit audit` (not on PATH). One warning is open: `ttf-parser` is unmaintained (pulled in by winit through sctk-adwaita and ab_glyph; no fix exists). `postcard` is built with `default-features = false, features = ["alloc"]`: that drops `heapless` and `atomic-polyfill` and does not change the wire or save format.
 - Wild animals (not wolves) go to drink: in thirsty spells of 6 epochs (1 spell in 3, picked from seed and animal id) `Wild::wander` aims at `nearest_bank`, a fixed-order ring scan of 20 tiles. No new saved field, so old saves still load. Fish already existed (`fish_school`, any water with depth 1 or more, rod or spear) and also work in fourth-generator water (test added).
 - Natural causeways (`Crossing::Bridge` in `rivers.rs`): a rock bar like a ford, across rivers with 4x RIVER_AT drainage or more and 10 to 24 tiles of water, one every 60 tiles. Same `gravel` mask, so the renderer draws them as stone. Seed 7 at 256 has 4 (spans 11 to 20). Lakes and the sea are never crossed. A player-built bridge was left out on purpose: it needs a saved terrain overlay, a save version bump and about 12 water code paths.
+- Handle work: every recipe that takes a wooden handle (stone axe, spear, hoe, hammer, knife, shovel, copper and bronze axe, pickaxe and knife, prospector's pick) starts with the same three steps: trim (`trim`), rub flat (`rub`), rub to shape (`rub`). Not changed: `clamp`, `torch`, `splint`, `fishing_rod`, and the iron tools (they use a `plank`). Test: `every_handled_tool_starts_with_the_handle_work`.
 
 ## Important Links & Paths
 
@@ -70,3 +71,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-24] [Claude Kaira]: Animals drink at river banks. Added a fishing test for fourth-generator water, `--ui-shot` shots of the version screen, version 0.6.0-rc.1 (pre-release published, installed end to end against GitHub), PR #4 open. Titan checkout is `~/Projects/alaz`.
 - [2026-11-24] [Claude Kaira]: Added natural rock causeways over wide fourth-generator rivers (test: a walker crosses dry).
 - [2026-11-24] [Claude Kaira]: Cleared 10 of 11 audit warnings by turning off postcard's default `heapless-cas` feature (no format change; all workspace tests pass). Update failures now show a Turkish explanation.
+- [2026-11-24] [Claude Kaira]: The stone axe's handle minigames (trim, rub, rub) now start all other handled tools too (branch fix: feat/handle-steps).

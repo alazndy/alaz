@@ -860,6 +860,9 @@ ticks = 0
 discovery = "spear"
 fine_bonus = 1
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Dalı doğrult ve sivilt", kind = "timing", strikes = 3, window = 10, period = 120, tools = [{ item = "stone_axe", bonus = 5 }, { item = "iron_axe", bonus = 8 }] },
   { label = "Taşı uca yerleştir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Lifle sıkıca bağla", kind = "tension", strikes = 2, window = 11, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
@@ -1050,6 +1053,9 @@ ticks = 0
 discovery = "farming"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Eğri dalı kısalt", kind = "timing", strikes = 2, window = 11, period = 120, tools = [{ item = "stone_axe", bonus = 5 }, { item = "bronze_axe", bonus = 6 }, { item = "iron_axe", bonus = 7 }] },
   { label = "Taşı dala yerleştir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Lifle sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
@@ -1284,6 +1290,9 @@ ticks = 0
 discovery = "hammer"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Yuvarlak taşı seç ve kaba yont", kind = "knap", strikes = 2, window = 30, period = 120, tools = [] },
   { label = "Taşı sapa sıkıca bağla", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -1297,6 +1306,9 @@ ticks = 0
 discovery = "stone_axe"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Bıçak ağzını incelt", kind = "knap", strikes = 3, window = 20, period = 120, tools = [{ item = "hammer", bonus = 8 }] },
   { label = "Sapın yarığına oturt", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
 ]
@@ -1310,6 +1322,9 @@ ticks = 0
 discovery = "stone_axe"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Taşı yassılt", kind = "knap", strikes = 3, window = 24, period = 120, tools = [{ item = "hammer", bonus = 8 }] },
   { label = "Dallara bağla", kind = "tension", strikes = 2, window = 13, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -2059,6 +2074,9 @@ ticks = 0
 discovery = "casting"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -2072,6 +2090,9 @@ ticks = 0
 discovery = "casting"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -2085,6 +2106,9 @@ ticks = 0
 discovery = "casting"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Bıçağı sapa oturt", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
 ]
 
@@ -2177,6 +2201,9 @@ ticks = 0
 discovery = "bronzework"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -2190,6 +2217,9 @@ ticks = 0
 discovery = "bronzework"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Kafayı sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [{ item = "clamp", bonus = 16 }] },
   { label = "Sıkıca bağla", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 8 }] },
 ]
@@ -2518,6 +2548,9 @@ ticks = 0
 discovery = "geology"
 fine_bonus = 0
 steps = [
+  { label = "Budakları ve küçük dalları kır", kind = "trim", strikes = 4, window = 14, period = 0, tools = [{ item = "stone_axe", bonus = 6 }, { item = "iron_axe", bonus = 8 }] },
+  { label = "Sapı boydan düzle", kind = "rub", strikes = 2, window = 12, period = 0, tools = [{ item = "sharp_stone", bonus = 3 }] },
+  { label = "Taşla sürterek şekil ver", kind = "rub", strikes = 2, window = 9, period = 0, tools = [{ item = "sharp_stone", bonus = 2 }] },
   { label = "Küçük kafayı döv", kind = "timing", strikes = 3, window = 11, period = 110, tools = [] },
   { label = "Sapa geçir", kind = "fit", strikes = 1, window = 24, period = 120, tools = [] },
 ]

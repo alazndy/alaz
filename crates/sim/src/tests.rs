@@ -1689,13 +1689,14 @@ fn fit_and_tension_score_distance_and_pressure() {
         give(&mut w, ItemKind::Branch, 1);
         give(&mut w, ItemKind::Fiber, 1);
         w.step(&[cmd(a, CommandKind::Craft { recipe: recipe("spear") })]);
-        // pass the timing step perfectly, then fit
-        while w.craft_view(a).is_some_and(|v| v.kind == MinigameKind::Timing) {
+        // the handle comes first (trim, rub, rub) and then the timing step: pass each perfectly, then fit
+        while w.craft_view(a).is_some_and(|v| v.kind != MinigameKind::Fit) {
             let v = w.craft_view(a).unwrap();
-            if v.pos.abs_diff(v.center) <= v.half / 3 {
-                w.step(&[cmd(a, CommandKind::Strike)]);
-            } else {
-                w.step(&[]);
+            match v.kind {
+                MinigameKind::Trim => w.step(&[cmd(a, CommandKind::PlaceAt { x: v.tx as i16, y: v.ty as i16 })]),
+                MinigameKind::Rub => w.step(&[cmd(a, CommandKind::Rub { pace: v.power as u8, grip: true })]),
+                _ if v.pos.abs_diff(v.center) <= v.half / 3 => w.step(&[cmd(a, CommandKind::Strike)]),
+                _ => w.step(&[]),
             }
         }
         let v = w.craft_view(a).unwrap();
@@ -1706,6 +1707,18 @@ fn fit_and_tension_score_distance_and_pressure() {
     };
     assert!(go(0, 0), "dead on");
     assert!(!go(70, 70), "far off");
+}
+
+/// Every tool that takes a wooden handle starts with the same handle work as the stone axe: trim the knots, rub the
+/// handle flat, rub it to shape.
+#[test]
+fn every_handled_tool_starts_with_the_handle_work() {
+    let rules = crate::rules();
+    for id in ["stone_axe", "spear", "hoe", "hammer", "knife", "shovel", "copper_axe", "copper_pickaxe", "copper_knife", "bronze_axe_hafted", "bronze_pickaxe_hafted", "prospector_pick"] {
+        let r = rules.recipes.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("recipe {id}"));
+        let kinds: Vec<_> = r.steps.iter().take(3).map(|s| s.kind).collect();
+        assert_eq!(kinds, [MinigameKind::Trim, MinigameKind::Rub, MinigameKind::Rub], "{id} starts with the handle work");
+    }
 }
 
 #[test]
