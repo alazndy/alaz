@@ -305,16 +305,21 @@ mod tests {
         assert!(matches!(s.phase, Phase::Failed(_)));
     }
 
-    /// Talks to the real GitHub: `XDG_DATA_HOME=$(mktemp -d) cargo test -p alaz -- --ignored real_release`. Needs the v0.6.0-rc.1 pre-release.
+    /// Talks to the real GitHub: `XDG_DATA_HOME=$(mktemp -d) cargo test -p alaz -- --ignored real_release`. Needs the
+    /// published v0.6.0 release (and no newer one: a later release makes the version asserts below move).
     #[test]
     #[ignore]
     #[cfg(target_os = "linux")]
     fn real_release_is_found_verified_and_installed() {
         let old = Version::parse("0.5.0").unwrap();
-        let preview = check_against(Channel::Preview, &old).unwrap().expect("the preview channel sees the pre-release");
-        assert_eq!(preview.version.to_string(), "0.6.0-rc.1");
-        let stable = check_against(Channel::Stable, &old).unwrap();
-        assert!(stable.is_none(), "the stable channel must not offer a pre-release: {stable:?}");
+        let preview = check_against(Channel::Preview, &old).unwrap().expect("the preview channel finds a newer release");
+        assert_eq!(preview.version.to_string(), "0.6.0");
+        let stable = check_against(Channel::Stable, &old).unwrap().expect("the stable channel finds 0.6.0");
+        assert_eq!(stable.version.to_string(), "0.6.0");
+        // a player on the pre-release is offered the final release, and a player on 0.6.0 is up to date
+        let rc = Version::parse("0.6.0-rc.1").unwrap();
+        assert_eq!(check_against(Channel::Stable, &rc).unwrap().expect("rc to final").version.to_string(), "0.6.0");
+        assert!(check_against(Channel::Stable, &Version::parse("0.6.0").unwrap()).unwrap().is_none());
         let root = std::env::temp_dir().join(format!("alaz-e2e-{}", std::process::id()));
         let target = root.join("bin/alaz");
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
