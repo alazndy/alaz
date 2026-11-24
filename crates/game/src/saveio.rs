@@ -38,6 +38,11 @@ pub fn base_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("ALAZ_SAVE_DIR") {
         return PathBuf::from(d);
     }
+    // a test run must never read or write the player's own settings and saves (ui.cfg, the keys, the autosave): the
+    // interface size in ui.cfg alone changed what the layout tests saw
+    if cfg!(test) {
+        return std::env::temp_dir().join(format!("alaz-test-{}", std::process::id()));
+    }
     // Windows: %APPDATA%\ALAZ
     if cfg!(windows)
         && let Some(d) = std::env::var_os("APPDATA") {

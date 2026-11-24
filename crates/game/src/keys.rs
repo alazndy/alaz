@@ -302,6 +302,10 @@ impl Keybinds {
         if let Some(d) = std::env::var_os("ALAZ_SAVE_DIR") {
             return PathBuf::from(d).join("keys.cfg");
         }
+        // a test run must not touch the player's key bindings
+        if cfg!(test) {
+            return std::env::temp_dir().join(format!("alaz-test-{}", std::process::id())).join("keys.cfg");
+        }
         // Windows: next to the saves, in %APPDATA%\ALAZ
         if cfg!(windows)
             && let Some(d) = std::env::var_os("APPDATA") {
