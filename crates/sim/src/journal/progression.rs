@@ -1,7 +1,6 @@
 //! Read-only discovery paths. Production and construction come from the loaded rules.
 
 use super::DISCOVERY_ORDER;
-use crate::caves::CAVE_LEVELS;
 use crate::item_guide::{cave_depths, found_in};
 use crate::rules::{Rules, ToolKind};
 use crate::{BuildingKind, Discovery, ItemKind, NodeKind, World};
@@ -316,7 +315,7 @@ impl Facts {
                     _ => facts.add([], [item(kind)]),
                 }
             }
-            for depth in cave_depths(kind).filter(|&depth| depth < CAVE_LEVELS) {
+            for depth in cave_depths(kind).filter(|&depth| depth <= crate::world::CAVE_MAX_DEPTH) {
                 facts.tools(rules, ToolKind::Pick, rules.cave_tier(depth), item(kind));
             }
         }

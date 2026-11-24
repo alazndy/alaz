@@ -430,9 +430,10 @@ impl Script {
                     // dig the nearest ore vein (or, with none about, the nearest bare wall)
                     "mine" | "dig" => w.cave_dig_target(me).map(|(tx, ty)| CommandKind::CaveDig { tx, ty }),
                     // walk to the stair down
-                    "down" => w.cave_down_spot(me).map(|(x, y)| CommandKind::MoveTo { x, y }),
-                    "leave" => Some(CommandKind::CaveLeave),
-                    _ => nearest(w, &a, NodeKind::CaveMouth).map(|node| CommandKind::EnterCave { node }),
+                    "down" | "deeper" => w.cave_down_spot(me).map(|(x, y)| CommandKind::MoveTo { x, y }),
+                    "leave" => w.cave_exit_destination(me).map(|position| CommandKind::MoveToFloor { position }),
+                    _ => nearest(w, &a, NodeKind::CaveMouth).and_then(|node| w.natural_mouth(node.0))
+                        .map(|mouth| CommandKind::MoveToFloor { position: crate::nav::walking::WalkFloor::from(mouth.landing).center() }),
                 };
                 match k {
                     Some(k) => {
@@ -496,11 +497,13 @@ impl Script {
                 w.tick += skip;
                 self.note(w, format!("  (debug) clock moved on {skip} ticks"));
             }
-            "tp" => match teleport_spot(w, arg(1)) {
+            "tp" => match if arg(1) == "mouth" { mouth_spot(w, arg(2).parse().unwrap_or(0), arg(3).parse().unwrap_or(4)) } else { teleport_spot(w, arg(1)) } {
                 Some((x, y)) => {
                     if let Some(ag) = w.agents.iter_mut().find(|x| x.id == me) {
                         ag.x = x;
                         ag.y = y;
+                        // a stale height would leave the body (and the camera that follows it) under the hill
+                        ag.z = i64::from(crate::map::elevation_at_mm(w.seed, x, y));
                         ag.task = crate::world::Task::Idle;
                     }
                     self.note(w, format!("  (debug) moved to ({}, {}) m", x / 1000, y / 1000));
@@ -548,6 +551,17 @@ pub fn free_spot(w: &World, a: &crate::world::Agent, kind: BuildingKind) -> Opti
 }
 
 /// A spot of a kind of ground, searched outward from the spawn.
+/// In front of the `n`th natural cave mouth (in node order): `far` tiles (default 4) out from its threshold, away from the
+/// tunnel (nearer if that is water), to look at an entrance from outside: `tp mouth 1 2`.
+fn mouth_spot(w: &World, n: usize, far: i32) -> Option<(i64, i64)> {
+    let mouth = (0..w.nodes.len() as u32).filter_map(|i| w.natural_mouth(i)).nth(n)?;
+    let (tx, ty) = (mouth.threshold.x, mouth.threshold.y);
+    (1..=far.max(1)).rev().find_map(|d| {
+        let (x, y) = (tx - mouth.direction.0 * d, ty - mouth.direction.1 * d);
+        w.map.terrain(x, y).filter(|t| *t != Terrain::Water).map(|_| (x as i64 * TILE_MM + TILE_MM / 2, y as i64 * TILE_MM + TILE_MM / 2))
+    })
+}
+
 fn teleport_spot(w: &World, what: &str) -> Option<(i64, i64)> {
     let (sx, sy) = ((w.spawn_mm.0 / TILE_MM) as i32, (w.spawn_mm.1 / TILE_MM) as i32);
     let ok = |tx: i32, ty: i32| -> bool {

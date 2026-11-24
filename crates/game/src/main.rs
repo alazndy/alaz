@@ -33,6 +33,7 @@ mod story;
 mod style;
 mod ui_art;
 mod uishot;
+mod update_ui;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -211,6 +212,11 @@ fn demo_setup(w: &mut World) -> Selection {
             w.agents[0].x = n.tx as i64 * 1000 - 1_500;
             w.agents[0].y = n.ty as i64 * 1000 + 2_500;
         }
+    }
+    if let Some((tx, ty)) = std::env::var("ALAZ_DEMO_TILE").ok().and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.parse::<i64>().ok()?, b.parse::<i64>().ok()?)))) {
+        // stand on an exact tile, to look at a place found by other means
+        w.agents[0].x = tx * 1000 + 500;
+        w.agents[0].y = ty * 1000 + 500;
     }
     if let Ok(v) = std::env::var("ALAZ_DEMO_AT") {
         // "grass", "forest", "sand" or "peak": stand on the first such spot at least 6 tiles from other ground types
@@ -394,34 +400,24 @@ fn demo_setup(w: &mut World) -> Selection {
         w.step(&[Command { agent: id, kind: CommandKind::Craft { recipe: RecipeId(0) } }]);
     }
     if std::env::var("ALAZ_DEMO_CAVE").as_deref() == Ok("in")
-        && let Some(n) = w.nodes.iter().find(|n| n.kind == alaz_sim::NodeKind::CaveMouth && n.tx > 12 && n.ty > 12).cloned() {
-            w.agents[0].x = n.tx as i64 * 1000 + 500;
-            w.agents[0].y = n.ty as i64 * 1000 + 1_500;
+        && let Some(node) = w.nodes.iter().enumerate().find_map(|(i, _)| w.natural_mouth(i as u32).map(|_| alaz_sim::NodeId(i as u32)))
+        && let Some(position) = w.cave_entrance_destination(node)
+    {
+            let n = &w.nodes[node.0 as usize];
+            (w.agents[0].x, w.agents[0].y) = n.center_mm();
             w.agents[0].task = alaz_sim::world::Task::Idle;
             w.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
-            let node = alaz_sim::NodeId(w.nodes.iter().position(|m| m.tx == n.tx && m.ty == n.ty).unwrap() as u32);
-            w.step(&[Command { agent: id, kind: CommandKind::EnterCave { node } }]);
+            w.step(&[Command { agent: id, kind: CommandKind::MoveToFloor { position } }]);
             for _ in 0..200 {
+                if w.agents[0].cave_view().is_some() {
+                    break;
+                }
                 w.step(&[]);
             }
-            // dev aid: ALAZ_DEMO_CAVE_LEVEL=<1..4> stands the player at the entry of that level; `dig` starts a swing at the
-            // nearest vein, `dark` puts the torch out, `deep` is the level of the flood
-            let level: u8 = std::env::var("ALAZ_DEMO_CAVE_LEVEL").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
-            if level > 1
-                && let Some(lv) = w.caves.get(&node.0).and_then(|k| k.level(level)) {
-                    let (ex, ey) = lv.entry;
-                    let lv_tile = lv.landing((ex, ey));
-                    if let Some(c) = w.agents[0].cave.as_mut() {
-                        c.level = level;
-                        c.x = lv_tile.0 as i64 * 1000 + 500;
-                        c.y = lv_tile.1 as i64 * 1000 + 500;
-                    }
-                }
             match std::env::var("ALAZ_DEMO_CAVE_DO").as_deref() {
                 Ok("dark") => {
-                    if let Some(c) = w.agents[0].cave.as_mut() {
-                        c.light = 0;
-                    }
+                    w.agents[0].inventory.counts[ItemKind::Torch as usize] = 0;
+                    w.step(&[]);
                 }
                 Ok("dig") => {
                     w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
@@ -723,10 +719,6 @@ struct App {
     evo_view: Option<f32>,
     /// The stage coordinate drawn this frame (`alaz_render::Evo`), for the bodies and the portrait.
     evo_pos: f32,
-    /// Black over the picture for a moment when the cave is entered or left (1 = black).
-    cave_fade: f32,
-    /// The cave (mouth, level) the player was in last frame.
-    cave_was: Option<(u32, u8)>,
     cave_map: cave_map::CaveMap,
     /// Dev aid: `ALAZ_DEMO_EVO=0..9` draws everyone at this stage coordinate, whatever the world says.
     evo_force: Option<f32>,
@@ -863,8 +855,6 @@ impl App {
             last_stage: 255,
             evo_view: None,
             evo_pos: 9.0,
-            cave_fade: 0.0,
-            cave_was: None,
             cave_map: cave_map::CaveMap::from_known(seen),
             evo_force: std::env::var("ALAZ_DEMO_EVO").ok().and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 9.0)),
             knap: hud::KnapState::default(),
@@ -935,7 +925,12 @@ impl App {
             app.knap.journal.book_open = true;
         }
         if show_menu && app.perf.as_ref().is_none_or(|p| p.bench_secs.is_none()) {
-            app.menu = Some(menu::Menu::new(false));
+            let mut menu = menu::Menu::new(false);
+            // one read-only look at GitHub's release list per start; ALAZ_NO_UPDATE_CHECK=1 turns it off
+            if std::env::var_os("ALAZ_NO_UPDATE_CHECK").is_none() && std::env::var_os("ALAZ_PILOT").is_none() {
+                menu.updater.start_check();
+            }
+            app.menu = Some(menu);
             app.no_save = true;
         }
         if app.perf.as_ref().is_some_and(|p| p.bench_secs.is_some()) {
@@ -985,9 +980,12 @@ impl App {
     }
 
     fn center_camera(&mut self) {
-        let (x, y) = self.me_agent().map_or(self.world.spawn_mm, |a| (a.x, a.y));
-        self.cam.target.x = x as f32 / 1000.0;
-        self.cam.target.z = y as f32 / 1000.0;
+        let position = self.me_agent().map(|a| self.world.agent_walk_position(a));
+        let (x, y) = position.map_or(self.world.spawn_mm, |p| (p.x_mm, p.y_mm));
+        let x = x as f32 / 1000.0;
+        let z = y as f32 / 1000.0;
+        let height = position.map_or_else(|| alaz_render::ground_height(self.world.seed, x, z), |p| p.z_mm as f32 / 1000.0);
+        self.cam.target = Vec3::new(x, height, z);
     }
 
     /// Closes the machine window once the player walks from within reach of the selected machine to beyond it. A
@@ -1722,7 +1720,7 @@ impl App {
         let (wr, wf) = (held(keys::Action::MoveRight) - held(keys::Action::MoveLeft), held(keys::Action::MoveUp) - held(keys::Action::MoveDown));
         let sprint_held = held(keys::Action::Sprint) > 0.5;
         // running while the sprint key is held (the sim stops it when the breath runs out)
-        let want_sprint = self.menu.is_none() && !crafting && !self.in_cave() && sprint_held;
+        let want_sprint = self.menu.is_none() && !crafting && sprint_held;
         let sim_sprint = self.me_agent().is_some_and(|a| a.sprint);
         if want_sprint != self.sprinting || (!want_sprint && sim_sprint) || (want_sprint && !sim_sprint && self.sprinting && self.me_agent().is_some_and(|a| a.stamina >= alaz_sim::world::SPRINT_MIN_START)) {
             self.sprinting = want_sprint;
@@ -1752,19 +1750,7 @@ impl App {
                 self.issue(CommandKind::MoveTo { x, y });
             }
         }
-        // going into a cave, down its stairs or back out: the picture goes black for a moment and the camera is there already
-        let cave_state = self.me_agent().and_then(|a| a.cave);
-        let cave_now = cave_state.map(|c| (c.node, if c.elevation_m().is_some() { 0 } else { c.level }));
-        if cave_now != self.cave_was {
-            self.cave_was = cave_now;
-            self.cave_fade = 1.0;
-            if let Some((x, y)) = self.me_pos() {
-                self.cam.target.x = x as f32 / 1000.0;
-                self.cam.target.z = y as f32 / 1000.0;
-                self.cam.target.y = cave_state.map_or_else(|| alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z), |c| f32::from(c.elevation_m().unwrap_or(0)));
-            }
-        }
-        self.cave_fade = (self.cave_fade - dt * 3.0).max(0.0);
+        let player = self.me_agent().map(|a| self.world.agent_walk_position(a));
         if self.follow && bench_pose.is_none() {
             // follow where the body was drawn (between ticks), not the tick's position: at 144 Hz the tick's 60 Hz
             // steps would shake the whole picture against the body
@@ -1775,8 +1761,9 @@ impl App {
                 self.cam.target.z += (y - self.cam.target.z) * k;
             }
         }
-        // the camera rides the hills with the ground under its target
-        let gh = cave_state.map_or_else(|| alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z), |c| f32::from(c.elevation_m().unwrap_or(0)));
+        // Follow the same ramp as the walker without changing camera modes at the entrance.
+        let walk_height = player.filter(|_| self.follow || self.in_cave()).map(|p| p.z_mm as f32 / 1000.0);
+        let gh = walk_height.unwrap_or_else(|| alaz_render::ground_height(self.world.seed, self.cam.target.x, self.cam.target.z));
         self.cam.target.y += (gh - self.cam.target.y) * (1.0 - (-8.0 * dt).exp());
         let d = self.pitch_goal - self.cam.pitch_deg;
         self.cam.pitch_deg += d * (1.0 - (-10.0 * dt).exp());
@@ -2095,7 +2082,11 @@ impl App {
         // what the pointer is on gets a bright rim, so it is plain what a right click would take
         let pointer_active = self.menu.is_none() && self.build_mode.is_none() && self.world.craft_view(self.me).is_none()
             && self.gfx.as_ref().is_some_and(|g| !g.renderer.pointer_over_ui());
-        let surface = if pointer_active && !self.in_cave() { self.pointer_surface() } else { None };
+        let target = pointer_active.then(|| self.pointer_target()).flatten();
+        let surface = target.and_then(|(ray, target)| match target {
+            PointerGround::Surface(ground) => Some((ray, ground)),
+            PointerGround::Cave(_) => None,
+        });
         let picked = surface.and_then(|(ray, ground)| self.pick_node(ray, ground));
         let hover = picked.and_then(|id| self.world.nodes.get(id.0 as usize)).map(|n| (n.tx, n.ty));
         // dev aid for screenshots: rim the nearest tree when the pointer is not on anything
@@ -2105,7 +2096,7 @@ impl App {
             self.world.nodes.iter().filter(|n| n.kind == alaz_sim::NodeKind::Tree).min_by_key(|n| dist2(me.x, me.y, n.center_mm().0, n.center_mm().1)).map(|n| (n.tx, n.ty))
         });
         let pointer_text = if pointer_active {
-            self.pointer_text(surface, picked)
+            self.pointer_text(target, picked)
         } else {
             // placing a building on a spot that will not do: say why, instead of only turning the ghost red
             self.build_mode.zip(ghost_mm).filter(|&(kind, (x, y))| !self.placement_ok(kind, x, y)).and_then(|(kind, (x, y))| self.placement_why(kind, x, y))
@@ -2121,7 +2112,8 @@ impl App {
             Net::Client(_) => "Coop: bağlı".to_string(),
         };
         let world_ref_anchor = world.agents.get(self.me.0 as usize).map(|a| {
-            let p = alaz_render::glam::Vec3::new(a.x as f32 / 1000.0, 1.9, a.y as f32 / 1000.0);
+            let ground = world.agent_walk_position(a);
+            let p = Vec3::new(ground.x_mm as f32 / 1000.0, ground.z_mm as f32 / 1000.0 + 1.9, ground.y_mm as f32 / 1000.0);
             self.cam.project(g.renderer.aspect(), p)
         });
         let ui_ctx = UiCtx {
@@ -2141,7 +2133,6 @@ impl App {
             time_scale: self.time_scale,
             evo: self.evo_pos,
             yaw: self.cam.yaw_deg,
-            fade: self.cave_fade,
             cave_tiles: Some(self.cave_map.known()),
         };
         let mut acts = Vec::new();
@@ -2337,35 +2328,34 @@ impl App {
         let (w, h) = g.renderer.size();
         cam.win = (w, h);
         let ray = PointerRay::from_camera(&cam, (2.0 * c.0 / w as f32 - 1.0, 1.0 - 2.0 * c.1 / h as f32))?;
-        let seed = self.world.seed;
-        let ground = ray.terrain_hit(|x, z| alaz_sim::elevation_mm(seed, x, z) as f32 / 1000.0);
-        self.pick_node(ray, ground).map(|id| id.0)
-    }
-
-    fn pointer_surface(&self) -> Option<(PointerRay, Vec3)> {
-        let ray = self.pointer_ray()?;
-        let seed = self.world.seed;
-        let ground = ray.terrain_hit(|x, z| alaz_sim::elevation_mm(seed, x, z) as f32 / 1000.0);
-        Some((ray, ground))
-    }
-
-    /// Ground point (meters) under the mouse cursor.
-    fn cursor_ground(&self) -> Option<Vec3> {
-        if let Some(c) = self.me_agent().and_then(|a| a.cave) {
-            let ray = self.pointer_ray()?;
-            if let Some(z) = c.elevation_m() {
-                let renderer = &self.gfx.as_ref()?.renderer;
-                for h in (z - 24..=z + 24).rev() {
-                    let p = ray.at(f32::from(h));
-                    if renderer.natural_cave_floor(p.x.floor() as i32, p.z.floor() as i32) == Some(h) {
-                        return Some(p);
-                    }
-                }
-                return Some(ray.at(f32::from(z)));
-            }
-            return Some(ray.at(0.0));
+        match self.pointer_ground_along(ray)? {
+            PointerGround::Surface(ground) => self.pick_node(ray, ground).map(|id| id.0),
+            PointerGround::Cave(_) => None,
         }
-        self.pointer_surface().map(|(_, ground)| ground)
+    }
+
+    fn pointer_target(&self) -> Option<(PointerRay, PointerGround)> {
+        let ray = self.pointer_ray()?;
+        Some((ray, self.pointer_ground_along(ray)?))
+    }
+
+    fn pointer_ground_along(&self, ray: PointerRay) -> Option<PointerGround> {
+        let renderer = &self.gfx.as_ref()?.renderer;
+        let map = &self.world.map;
+        let surface = ray.terrain_hit_where(
+            |x, y| alaz_sim::elevation_mm(self.world.seed, x, y) as f32 / 1000.0,
+            |x, y, p| map.in_bounds(x, y) && !map.surface_cave_gap(x, y) && !renderer.surface_cutaway_contains(p),
+        );
+        if !alaz_sim::map::has_natural_caves(self.world.seed) {
+            return surface.map(PointerGround::Surface);
+        }
+        let floor = ray.cave_floor_hit(|x, y, z| renderer.has_cave_floor(x, y, z));
+        let rock = self.me_agent().and_then(|a| a.cave_view()).and_then(|c| {
+            let p = ray.at(f32::from(c.elevation_m()));
+            matches!(self.cave_cell_at(p)?.1, alaz_sim::caves::Cell::Rock | alaz_sim::caves::Cell::Rubble).then_some(p)
+        });
+        let cave = [floor, rock].into_iter().flatten().max_by(|a, b| a.y.total_cmp(&b.y));
+        choose_pointer_ground(surface, cave)
     }
 
     /// Dev aid (ALAZ_DEMO_PHYS): `tree` fells a tree beside the player every few seconds, `rock` drops stones down the
@@ -2491,7 +2481,7 @@ impl App {
 
     /// The worker (dog, ox, horse, bot) the pointer is on, if any.
     fn pick_worker(&self, ray: PointerRay, ground: Vec3) -> Option<usize> {
-        self.world.agents.iter().enumerate().filter(|(_, a)| a.kind.is_worker() && a.cave.is_none()).filter_map(|(i, a)| {
+        self.world.agents.iter().enumerate().filter(|(_, a)| a.kind.is_worker() && a.cave_view().is_none()).filter_map(|(i, a)| {
             let at = Vec2::new(a.x as f32, a.y as f32) / 1000.0;
             let base = ray.model_base(self.world.seed, at, 0.7, ground.y)?;
             ray.column_hit(at, 0.7, ground.y.max(base), base + 2.5).map(|y| (i, y))
@@ -2500,17 +2490,17 @@ impl App {
 
     /// What the pointer is on, in words, with what a right click would do: a resource, something lying on the
     /// ground, a building, a person or an animal.
-    fn pointer_text(&self, surface: Option<(PointerRay, Vec3)>, picked: Option<alaz_sim::NodeId>) -> Option<String> {
+    fn pointer_text(&self, target: Option<(PointerRay, PointerGround)>, picked: Option<alaz_sim::NodeId>) -> Option<String> {
         use alaz_sim::physics::{BodyKind, Q};
         // dev aid for close-up screenshots of the character: no tip beside the pointer
         if std::env::var_os("ALAZ_DEMO_NOTIP").is_some() {
             return None;
         }
         let w = &self.world;
-        if self.in_cave() {
-            return self.cave_pointer_text();
-        }
-        let (ray, p) = surface?;
+        let (ray, p) = match target? {
+            (_, PointerGround::Cave(ground)) => return self.cave_pointer_text(ground),
+            (ray, PointerGround::Surface(ground)) => (ray, ground),
+        };
         if w.surface_at(p.x.floor() as i32, p.z.floor() as i32) == alaz_sim::Surface::Fire {
             return Some("Yanıyor! Uzak dur".to_string());
         }
@@ -2569,64 +2559,45 @@ impl App {
     }
 
     /// The cave tile under the pointer, with what it is.
-    fn cave_tile_under_pointer(&self) -> Option<((i32, i32), alaz_sim::caves::Cell)> {
-        let p = self.cursor_ground()?;
-        let c = self.me_agent()?.cave?;
+    fn cave_cell_at(&self, p: Vec3) -> Option<((i32, i32), alaz_sim::caves::Cell)> {
+        use alaz_sim::caves::Cell;
+        let c = self.me_agent()?.cave_view()?;
         let t = (p.x.floor() as i32, p.z.floor() as i32);
-        if c.elevation_m().is_some() {
-            return self.world.natural_cave_cell(c, t.0, t.1).map(|cell| (t, cell));
-        }
-        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
-        alaz_sim::caves::Level::inside(t.0, t.1).then(|| (t, lv.cell(t.0, t.1)))
+        let cell = self.world.natural_cave_cell(c, t.0, t.1)?;
+        (cell != Cell::Rock || p.y == f32::from(c.elevation_m())).then_some((t, cell))
     }
 
     /// What the pointer is on underground, in words, with what a click would do.
-    fn cave_pointer_text(&self) -> Option<String> {
+    fn cave_pointer_text(&self, ground: Vec3) -> Option<String> {
         use alaz_sim::caves::Cell;
-        let c = self.me_agent()?.cave?;
-        let ((tx, ty), cell) = self.cave_tile_under_pointer()?;
-        if c.elevation_m().is_some() {
-            if cell == Cell::Rubble { return Some("Çöken taşlar  ·  sağ tık: temizle".into()); }
-            if cell != Cell::Rock { return None; }
-            return Some(self.world.natural_cave_ore(c, tx, ty).and_then(alaz_sim::caves::ore_item)
-                .map_or_else(|| "Kaya  ·  sağ tık: kaz".to_string(), |ore| format!("{} damarı  ·  sağ tık: kaz", crate::lang::item_word(&self.world, ore))));
+        let c = self.me_agent()?.cave_view()?;
+        let ((tx, ty), cell) = self.cave_cell_at(ground)?;
+        if cell == Cell::Rubble {
+            return Some("Çöken taşlar  ·  sağ tık: temizle".into());
         }
-        let lv = self.world.caves.get(&c.node)?.level(c.level)?;
-        Some(match cell {
-            Cell::Rock | Cell::Rubble if !lv.diggable(tx, ty) => return None,
-            Cell::Rock => match lv.ore_at(tx, ty) {
-                Some((code, _)) => {
-                    let name = alaz_sim::caves::ore_item(code).map_or("Cevher".to_string(), |i| crate::lang::item_word(&self.world, i));
-                    format!("{name} damarı  ·  sağ tık: kaz")
-                }
-                None => "Kaya  ·  sağ tık: kaz".to_string(),
-            },
-            Cell::Rubble => "Çöken taşlar  ·  sağ tık: temizle".to_string(),
-            Cell::Down => "Merdiven  ·  tıkla: aşağı in".to_string(),
-            Cell::Up => "Merdiven  ·  tıkla: yukarı çık".to_string(),
-            Cell::Exit => "Çıkış  ·  tıkla: dışarı çık".to_string(),
-            Cell::Shallow => "Sığ su: yavaşlatır".to_string(),
-            Cell::Deep => "Derin su: yüzmek gerekir".to_string(),
-            Cell::Floor => return None,
-        })
+        if cell != Cell::Rock {
+            return None;
+        }
+        Some(self.world.natural_cave_ore(c, tx, ty).and_then(alaz_sim::caves::ore_item)
+            .map_or_else(|| "Kaya  ·  sağ tık: kaz".to_string(), |ore| format!("{} damarı  ·  sağ tık: kaz", crate::lang::item_word(&self.world, ore))))
     }
 
     /// A click underground. Left: walk there (the stairs and the exit are walked onto). Right: dig the wall under the
     /// pointer, or clear fallen rock.
-    fn cave_click(&mut self, primary: bool) {
+    fn cave_click(&mut self, p: Vec3, primary: bool) {
         use alaz_sim::caves::Cell;
-        let Some(p) = self.cursor_ground() else { return };
-        let (px, py) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
+        let position = alaz_sim::cave_terrain::WorldPoint {
+            x_mm: (p.x * 1000.0) as i64,
+            y_mm: (p.z * 1000.0) as i64,
+            z_mm: (p.y * 1000.0).round() as i64,
+        };
         if primary {
             self.selected = None;
-            self.issue(CommandKind::MoveTo { x: px, y: py });
+        } else if let Some(((tx, ty), Cell::Rock | Cell::Rubble)) = self.cave_cell_at(p) {
+            self.issue(CommandKind::CaveDig { tx, ty });
             return;
         }
-        match self.cave_tile_under_pointer() {
-            Some(((tx, ty), Cell::Rock | Cell::Rubble)) => self.issue(CommandKind::CaveDig { tx, ty }),
-            Some(((tx, ty), Cell::Down | Cell::Up | Cell::Exit)) => self.issue(CommandKind::MoveTo { x: tx as i64 * 1000 + 500, y: ty as i64 * 1000 + 500 }),
-            _ => self.issue(CommandKind::MoveTo { x: px, y: py }),
-        }
+        self.issue(CommandKind::MoveToFloor { position });
     }
 
     /// Is (x, y) mm within `r` mm of me?
@@ -2706,7 +2677,7 @@ impl App {
         if self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui()) {
             return None;
         }
-        let p = self.cursor_ground()?;
+        let (_, PointerGround::Surface(p)) = self.pointer_target()? else { return None };
         let (x, z) = if self.grid_snap { (p.x.floor() + 0.5, p.z.floor() + 0.5) } else { (p.x, p.z) };
         Some(((x * 1000.0).round() as i64, (z * 1000.0).round() as i64))
     }
@@ -2822,14 +2793,14 @@ impl App {
 
     /// Where I stand, in mm: on the surface map, or on the cave level when underground.
     fn me_pos(&self) -> Option<(i64, i64)> {
-        self.me_agent().map(|a| match a.cave {
+        self.me_agent().map(|a| match a.cave_view() {
             Some(c) => (c.x, c.y),
             None => (a.x, a.y),
         })
     }
 
     fn in_cave(&self) -> bool {
-        self.me_agent().is_some_and(|a| a.cave.is_some())
+        self.me_agent().is_some_and(|a| a.cave_view().is_some())
     }
 
     /// Left button (`primary`): walk there, or place the building being built. Right button: use what is under the
@@ -2841,10 +2812,6 @@ impl App {
         }
         // a stray click must not throw away a craft in progress: walking away is a deliberate key press
         if self.world.craft_view(self.me).is_some() {
-            return;
-        }
-        if self.in_cave() {
-            self.cave_click(primary);
             return;
         }
         if let Some(kind) = self.build_mode {
@@ -2878,9 +2845,23 @@ impl App {
             }
             return;
         }
-        let Some((ray, p)) = self.pointer_surface() else { return };
+        let Some((ray, target)) = self.pointer_target() else { return };
+        let p = match target {
+            PointerGround::Surface(p) => p,
+            PointerGround::Cave(p) => {
+                self.cave_click(p, primary);
+                return;
+            }
+        };
         let (px, py) = ((p.x * 1000.0) as i64, (p.z * 1000.0) as i64);
         if primary {
+            if self.in_cave() {
+                let z_mm = i64::from(alaz_sim::map::elevation_at_mm(self.world.seed, px, py));
+                let position = alaz_sim::cave_terrain::WorldPoint { x_mm: px, y_mm: py, z_mm };
+                self.selected = None;
+                self.issue(CommandKind::MoveToFloor { position });
+                return;
+            }
             // a building or a worker under the pointer (anywhere on its model): open it; elsewhere, walk there
             if let Some(i) = self.pick_building(ray, p) {
                 self.selected = Some(Selection::Building(i));
@@ -2934,7 +2915,8 @@ impl App {
         let picked = self.pick_node(ray, p).or_else(|| self.world.node_at(p.x.floor() as i32, p.z.floor() as i32));
         if let Some(node) = picked {
             let command = if self.world.nodes[node.0 as usize].kind == alaz_sim::NodeKind::CaveMouth {
-                CommandKind::EnterCave { node }
+                let Some(position) = self.world.cave_entrance_destination(node) else { return };
+                CommandKind::MoveToFloor { position }
             } else {
                 CommandKind::Gather { node }
             };
@@ -3028,6 +3010,20 @@ fn view_item() -> Option<alaz_sim::ItemKind> {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PointerGround {
+    Surface(Vec3),
+    Cave(Vec3),
+}
+
+fn choose_pointer_ground(surface: Option<Vec3>, cave: Option<Vec3>) -> Option<PointerGround> {
+    match (surface, cave) {
+        (Some(surface), Some(cave)) if cave.y > surface.y => Some(PointerGround::Cave(cave)),
+        (Some(surface), _) => Some(PointerGround::Surface(surface)),
+        (None, cave) => cave.map(PointerGround::Cave),
+    }
+}
+
 /// The orthographic pointer line, parameterized by world height in meters.
 #[derive(Clone, Copy)]
 struct PointerRay {
@@ -3056,7 +3052,12 @@ impl PointerRay {
         Vec3::new(p.x, y, p.y)
     }
 
-    fn terrain_hit(self, height: impl Fn(i32, i32) -> f32) -> Vec3 {
+    /// The first terrain triangle crossed by the pointer, ignoring open mouths and camera cuts.
+    fn terrain_hit_where(
+        self,
+        height: impl Fn(i32, i32) -> f32,
+        visible: impl Fn(i32, i32, Vec3) -> bool,
+    ) -> Option<Vec3> {
         let mut top = Self::MAX_GROUND_Y;
         let mut tile = self.horizontal(top).floor().as_ivec2();
         let next_edge = |axis: usize, tile: i32| {
@@ -3091,11 +3092,18 @@ impl PointerRay {
             let mut above = clearance(from);
             for to in [diagonal, bottom].into_iter().filter(|&y| y >= bottom && y < top) {
                 let below = clearance(to);
-                if above <= 0.0 {
-                    return self.at(from);
-                }
-                if below <= 0.0 {
-                    return self.at(from + (to - from) * (above / (above - below)));
+                let crossing = if above == 0.0 {
+                    Some(from)
+                } else if (above > 0.0 && below <= 0.0) || (above < 0.0 && below >= 0.0) {
+                    Some(from + (to - from) * (above / (above - below)))
+                } else {
+                    None
+                };
+                if let Some(y) = crossing {
+                    let point = self.at(y);
+                    if visible(tile.x, tile.y, point) {
+                        return Some(point);
+                    }
                 }
                 from = to;
                 above = below;
@@ -3108,7 +3116,15 @@ impl PointerRay {
             }
             top = bottom;
         }
-        self.at(0.0)
+        None
+    }
+
+    fn cave_floor_hit(self, floor_at: impl Fn(i32, i32, i16) -> bool) -> Option<Vec3> {
+        // Walkable floors lie above bedrock and below the highest generated ground.
+        (-95i16..=64).rev().find_map(|z| {
+            let point = self.at(f32::from(z));
+            floor_at(point.x.floor() as i32, point.z.floor() as i32, z).then_some(point)
+        })
     }
 
     fn column_hit(self, center: Vec2, radius: f32, bottom: f32, top: f32) -> Option<f32> {
@@ -3161,15 +3177,26 @@ mod pointer_tests {
     #[test]
     fn pointer_hits_front_of_ridge_before_the_ground_behind_it() {
         let ray = PointerRay { zero: Vec2::new(0.0, 0.5), rise: Vec2::X };
-        let hit = ray.terrain_hit(|x, _| if x == 3 { 5.0 } else { 0.0 });
+        let hit = ray.terrain_hit_where(|x, _| if x == 3 { 5.0 } else { 0.0 }, |_, _, _| true).unwrap();
         assert!(hit.distance(Vec3::new(10.0 / 3.0, 10.0 / 3.0, 0.5)) < 0.001);
     }
 
     #[test]
     fn terrain_hit_uses_the_mesh_diagonal() {
         let ray = PointerRay { zero: Vec2::new(0.25, 0.75), rise: Vec2::ZERO };
-        let hit = ray.terrain_hit(|x, z| if x == 1 && z == 1 { 8.0 } else { 0.0 });
+        let hit = ray.terrain_hit_where(|x, z| if x == 1 && z == 1 { 8.0 } else { 0.0 }, |_, _, _| true).unwrap();
         assert_eq!(hit, Vec3::new(0.25, 2.0, 0.75));
+    }
+
+    #[test]
+    fn a_cave_floor_is_picked_through_a_hole_in_the_surface() {
+        let ray = PointerRay { zero: Vec2::splat(0.5), rise: Vec2::ZERO };
+        let floor = ray.cave_floor_hit(|x, y, z| x == 0 && y == 0 && [-2, -5].contains(&z));
+        let surface = ray.terrain_hit_where(|_, _| 1.0, |_, _, _| true);
+
+        assert_eq!(choose_pointer_ground(surface, floor), Some(PointerGround::Surface(ray.at(1.0))));
+        let opening = ray.terrain_hit_where(|_, _| 1.0, |x, y, _| (x, y) != (0, 0));
+        assert_eq!(choose_pointer_ground(opening, floor), Some(PointerGround::Cave(ray.at(-2.0))));
     }
 
     #[test]
@@ -3181,7 +3208,21 @@ mod pointer_tests {
     }
 }
 
+/// The Windows build has no console, so a panic would vanish with the window. The message goes to a file the player can send.
+#[cfg(windows)]
+fn install_crash_log() {
+    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("alaz")) else { return };
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("crash.txt"), format!("{info}\n\n{}", std::backtrace::Backtrace::force_capture()));
+        previous(info);
+    }));
+}
+
 fn main() {
+    #[cfg(windows)]
+    install_crash_log();
     // `--export-assets <folder>`: write the code-made models, tiles and icons out as files, then leave (no window)
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--export-assets") {

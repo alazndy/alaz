@@ -11,7 +11,6 @@ const THIN_ROOF_ATTEMPTS: u64 = 8;
 pub(crate) struct SmallWorldCaves {
     pub(crate) field: CaveTerrain,
     pub(crate) mouths: BTreeMap<Tile, CaveMouth>,
-    pub(crate) gaps: BTreeSet<Tile>,
     pub(crate) anchor: Tile,
     approach_land: Vec<bool>,
 }
@@ -69,7 +68,6 @@ impl SmallWorldCaves {
                 return Some(Self {
                     field,
                     mouths,
-                    gaps,
                     anchor,
                     approach_land,
                 });

@@ -165,11 +165,11 @@ Yan dallar:
 | v2 | 4 km ve altı yeni dünyalar | Nehirler (dere → nehir, denize kesintisiz) ve göller. Küçük dünyalarda çayırda maden damarları |
 | v3 | 4 km'den büyük yeni dünyalar | 9 km'lik kıtalar ve okyanuslar, bükülmüş kıyılar, dağ kuşaklarında sıradağlar ve karlı zirveler, enlem kuşaklarına göre iklim (tundra, orman, çayır, çöl), uzun nehirler |
 
-Yeni dünyalarda geniş mağara boşlukları, tüneller ve dar kollar aynı üç boyutlu yeraltı alanından çıkar. Dünyanın yüzeyiyle kesişen ve yürünebilir devamı olan boşluklar giriş oluşturur. Bir ağ birden fazla yüzey ağzını bağlayabilir. Kazılan kaya ve çöküntüler dünya koordinatıyla kaydedilir ve her girişten aynı şekilde görünür. Çöküntü geçişi kapatır. Sağ tıklayarak temizlenir ve kazmayla daha hızlı açılır. Eski kayıtlar kendi mağara üreticisini kullanır.
+Yeni dünyalarda geniş mağara boşlukları, tüneller ve dar kollar aynı üç boyutlu yeraltı alanından çıkar. Dünyanın yüzeyiyle kesişen ve yürünebilir devamı olan boşluklar giriş oluşturur. Bir ağ birden fazla yüzey ağzını bağlayabilir. Kazılan kaya ve çöküntüler dünya koordinatıyla kaydedilir ve her girişten aynı şekilde görünür. Çöküntü geçişi kapatır. Sağ tıklayarak temizlenir ve kazmayla daha hızlı açılır. Eski kayıtlardaki doğal mağaralar korunur. Yapay odalar kaldırılır ve içerideki oyuncu kayıtlı yüzey konumundan devam eder.
 
 128–256 m arası yeni dünyalarda üretici, başlangıca karadan bağlanan bir mağara ağzı arar. Gerekirse yüzeye açılan bir galeri bulmak için yeraltı alanını yeniden örnekler. Bu arama sırasında yüzey arazisi sabit kalır.
 
-Mağara ağzına sağ tıklayınca karakter ağza yürür ve yanında ışık varsa içeri girer. Mağarada tıklayarak yürürken oyun su basmış geçitleri ve gereken kazma seviyesini hesaba katar.
+Mağaraya yürüyerek girip çıkabilirsin. Işık görüşü belirler. Karanlıkta iki karo görürsün. Girişte meşale veya lamba yakıtı harcanmaz. Mağarada tıklayarak yürürken oyun su basmış geçitleri ve gereken kazma seviyesini hesaba katar. Yer altında kamera galeriyi yatay kesitle gösterir. Yüzeydeki bir hedefe emir verdiğinde karakter yürüyerek dışarı çıkar ve emri orada sürdürür.
 
 Kayalık yamaçta tavanı sağlam kalan bir galeri, kayaya açılan bir ağız oluşturur. Açık arazide alçalan galerinin girişi, mağara tabanına inen bir geçit olarak görünür.
 
@@ -220,14 +220,14 @@ Kayıtlar tarifleri indeksle anar; bu yüzden **yeni tarifler dosyanın sonuna e
 
 ## Kayıtlar
 
-Sürümlü ikili biçim (postcard). Doğal mağaralı dünyalar sürüm 32, diğer dünyalar sürüm 30 kullanır. Kayıt başlıca şunları tutar:
+Kayıtlar postcard ikili biçiminin 33. sürümünü kullanır ve eski sürümlerden yüklenebilir. Çok oyunculu bağlantı protokolü 4. sürümdür. Kayıt başlıca şu bilgileri tutar.
 - değişen kaynaklar
-- binalar ve ajanlar
+- binalar ve ajanların üç boyutlu konumları
 - chunk sırası
 - kendi kurallar
 - doğal mağaralarda kazılan kaya ve çöküntüler
 
-Gerisi tohumdan yeniden üretilir. Yüklenen dünyanın hash'i kayıttakiyle karşılaştırılır.
+Gerisi tohumdan yeniden üretilir. Sürüm 33 yüklenirken dünyanın durum özeti kayıttaki değerle karşılaştırılır.
 
 Ana dosya eksik veya bozuk olduğunda oyun sağlam yedeğe döner. Kayıt menüsü bu yuvadan devam etmeye izin verir. Sonraki kayıt sağlam yedeği korur.
 
@@ -327,6 +327,7 @@ ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
 |---|---|
 | `ALAZ_BENCH=30 ALAZ_NOVSYNC=1` | Performans ölçümü: kare, çizim ve sim süreleri |
 | `ALAZ_PERF=1` | 5 saniyede bir performans dökümü |
+| `WGPU_BACKEND=dx12` (ya da `vulkan`, `gl`) | Grafik arayüzünü seçer. Oyun açılırken sessizce kapanıyorsa (bazı Intel Vulkan sürücüleri çöker) `dx12` dene. Windows'ta çökme iletisi `%LOCALAPPDATA%\alaz\crash.txt` dosyasına yazılır |
 | `ALAZ_DEMO_AT=coast\|swim\|forest\|peak\|…` | Gösteri sahnesinde yeri seçer |
 | `ALAZ_DEMO_WALK=dx,dy` | Yürüme tuşunu basılı tutar |
 | `ALAZ_DEMO_IDLE` | Gösteride el işi başlatmaz |

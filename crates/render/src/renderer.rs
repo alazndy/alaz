@@ -211,6 +211,9 @@ pub struct Renderer {
     pub(crate) surf_on: bool,
     /// (seed, tile corner of the window's first texel) of what the height texture holds now
     pub(crate) height_at: Option<(u64, i32, i32)>,
+    /// The height window as the CPU wrote it, and the cave-mouth hollows patched into it (tile corner -> metres).
+    pub(crate) height_cpu: Vec<f32>,
+    pub(crate) carve_applied: Arc<std::collections::BTreeMap<(i32, i32), f32>>,
     pub(crate) weather_kind: f32,
     pub(crate) weather_amount: f32,
     pub(crate) wind: f32,
@@ -263,11 +266,10 @@ pub struct Renderer {
     pub(crate) shadow_dir: [f32; 3],
     /// Where the cloud field has drifted to (it moves with the wind, so it is summed frame by frame).
     pub(crate) cloud_off: [f32; 2],
-    /// The mesh of the cave the player is in, cut in blocks: (node, level, cave version, wet) it was built for.
-    pub(crate) cave_blocks: Option<((u32, u8, u64, bool), Vec<Vec<Vertex>>)>,
+    /// World-space gallery geometry around visible openings and the current underground floor.
     natural_cave_view: Option<frame::NaturalCaveView>,
-    /// Where the player was last frame underground (node, level): a change drops the walking animations.
-    pub(crate) cave_was: Option<(u32, u8)>,
+    /// The local roof opening used by the previous frame and by pointer selection.
+    surface_cutaway: Option<frame::SurfaceCutaway>,
     /// The torch's strength as drawn (it eases toward the sim's value, so a dying torch dims instead of jumping).
     pub(crate) cave_light: f32,
     pub(crate) prof: Option<GpuProf>,
@@ -286,7 +288,9 @@ impl Renderer {
         let quality = quality.with_env();
         quality::set_pixels(quality.pixels);
         let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())));
+        // `WGPU_BACKEND` (vulkan, dx12, gl, metal) picks the graphics API: a broken driver for one of them (the Intel Vulkan driver
+        // on some Windows machines crashes at start) can then be avoided
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())));
         let surface = instance.create_surface(window.clone()).expect("create surface");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
@@ -578,10 +582,9 @@ impl Renderer {
             }),
             shadow_dir: [0.0, 1.0, 0.0],
             cloud_off: [0.0, 0.0],
-            cave_blocks: None,
             natural_cave_view: None,
-            cave_was: None,
-            cave_light: 1.0,
+            surface_cutaway: None,
+            cave_light: 0.0,
             prof,
             shot_once: None,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
@@ -604,6 +607,8 @@ impl Renderer {
             surf_key: None,
             surf_on: false,
             height_at: None,
+            height_cpu: Vec::new(),
+            carve_applied: Arc::new(std::collections::BTreeMap::new()),
             weather_kind: 1.0,
             weather_amount: 0.0,
             wind: 0.0,

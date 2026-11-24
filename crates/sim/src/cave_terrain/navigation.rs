@@ -1,4 +1,4 @@
-use super::{CaveTerrain, Material};
+use super::{CaveColumn, CaveTerrain, Material};
 use crate::map::{Map, TILE_MM, Terrain};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -89,6 +89,7 @@ pub(crate) struct CaveNav<'a> {
     dug: &'a BTreeSet<CaveTile>,
     rubble: Option<&'a BTreeSet<CaveTile>>,
     air: HashMap<CaveTile, Material>,
+    columns: HashMap<(i32, i32), CaveColumn>,
 }
 
 impl<'a> CaveNav<'a> {
@@ -107,6 +108,7 @@ impl<'a> CaveNav<'a> {
             dug,
             rubble: None,
             air: HashMap::new(),
+            columns: HashMap::new(),
         }
     }
 
@@ -123,9 +125,10 @@ impl<'a> CaveNav<'a> {
             if self.dug.contains(&tile) {
                 return Material::CaveAir;
             }
-            let (x_mm, y_mm) = tile.center_mm();
-            self.terrain
-                .column(x_mm, y_mm)
+            self.columns.entry(tile.xy()).or_insert_with(|| {
+                let (x_mm, y_mm) = tile.center_mm();
+                self.terrain.column(x_mm, y_mm)
+            })
                 .sample(i64::from(tile.z) * VOXEL_H_MM + VOXEL_H_MM / 2)
                 .material()
         })
@@ -189,37 +192,40 @@ impl<'a> CaveNav<'a> {
     pub(crate) fn route_to(
         &mut self,
         start: CaveTile,
-        mut goal: impl FnMut(CaveTile) -> bool,
+        goal: impl FnMut(CaveTile) -> bool,
         mut admits: impl FnMut(CaveTile, CaveTile) -> bool,
     ) -> Option<Vec<CaveTile>> {
-        let mut parents = HashMap::from([(start, start)]);
-        let mut queue = VecDeque::from([start]);
-        while let Some(tile) = queue.pop_front() {
-            if goal(tile) {
-                let mut current = tile;
-                let mut path = Vec::new();
-                while current != start {
-                    path.push(current);
-                    current = parents[&current];
+        crate::nav::walking::search(start, goal, |_| 0, |tile, edges| {
+            for (dx, dy) in SIDES {
+                if let Some(next) = self.next_floor(tile, tile.x + dx, tile.y + dy)
+                    && admits(tile, next) {
+                    edges.push((next, 1));
                 }
-                return Some(path);
+            }
+        }, 8_192, false)
+    }
+
+    /// Pick an entrance by the combined cost of the cave path and its surface approach.
+    pub(crate) fn entrance_from(
+        &mut self,
+        target: CaveTile,
+        mut approach_cost: impl FnMut(CaveTile) -> Option<i32>,
+        mut admits: impl FnMut(CaveTile, CaveTile) -> bool,
+    ) -> Option<CaveTile> {
+        let route = crate::nav::walking::search(Some(target), |tile| tile.is_none(), |_| 0, |at, edges| {
+            // The final graph edge represents the path to the walker above ground.
+            let Some(tile) = at else { return };
+            if let Some(cost) = approach_cost(tile) {
+                edges.push((None, cost));
             }
             for (dx, dy) in SIDES {
-                if let Some(next) = self.next_floor(tile, tile.x + dx, tile.y + dy) {
-                    // Keep checking floors already queued when the search budget is exhausted.
-                    if parents.len() >= 8_192 {
-                        break;
-                    }
-                    if let std::collections::hash_map::Entry::Vacant(entry) = parents.entry(next)
-                        && admits(tile, next)
-                    {
-                        entry.insert(tile);
-                        queue.push_back(next);
-                    }
+                if let Some(next) = self.next_floor(tile, tile.x + dx, tile.y + dy)
+                    && admits(tile, next) {
+                    edges.push((Some(next), 1));
                 }
             }
-        }
-        None
+        }, 8_192, false)?;
+        Some(route.get(1).copied().flatten().unwrap_or(target))
     }
 
     pub(crate) fn route(
@@ -243,7 +249,7 @@ impl<'a> CaveNav<'a> {
                 .route_to(
                     start,
                     |tile| distance(tile) >= 5,
-                    |_, to| crate::caves::CaveSelf::natural_depth_at(to.z) == 0,
+                    |_, to| crate::caves::CaveView::natural_depth_at(to.z) == 0,
                 )
                 .is_some()
     }
@@ -286,13 +292,17 @@ pub(super) fn mouth_grid(x: i32, y: i32) -> bool {
 }
 
 pub(super) fn find_mouth(map: &Map, field: CaveTerrain, tx: i32, ty: i32) -> Option<CaveMouth> {
+    find_mouth_toward(map, field, tx, ty, &SIDES)
+}
+
+fn find_mouth_toward(map: &Map, field: CaveTerrain, tx: i32, ty: i32, directions: &[(i32, i32)]) -> Option<CaveMouth> {
     if !dry(map, tx, ty) {
         return None;
     }
     let at_surface = |x, y| {
         let (x_mm, y_mm) = CaveTile { x, y, z: 0 }.center_mm();
-        let surface = i64::from(crate::map::elevation_at_mm(map.seed, x_mm, y_mm));
         let column = field.column(x_mm, y_mm);
+        let surface = column.surface_mm();
         (surface, column.sample(surface - 350).material())
     };
     let (approach, support) = at_surface(tx, ty);
@@ -301,7 +311,7 @@ pub(super) fn find_mouth(map: &Map, field: CaveTerrain, tx: i32, ty: i32) -> Opt
     }
     let dug = BTreeSet::new();
     let mut nav = CaveNav::with_field(map, &dug, field);
-    for (dx, dy) in SIDES {
+    for &(dx, dy) in directions {
         let (x, y) = (tx + dx, ty + dy);
         if !dry(map, x, y) {
             continue;
@@ -325,6 +335,23 @@ pub(super) fn find_mouth(map: &Map, field: CaveTerrain, tx: i32, ty: i32) -> Opt
         }
     }
     None
+}
+
+/// Find every approach to a threshold without changing the generated resource nodes.
+pub(crate) fn surface_openings(map: &Map, x: i32, y: i32) -> [Option<CaveMouth>; 4] {
+    if !dry(map, x, y) {
+        return [None; 4];
+    }
+    let (x_mm, y_mm) = CaveTile { x, y, z: 0 }.center_mm();
+    let field = map.cave_field();
+    let column = field.column(x_mm, y_mm);
+    let surface = column.surface_mm();
+    if column.sample(surface - 350).material() != Material::CaveAir {
+        return [None; 4];
+    }
+    SIDES.map(|(dx, dy)| {
+        find_mouth_toward(map, field, x - dx, y - dy, &[(dx, dy)])
+    })
 }
 
 fn dry(map: &Map, x: i32, y: i32) -> bool {

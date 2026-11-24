@@ -28,13 +28,11 @@ impl CaveMap {
     }
 
     pub(crate) fn observe(&mut self, world: &World, player: AgentId) {
-        let Some(cave) = world.agents.get(player.0 as usize).and_then(|a| a.cave) else {
+        let Some(cave) = world.agents.get(player.0 as usize).and_then(|a| a.cave_view()) else {
             self.sight = None;
             return;
         };
-        let Some(z) = cave.elevation_m() else {
-            return;
-        };
+        let z = cave.elevation_m();
         let (x, y) = cave.tile();
         let sight = Sight {
             tile: CaveTile { x, y, z },
@@ -62,26 +60,26 @@ mod tests {
         let (x, y) = world.nodes[node.0 as usize].center_mm();
         let me = world.spawn_agent(x, y);
         world.agents[me.0 as usize].inventory.counts[ItemKind::Torch as usize] = 1;
-        world.step(&[Command {
-            agent: me,
-            kind: CommandKind::EnterCave { node },
-        }]);
+        let position = world.cave_entrance_destination(node).unwrap();
+        world.step(&[Command { agent: me, kind: CommandKind::MoveToFloor { position } }]);
+        for _ in 0..100 {
+            if world.agents[0].cave_view().is_some() { break; }
+            world.step(&[]);
+        }
         let mut map = CaveMap::default();
         map.observe(&world, me);
         assert!(map.known().values().any(|&cell| cell == Cell::Exit));
         assert!(map.known().len() > 1);
 
-        world.step(&[Command {
-            agent: me,
-            kind: CommandKind::CaveLeave,
-        }]);
+        let position = world.cave_exit_destination(me).unwrap();
+        world.step(&[Command { agent: me, kind: CommandKind::MoveToFloor { position } }]);
         for _ in 0..240 {
-            if world.agents[me.0 as usize].cave.is_none() {
+            if world.agents[me.0 as usize].cave_view().is_none() {
                 break;
             }
             world.step(&[]);
         }
-        assert!(world.agents[me.0 as usize].cave.is_none());
+        assert!(world.agents[me.0 as usize].cave_view().is_none());
         map.observe(&world, me);
 
         let dir =

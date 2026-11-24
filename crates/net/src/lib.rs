@@ -20,7 +20,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use stream::Stream;
 
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
@@ -814,9 +814,8 @@ mod tests {
                     })
                     .collect(),
             },
-            CommandKind::EnterCave { node: alaz_sim::NodeId(u32::MAX) },
             CommandKind::CaveDig { tx: i32::MAX, ty: i32::MIN },
-            CommandKind::CaveLeave,
+            CommandKind::MoveToFloor { position: alaz_sim::cave_terrain::WorldPoint { x_mm: i64::MAX, y_mm: i64::MIN, z_mm: i64::MAX } },
             CommandKind::SetSprint { on: true },
             CommandKind::Refuel { building: u32::MAX },
             CommandKind::Jump,

@@ -37,28 +37,208 @@ fn new_small_worlds_have_an_accessible_cave_gallery() {
                 world.settings.difficulty = crate::world::Difficulty::Creative;
                 world.wild.clear();
                 world.agents[agent.0 as usize].inventory.counts[ItemKind::Torch as usize] = 1;
+                let position = world.cave_entrance_destination(node).unwrap();
                 world.step(&[Command {
                     agent,
-                    kind: CommandKind::EnterCave { node },
+                    kind: CommandKind::MoveToFloor { position },
                 }]);
                 for _ in 0..20_000 {
                     let a = &world.agents[agent.0 as usize];
-                    if a.cave.is_some() || a.task == crate::world::Task::Idle {
+                    if a.position() == position || a.task == crate::world::Task::Idle {
                         break;
                     }
                     world.step(&[]);
                 }
-                let cave = world.agents[agent.0 as usize].cave.unwrap_or_else(|| {
+                let cave = world.agents[agent.0 as usize].cave_view().unwrap_or_else(|| {
                     let a = &world.agents[agent.0 as usize];
                     panic!("seed {seed}, size {size}: walking from ({sx}, {sy}) to ({tx}, {ty}) ended at ({}, {}) on tick {} with {:?}: {:?}", a.x, a.y, world.tick, a.task, world.events)
                 });
-                assert_eq!(cave.natural_tile(), Some(mouth.landing));
+                assert_eq!(world.agents[agent.0 as usize].position(), position);
+                assert_eq!(cave.natural_tile(), mouth.threshold);
                 let loaded = World::from_bytes(&world.to_bytes()).unwrap();
                 assert_eq!(world.hash(), loaded.hash());
                 assert_eq!(loaded.map.natural_cave_mouth(tx, ty), Some(mouth));
             }
         }
     }
+}
+
+#[test]
+fn walking_onto_a_cave_lip_goes_in_without_a_command_or_a_light() {
+    use super::CaveTile;
+    use crate::map::tag_seed_new_world;
+    use crate::{Command, CommandKind, World};
+
+    let mut world = World::with_size(tag_seed_new_world(4, 128), 128, 128);
+    world.wild.clear();
+    let (tx, ty) = world.map.cave_spawn_fallback().expect("a gallery");
+    let mouth = world.map.natural_cave_mouth(tx, ty).unwrap();
+    let (ax, ay) = CaveTile { x: tx, y: ty, z: 0 }.center_mm();
+    let agent = world.spawn_agent(ax, ay);
+    let (gx, gy) = mouth.threshold.center_mm();
+    let (ox, oy) = (gx - i64::from(mouth.direction.0) * TILE_MM * 9 / 20, gy - i64::from(mouth.direction.1) * TILE_MM * 9 / 20);
+    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: gx, y: gy } }]);
+    for _ in 0..2_000 {
+        if world.agents[agent.0 as usize].cave_view().is_some() {
+            break;
+        }
+        world.step(&[]);
+    }
+    let cave = world.agents[agent.0 as usize].cave_view().expect("the walker went in");
+    // it goes down where it stands, on the lip, and does not jump to the landing
+    assert_eq!(cave.natural_tile(), mouth.threshold);
+    assert_eq!((cave.x, cave.y), (world.agents[agent.0 as usize].x, world.agents[agent.0 as usize].y));
+    assert_eq!(cave.light, 0);
+    assert!(world.natural_cave_sight(cave).keys().all(|t| (t.x - mouth.threshold.x).abs().max((t.y - mouth.threshold.y).abs()) <= 2));
+
+    // standing still on the lip does not flip it in and out
+    for _ in 0..60 {
+        world.step(&[]);
+    }
+    assert!(world.agents[agent.0 as usize].cave_view().is_some());
+
+    // walking back out past the lip's outer edge leaves the cave again, just across that edge
+    let walk_position = |world: &World| world.agent_walk_position(&world.agents[agent.0 as usize]);
+    let mut previous = walk_position(&world);
+    world.step(&[Command { agent, kind: CommandKind::MoveTo { x: ox, y: oy } }]);
+    for _ in 0..2_000 {
+        let position = walk_position(&world);
+        let (dx, dy) = (position.x_mm - previous.x_mm, position.y_mm - previous.y_mm);
+        let step = world.agents[agent.0 as usize].kind.speed_mm() + 1;
+        assert!(dx * dx + dy * dy <= step * step, "walk crossed the lip with a jump: {previous:?} to {position:?}");
+        assert!((position.z_mm - previous.z_mm).abs() < 250, "walk jumped off the ramp: {previous:?} to {position:?}");
+        previous = position;
+        if world.agents[agent.0 as usize].cave_view().is_none() {
+            break;
+        }
+        world.step(&[]);
+    }
+    let a = &world.agents[agent.0 as usize];
+    assert!(a.cave_view().is_none(), "still underground at {:?} with {:?}", a.cave_view(), a.task);
+    assert_eq!(a.x.div_euclid(TILE_MM) as i32, tx);
+    assert_eq!(a.y.div_euclid(TILE_MM) as i32, ty);
+}
+
+#[test]
+fn a_single_walk_order_continues_across_both_sides_of_the_entrance() {
+    use crate::map::tag_seed_natural;
+    use crate::{Command, CommandKind, World};
+
+    let mut world = World::with_size(tag_seed_natural(42, 256), 256, 256);
+    world.wild.clear();
+    let mouth = world.map.natural_cave_mouth(222, 150).expect("walkable entrance");
+    let (x, y) = mouth.threshold.center_mm();
+    let (dx, dy) = mouth.direction;
+    let (ax, ay) = (x - i64::from(dx) * TILE_MM, y - i64::from(dy) * TILE_MM);
+    let agent = world.spawn_agent(ax, ay);
+
+    let walk = |world: &mut World, (x, y)| {
+        let mut previous = world.agent_walk_position(&world.agents[0]);
+        world.step(&[Command { agent, kind: CommandKind::Walk { x, y } }]);
+        for _ in 0..200 {
+            let a = &world.agents[0];
+            let position = world.agent_walk_position(a);
+            let step = a.kind.speed_mm() * 10 / 7 + 1;
+            let (dx, dy) = (position.x_mm - previous.x_mm, position.y_mm - previous.y_mm);
+            assert!(dx * dx + dy * dy <= step * step, "walk jumped across the mouth: {previous:?} to {position:?}");
+            assert!((position.z_mm - previous.z_mm).abs() < 250, "walk jumped off the ramp: {previous:?} to {position:?}");
+            if (position.x_mm, position.y_mm) == (x, y) {
+                return;
+            }
+            previous = position;
+            world.step(&[]);
+        }
+        panic!("walk stopped before reaching ({x}, {y}): {:?}", world.agents[0].position());
+    };
+
+    walk(&mut world, mouth.landing.center_mm());
+    assert_eq!(world.agents[0].cave_view().unwrap().natural_tile(), mouth.landing);
+    walk(&mut world, (ax, ay));
+    assert!(world.agents[0].cave_view().is_none());
+}
+
+#[test]
+fn an_unmarked_opening_is_walkable_with_and_without_a_torch() {
+    use crate::map::tag_seed_natural;
+    use crate::{Command, CommandKind, ItemKind, World};
+
+    let mut world = World::with_size(tag_seed_natural(42, 256), 256, 256);
+    world.wild.clear();
+    let (mouth, approach) = (1..world.map.h - 1)
+        .flat_map(|y| (1..world.map.w - 1).map(move |x| (x, y)))
+        .find_map(|(x, y)| {
+            let mouth = world.map.cave_openings_at(x, y).next()?;
+            let anchor = (x - mouth.direction.0, y - mouth.direction.1);
+            (world.map.natural_cave_mouth(anchor.0, anchor.1).is_none()
+                && !world.map.surface_cave_gap(anchor.0, anchor.1))
+                .then_some((mouth, anchor))
+        })
+        .expect("a density opening without a marker node");
+    let (ax, ay) = super::CaveTile { x: approach.0, y: approach.1, z: 0 }.center_mm();
+    let agent = world.spawn_agent(ax, ay);
+    let mut lit = world.clone();
+    lit.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
+    let (x, y) = mouth.threshold.center_mm();
+    let walk_in = Command { agent, kind: CommandKind::Walk { x, y } };
+    for w in [&mut world, &mut lit] {
+        w.step(std::slice::from_ref(&walk_in));
+        for _ in 0..100 {
+            if w.agents[0].cave_view().is_some() { break; }
+            w.step(&[]);
+        }
+        assert_eq!(w.agents[0].cave_view().unwrap().natural_tile(), mouth.threshold);
+        assert_eq!(w.agents[0].z, i64::from(mouth.threshold.z) * 1_000);
+    }
+    assert_eq!(world.agents[0].position(), lit.agents[0].position());
+    assert_eq!(lit.agents[0].inventory.get(ItemKind::Torch), 1);
+    assert_eq!(world.agents[0].cave_view().unwrap().light, 0);
+    assert!(lit.agents[0].cave_view().unwrap().light > 0);
+    for w in [&mut world, &mut lit] {
+        w.step(&[Command { agent, kind: CommandKind::Walk { x: ax, y: ay } }]);
+        for _ in 0..100 {
+            if w.agents[0].cave_view().is_none() { break; }
+            w.step(&[]);
+        }
+        assert!(w.agents[0].cave_view().is_none());
+        assert_eq!(w.agents[0].position().tile(), approach);
+    }
+}
+
+#[test]
+fn a_surface_order_walks_out_and_survives_saving_on_the_way() {
+    use crate::map::{NodeKind, tag_seed_natural};
+    use crate::{Command, CommandKind, World};
+
+    let mut world = World::with_size(tag_seed_natural(42, 256), 256, 256);
+    world.wild.clear();
+    let marker = world.node_at(222, 150).unwrap();
+    let mouth = world.natural_mouth(marker.0).unwrap();
+    let (x, y) = world.nodes[marker.0 as usize].center_mm();
+    let agent = world.spawn_agent(x, y);
+    let (x_mm, y_mm) = mouth.landing.center_mm();
+    let position = WorldPoint { x_mm, y_mm, z_mm: i64::from(mouth.landing.z) * 1_000 };
+    world.step(&[Command { agent, kind: CommandKind::MoveToFloor { position } }]);
+    for _ in 0..200 {
+        if world.agents[0].position() == position { break; }
+        world.step(&[]);
+    }
+    assert_eq!(world.agents[0].position(), position);
+    let exit = world.cave_exit_destination(agent).unwrap();
+    let node = world.nodes.iter().enumerate().filter(|(_, n)| n.kind == NodeKind::BerryBush)
+        .min_by_key(|(_, n)| {
+            let (x, y) = n.center_mm();
+            (x - exit.x_mm).pow(2) + (y - exit.y_mm).pow(2)
+        }).map(|(i, _)| crate::NodeId(i as u32)).unwrap();
+    world.step(&[Command { agent, kind: CommandKind::Gather { node } }]);
+    assert!(world.agents[0].cave_view().is_some());
+    let mut loaded = World::from_bytes(&world.to_bytes()).unwrap();
+    assert_eq!(loaded.hash(), world.hash());
+    for _ in 0..300 {
+        loaded.step(&[]);
+        if loaded.agents[0].cave_view().is_none() { break; }
+    }
+    assert!(loaded.agents[0].cave_view().is_none());
+    assert!(matches!(loaded.agents[0].task, crate::world::Task::Gather { node: target, .. } if target == node));
 }
 
 #[test]
@@ -145,10 +325,19 @@ fn natural_caves_share_digging_exits_and_saved_state() {
         let a = &mut w.agents[id.0 as usize];
         a.inventory.counts[ItemKind::Torch as usize] = 2;
         a.inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        w.step(&[Command {
-            agent: id,
-            kind: CommandKind::EnterCave { node },
-        }]);
+        let mouth = w.natural_mouth(node.0).unwrap();
+        let position = w.cave_entrance_destination(node).unwrap();
+        w.step(&[Command { agent: id, kind: CommandKind::MoveToFloor { position } }]);
+        for _ in 0..100 {
+            if w.agents[id.0 as usize].cave_view().is_some() { break; }
+            w.step(&[]);
+        }
+        let (x, y) = mouth.landing.center_mm();
+        w.step(&[Command { agent: id, kind: CommandKind::MoveTo { x, y } }]);
+        for _ in 0..100 {
+            if w.agents[id.0 as usize].task == crate::world::Task::Idle { break; }
+            w.step(&[]);
+        }
         id
     };
     let first = enter(&mut world, start);
@@ -156,7 +345,7 @@ fn natural_caves_share_digging_exits_and_saved_state() {
         world.step(&[]);
     }
     let first_spot = world.agents[first.0 as usize]
-        .cave
+        .cave_view()
         .expect("arriving leaves space inside the cave");
     let (tx, ty) = world
         .cave_dig_target(first)
@@ -171,7 +360,7 @@ fn natural_caves_share_digging_exits_and_saved_state() {
     let carved = super::CaveTile {
         x: tx,
         y: ty,
-        z: first_spot.elevation_m().unwrap(),
+        z: first_spot.elevation_m(),
     };
     assert!(world.natural_cave_revision() > 0);
     assert_eq!(
@@ -182,36 +371,40 @@ fn natural_caves_share_digging_exits_and_saved_state() {
     let mut loaded = World::from_bytes(&bytes).expect("natural cave save should load");
     assert_eq!(world.hash(), loaded.hash());
     assert_eq!(
-        loaded.agents[first.0 as usize].cave,
-        world.agents[first.0 as usize].cave
+        loaded.agents[first.0 as usize].cave_view(),
+        world.agents[first.0 as usize].cave_view()
     );
     let second = enter(&mut loaded, exit);
     let second_spot = loaded.agents[second.0 as usize]
-        .cave
+        .cave_view()
         .expect("enter from the other mouth");
     assert!(loaded.natural_cave_tiles(second_spot, 24).contains(&carved));
 
-    let (x, y) = exit_tile.center_mm();
+    // the exit is the outer edge of the lip tile, which lies between the cave and the mouth's surface anchor
+    let anchor = loaded.nodes[exit.0 as usize].center_mm();
+    let (cx, cy) = exit_tile.center_mm();
+    let (dx, dy) = ((cx - anchor.0).signum(), (cy - anchor.1).signum());
+    let (x, y) = (cx - dx * TILE_MM * 9 / 20, cy - dy * TILE_MM * 9 / 20);
     loaded.step(&[Command {
         agent: first,
         kind: CommandKind::MoveTo { x, y },
     }]);
     for _ in 0..1400 {
-        if loaded.agents[first.0 as usize].cave.is_none() {
+        if loaded.agents[first.0 as usize].cave_view().is_none() {
             break;
         }
         loaded.step(&[]);
     }
     let agent = &loaded.agents[first.0 as usize];
     assert!(
-        agent.cave.is_none(),
+        agent.cave_view().is_none(),
         "walked to the second exit: {:?} {:?}",
-        agent.cave,
+        agent.cave_view(),
         agent.task
     );
     assert_eq!(
-        (agent.x, agent.y),
-        loaded.nodes[exit.0 as usize].center_mm()
+        (agent.x.div_euclid(TILE_MM), agent.y.div_euclid(TILE_MM)),
+        (anchor.0.div_euclid(TILE_MM), anchor.1.div_euclid(TILE_MM))
     );
 }
 const SIDE: usize = 129;

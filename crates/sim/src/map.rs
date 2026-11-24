@@ -616,6 +616,9 @@ impl NodeKind {
     }
 }
 
+type CaveOpenings = [Option<crate::cave_terrain::CaveMouth>; 4];
+type CaveOpeningCache = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<(i32, i32), CaveOpenings>>>;
+
 #[derive(Clone, Debug)]
 pub struct Map {
     pub w: i32,
@@ -623,6 +626,7 @@ pub struct Map {
     pub tiles: Vec<Terrain>,
     pub seed: u64,
     small_caves: Option<crate::cave_terrain::SmallWorldCaves>,
+    cave_openings: CaveOpeningCache,
 }
 
 /// Run `f(y0, y1)` over horizontal bands of rows on several threads and join the results in row order,
@@ -657,10 +661,21 @@ const GEN_V2_TAG: u64 = 0xA1A2;
 const GEN_V2_CAVES_TAG: u64 = 0xA1A4;
 const GEN_V3_CAVES_TAG: u64 = 0xA1A5;
 const GEN_SMALL_CAVES_TAG: u64 = 0xA1A6;
+/// A small world made by the fourth generator: the small-world caves of 0xA1A6 on land shaped by gradient noise.
+const GEN_SMALL_V4_TAG: u64 = 0xA1A7;
+
+/// Was this world made by the fourth generator?
+pub fn gen_v4(seed: u64) -> bool {
+    seed >> 48 == GEN_SMALL_V4_TAG
+}
+
+fn small_caves_world(seed: u64) -> bool {
+    matches!(seed >> 48, GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG)
+}
 
 /// Does this world have rivers and lakes (the second generator, or the third)?
 pub fn gen_v2(seed: u64) -> bool {
-    matches!(seed >> 48, GEN_V2_TAG | GEN_V2_CAVES_TAG | GEN_SMALL_CAVES_TAG) || gen_v3(seed)
+    matches!(seed >> 48, GEN_V2_TAG | GEN_V2_CAVES_TAG | GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG) || gen_v3(seed)
 }
 
 /// The third generator's mark: continents and oceans, mountain ranges, climate belts.
@@ -672,13 +687,13 @@ pub fn gen_v3(seed: u64) -> bool {
 }
 
 pub fn has_natural_caves(seed: u64) -> bool {
-    matches!(seed >> 48, GEN_V2_CAVES_TAG | GEN_V3_CAVES_TAG | GEN_SMALL_CAVES_TAG)
+    matches!(seed >> 48, GEN_V2_CAVES_TAG | GEN_V3_CAVES_TAG | GEN_SMALL_CAVES_TAG | GEN_SMALL_V4_TAG)
 }
 
 /// A separate tag keeps saved node indices stable when entrance generation changes.
 pub fn tag_seed_new_world(seed: u64, size: i32) -> u64 {
     if (128..=256).contains(&size) {
-        return (seed & 0xFFFF_FFFF_FFFF) | GEN_SMALL_CAVES_TAG << 48;
+        return (seed & 0xFFFF_FFFF_FFFF) | GEN_SMALL_V4_TAG << 48;
     }
     tag_seed_natural(seed, size)
 }
@@ -695,7 +710,7 @@ pub fn tag_seed_v3(seed: u64) -> u64 {
 
 /// The land's height before rivers are cut, 0..=255 (below 95 is sea).
 pub fn raw_height(seed: u64, tx: i32, ty: i32) -> i32 {
-    if gen_v3(seed) { height_v3(seed, tx, ty) } else { fbm(seed ^ 0x1111, tx, ty) as i32 }
+    if gen_v4(seed) { height_v4(seed, tx, ty) } else if gen_v3(seed) { height_v3(seed, tx, ty) } else { fbm(seed ^ 0x1111, tx, ty) as i32 }
 }
 
 /// The third generator's land: continents a few kilometres across with oceans between, coasts bent and frayed by a
@@ -714,6 +729,120 @@ fn height_v3(seed: u64, x: i32, y: i32) -> i32 {
     let mountains = if land > 0 { (ridge - 150).max(0) * belt / 255 * 13 / 10 } else { 0 };
     let rolling = (hills - 128) * if land > 0 { 35 } else { 20 } / 100;
     (100 + land + rolling + mountains).clamp(0, 255)
+}
+
+/// The fourth generator's land, for worlds 128 to 256 tiles across: one landmass shaped by domain-warped gradient
+/// noise, rolling hills of several scales, and ridged mountain ranges. Same 0..=255 scale as the others (below 95 is sea,
+/// above 160 is rock), so rivers, climate, caves and the ledges work on it unchanged.
+fn height_v4(seed: u64, x: i32, y: i32) -> i32 {
+    let gn = |salt: u64, x: i32, y: i32, cell: i32| crate::rng::gradient_noise(seed ^ salt, x, y, cell) as i32;
+    // bend everything so no feature follows the noise grid
+    let wx = x + (gn(0x31, x, y, 90) - 128) * 30 / 128 + (gn(0x33, x, y, 24) - 128) * 6 / 128;
+    let wy = y + (gn(0x32, x, y, 90) - 128) * 30 / 128 + (gn(0x34, x, y, 24) - 128) * 6 / 128;
+    let broad = (gn(0x41, wx, wy, 140) * 4 + gn(0x42, wx, wy, 70) * 2 + gn(0x43, wx, wy, 36)) / 7;
+    let hills = (gn(0x51, wx, wy, 40) * 8 + gn(0x52, wx, wy, 20) * 4 + gn(0x53, wx, wy, 10) * 2 + gn(0x54, x, y, 5)) / 15;
+    // ridge lines: the crest of a fold in the noise
+    let ridge = 255 - (2 * gn(0x61, wx, wy, 64) - 255).abs();
+    let ridge2 = 255 - (2 * gn(0x62, wx, wy, 28) - 255).abs();
+    let belt = ((broad - 120) * 5).clamp(0, 255);
+    let land = (broad - 118) * 9 / 10;
+    let rolling = (hills - 128) * if land > 0 { 38 } else { 20 } / 100;
+    let mountains = if land > 0 { ((ridge - 165).max(0) * 2 / 3 + (ridge2 - 205).max(0) / 6) * belt / 255 } else { 0 };
+    (106 + land + rolling + mountains).clamp(0, 255)
+}
+
+#[cfg(test)]
+mod v4_tests {
+    use super::*;
+
+    #[test]
+    fn the_fourth_generator_makes_sea_land_and_mountains_in_balance() {
+        let (mut n, mut sea, mut rock, mut peak) = (0, 0, 0, 0);
+        for seed in 1..=8u64 {
+            let s = tag_seed_new_world(seed, 256);
+            assert!(gen_v4(s) && gen_v2(s) && has_natural_caves(s));
+            for y in (0..256).step_by(2) {
+                for x in (0..256).step_by(2) {
+                    let h = raw_height(s, x, y);
+                    assert_eq!(h, raw_height(s, x, y));
+                    n += 1;
+                    sea += i32::from(h < 95);
+                    rock += i32::from(h > 160);
+                    peak += i32::from(h > 200);
+                }
+            }
+        }
+        let pct = |c: i32| c * 100 / n;
+        assert!((10..=28).contains(&pct(sea)), "sea {}%", pct(sea));
+        assert!((10..=28).contains(&pct(rock)), "rock {}%", pct(rock));
+        assert!(pct(peak) < 10, "peaks {}%", pct(peak));
+    }
+
+    #[test]
+    fn terraces_make_some_cliffs_and_mostly_walkable_slopes() {
+        let (mut rock, mut cliffs) = (0, 0);
+        for seed in 1..=6u64 {
+            let s = tag_seed_new_world(seed, 256);
+            for y in (0..255).step_by(1) {
+                for x in 0..255 {
+                    if raw_height(s, x, y) <= 160 {
+                        continue;
+                    }
+                    rock += 1;
+                    let here = elevation_mm(s, x, y);
+                    cliffs += i32::from((elevation_mm(s, x + 1, y) - here).abs() >= CLIFF_MM || (elevation_mm(s, x, y + 1) - here).abs() >= CLIFF_MM);
+                }
+            }
+        }
+        let pct = cliffs * 1000 / rock;
+        assert!((5..=300).contains(&pct), "cliffs {pct} per mille of rock tiles");
+    }
+
+    #[test]
+    fn rivers_drain_downhill_into_the_sea_or_a_lake() {
+        let s = tag_seed_new_world(4, 256);
+        let map = crate::rivers::river_map(s);
+        let (mut rivers, mut lost) = (0, 0);
+        for y in 0..256 {
+            for x in 0..256 {
+                let Some((dx, dy)) = map.flow(x, y) else { continue };
+                rivers += 1;
+                // the next tile of the river is water too, unless the river runs off the map
+                let (nx, ny) = (x + dx, y + dy);
+                let off = !(0..256).contains(&nx) || !(0..256).contains(&ny);
+                lost += i32::from(!off && terrain_at(s, nx, ny) != Terrain::Water && !map.is_gravel(nx, ny));
+            }
+        }
+        assert!(rivers > 100, "only {rivers} river tiles");
+        assert!(lost * 20 < rivers, "{lost} of {rivers} river tiles run onto dry land");
+        assert!(crate::rivers::river_map(s).height(s, 10, 10) == height_field(s, 10, 10));
+    }
+
+    #[test]
+    fn fourth_generator_ground_has_every_kind_and_sand_stays_by_water() {
+        let s = tag_seed_new_world(4, 256);
+        let mut count = [0; 5];
+        let mut far_sand = 0;
+        let rivers = crate::rivers::river_map(s);
+        for y in 0..256 {
+            for x in 0..256 {
+                let t = terrain_at(s, x, y);
+                count[t as usize] += 1;
+                far_sand += i32::from(t == Terrain::Sand && rivers.shore(x, y) > 4 && raw_height(s, x, y) >= 99);
+            }
+        }
+        assert!(count.iter().all(|&c| c > 2_000), "{count:?}");
+        assert!(far_sand * 4 < count[Terrain::Sand as usize], "{far_sand} of {} sand tiles are far from water", count[Terrain::Sand as usize]);
+    }
+
+    #[test]
+    fn gradient_noise_is_smooth_and_bounded() {
+        for x in -50..50 {
+            let a = crate::rng::gradient_noise(7, x, 13, 24);
+            let b = crate::rng::gradient_noise(7, x + 1, 13, 24);
+            assert!((0..=255).contains(&a) && (a - b).abs() < 40, "{a} {b}");
+        }
+    }
 }
 
 /// The seed a new world gets: the second generator's mark on its top bits.
@@ -816,6 +945,9 @@ thread_local! {
 }
 
 fn height_field_uncached(seed: u64, tx: i32, ty: i32) -> i32 {
+    if gen_v4(seed) {
+        return crate::rivers::river_map(seed).height(seed, tx, ty);
+    }
     let h = raw_height(seed, tx, ty);
     if !gen_v2(seed) || h <= 94 {
         return h;
@@ -864,6 +996,9 @@ fn ledge_rise(seed: u64, i: i32) -> i32 {
 /// The rocky heights climb in ledges: in some places a sheer drop between two levels (a cliff), in others the same
 /// rise spread out into a scree ramp, so every height can still be walked up somewhere.
 fn ledges(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
+    if gen_v4(seed) {
+        return terraces(seed, tx, ty, h);
+    }
     let r = h - LEDGE_FROM;
     if r <= 0 {
         return 0;
@@ -875,6 +1010,28 @@ fn ledges(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
     let n = crate::rng::value_noise(seed ^ 0xC11F, tx, ty, 18) as i32;
     let sheer = ((n - 118) * 1000 / 30).clamp(0, 1000);
     (ramp * (1000 - sheer) + below * sheer) / 1000
+}
+
+/// The fourth generator's version of the ledges: strata that are bent by noise (so they do not run in concentric
+/// contour lines) and whose rise is a smooth slope, not a one-tile jump. Where the rock is sheer the slope is squeezed
+/// into under a tile and becomes a cliff; elsewhere it spreads over the whole step and can be walked.
+fn terraces(seed: u64, tx: i32, ty: i32, h: i32) -> i32 {
+    const STEP: i64 = 36_000;
+    // thousandths of a raw height unit, bent by up to five units
+    let bend = (crate::rng::gradient_noise(seed ^ 0xC1, tx, ty, 20) - 128) * 40;
+    let phase = (i64::from(h - 150) * 1000 + bend).max(0);
+    if phase == 0 {
+        return 0;
+    }
+    let (q, frac) = (phase / STEP, phase % STEP * 1024 / STEP);
+    let rise = |i: i32| 1_100 + (crate::rng::hash2(seed ^ 0x1ED7, i, 0) % 1_400) as i32;
+    let below: i32 = (0..q as i32).map(rise).sum();
+    let sheer = ((crate::rng::gradient_noise(seed ^ 0xC11F, tx, ty, 22) - 170) * 1000 / 20).clamp(0, 1000);
+    // the rise happens in the last `width` of the step
+    let width = 1024 - sheer * 800 / 1000;
+    let u = (frac - (1024 - width)).max(0) * 1024 / width;
+    let smooth = u * u * (3 * 1024 - 2 * u) / (1024 * 1024);
+    below + (i64::from(rise(q as i32)) * smooth / 1024) as i32
 }
 
 /// How much the ground drops between two neighbouring tile corners for it to count as a cliff (mm).
@@ -913,7 +1070,7 @@ impl Map {
     pub fn generate(seed: u64, w: i32, h: i32) -> Self {
         // a very large world keeps no tile table: every tile is worked out from the seed when it is asked for
         if w as i64 * h as i64 > EAGER_MAX_TILES {
-            return Self { w, h, tiles: Vec::new(), seed, small_caves: None };
+            return Self { w, h, tiles: Vec::new(), seed, small_caves: None, cave_openings: Default::default() };
         }
         let tiles = par_rows(w, h, |y0, y1| {
             let mut tiles = Vec::with_capacity(((y1 - y0) * w) as usize);
@@ -924,8 +1081,8 @@ impl Map {
             }
             tiles
         });
-        let mut map = Self { w, h, tiles, seed, small_caves: None };
-        if seed >> 48 == GEN_SMALL_CAVES_TAG && (128..=256).contains(&w) && (128..=256).contains(&h) {
+        let mut map = Self { w, h, tiles, seed, small_caves: None, cave_openings: Default::default() };
+        if small_caves_world(seed) && (128..=256).contains(&w) && (128..=256).contains(&h) {
             map.small_caves = crate::cave_terrain::SmallWorldCaves::generate(&map);
         }
         map
@@ -957,12 +1114,27 @@ impl Map {
     }
 
     pub fn surface_cave_gap(&self, tx: i32, ty: i32) -> bool {
-        if let Some(caves) = &self.small_caves {
-            return caves.gaps.contains(&(tx, ty));
-        }
-        has_natural_caves(self.seed) && crate::cave_terrain::SIDES.into_iter().any(|(dx, dy)| {
-            self.natural_cave_mouth(tx + dx, ty + dy).is_some_and(|mouth| mouth.threshold.xy() == (tx, ty))
-        })
+        self.cave_openings_at(tx, ty).next().is_some()
+    }
+
+    /// Physical entrances at a threshold, including ones without a generated marker node.
+    pub fn cave_openings_at(&self, tx: i32, ty: i32) -> impl Iterator<Item = crate::cave_terrain::CaveMouth> + use<> {
+        let openings = if has_natural_caves(self.seed) && self.in_bounds(tx, ty) {
+            // A missed sample is pure. Keep parallel chunk builders out of the write lock while sampling it.
+            let cached = self.cave_openings.read().unwrap_or_else(|e| e.into_inner()).get(&(tx, ty)).copied();
+            cached.unwrap_or_else(|| {
+                let openings = crate::cave_terrain::surface_openings(self, tx, ty);
+                let mut cached = self.cave_openings.write().unwrap_or_else(|e| e.into_inner());
+                if cached.len() >= 65_536 {
+                    cached.clear();
+                }
+                cached.insert((tx, ty), openings);
+                openings
+            })
+        } else {
+            [None; 4]
+        };
+        openings.into_iter().flatten()
     }
 
     pub fn natural_cave_mouth(&self, tx: i32, ty: i32) -> Option<crate::cave_terrain::CaveMouth> {
@@ -1047,6 +1219,11 @@ pub fn node_anchor_mm(seed: u64, tx: i32, ty: i32) -> (i64, i64) {
     (tx as i64 * TILE_MM + TILE_MM / 2 + jit(3), ty as i64 * TILE_MM + TILE_MM / 2 + jit(7))
 }
 
+/// Is this tile the gravel of a ford: dry ground laid across a stream (fourth generator only)?
+pub fn is_ford_gravel(map: &Map, tx: i32, ty: i32) -> bool {
+    gen_v4(map.seed) && crate::rivers::river_map(map.seed).is_gravel(tx, ty) && map.terrain(tx, ty).is_some_and(|t| t != Terrain::Water)
+}
+
 /// How deep the water on a tile is, as a body feels it: 0 dry land, 1 shallow (land within a tile: wade), 2 deep
 /// (swim).
 pub fn water_depth(map: &Map, tx: i32, ty: i32) -> u8 {
@@ -1063,6 +1240,14 @@ pub fn current_mm(map: &Map, tx: i32, ty: i32) -> (i64, i64) {
     let seed = map.seed;
     if !gen_v2(seed) || map.terrain(tx, ty) != Some(Terrain::Water) {
         return (0, 0);
+    }
+    if gen_v4(seed) {
+        // the water of a river tile runs the way the drainage does; the sea and lakes stand still
+        let Some((dx, dy)) = crate::rivers::river_map(seed).flow(tx, ty) else { return (0, 0) };
+        let share = i64::from(crate::rivers::river_map(seed).strength(tx, ty));
+        let speed = (4 + (raw_height(seed, tx, ty) as i64 - 95).clamp(0, 60) / 10) * share / 100;
+        let k = if dx != 0 && dy != 0 { 707 } else { 1000 };
+        return (i64::from(dx) * k * speed / 1000, i64::from(dy) * k * speed / 1000);
     }
     let raw = |x: i32, y: i32| raw_height(seed, x, y) as i64;
     // the sea and lakes: water that was water before any river was cut, or a lake hollow
@@ -1096,6 +1281,32 @@ pub fn terrain_at(seed: u64, x: i32, y: i32) -> Terrain {
     terrain_raw(seed, x, y, h, 0, 0)
 }
 
+/// The fourth generator's ground: bare rock where it is high or steep, sand only on shores and in dry flats, and
+/// forest where the ground is damp: broad patches of moisture, wetter beside water.
+fn terrain_v4(seed: u64, x: i32, y: i32, h: i32) -> Terrain {
+    let rivers = crate::rivers::river_map(seed);
+    if h < 95 {
+        return Terrain::Water;
+    }
+    let shore = rivers.shore(x, y);
+    // a 1 raw unit step is 90 to 170 mm of height; more than 7 units to a neighbour is a steep face
+    if h > 160 || (h >= 108 && shore > 2 && rivers.steepness(seed, x, y) > 6) {
+        return Terrain::Rock;
+    }
+    let gn = |salt: u64, cell: i32| crate::rng::gradient_noise(seed ^ salt, x, y, cell) as i32;
+    let moist = (gn(0x2222, 40) * 3 + gn(0x2223, 14)) / 4 + (6 - shore).max(0) * 7 - (h - 108).max(0) / 3;
+    if h < 99 || (shore <= 2 && h < 108) {
+        Terrain::Sand
+    } else if h < 108 && moist < 120 {
+        // dry flat country
+        Terrain::Sand
+    } else if moist > 140 {
+        Terrain::Forest
+    } else {
+        Terrain::Grass
+    }
+}
+
 /// The ground worked out, given the tile's height and (third generator) its climate.
 fn terrain_raw(seed: u64, x: i32, y: i32, h: i32, warm: i32, wet: i32) -> Terrain {
     if gen_v3(seed) {
@@ -1116,6 +1327,9 @@ fn terrain_raw(seed: u64, x: i32, y: i32, h: i32, warm: i32, wet: i32) -> Terrai
         } else {
             Terrain::Grass
         };
+    }
+    if gen_v4(seed) {
+        return terrain_v4(seed, x, y, h);
     }
     let height = h as i64;
     let moist = fbm(seed ^ 0x2222, x, y);

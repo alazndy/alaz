@@ -15,7 +15,7 @@ struct Globals {
     fires: array<vec4<f32>, 8>, // burning fires: xyz position, w reach in metres (0 = none)
     occ: vec4<f32>,     // x: how many of `fires` burn
     sun_vp_static: mat4x4<f32>, // the static shadow map's own box (trees and rocks; the shadow map starts as a copy of a window of it)
-    cave: vec4<f32>,    // x: 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
+    cave: vec4<f32>,    // x: torch strength (0..1), y: local roof cut enabled
     look: vec4<f32>,    // xyz: a small resource the pointer is on, w: 1 if there is one
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -67,14 +67,27 @@ fn shore_at(p: vec2<f32>) -> f32 {
 }
 
 // bilinear ground height at a point on the map (the same surface the terrain tiles are cut from, up to the triangle split)
+fn cubic4(a: f32, b: f32, c: f32, d: f32, t: f32) -> f32 {
+    return b + 0.5 * t * (c - a + t * (2.0 * a - 5.0 * b + 4.0 * c - d + t * (3.0 * (b - c) + d - a)));
+}
+// The ground height: a smooth (Catmull-Rom) surface through the tile corners, kept inside the range of its own cell's
+// corners so a hill never overshoots. The CPU's `smooth_height` (mesh/common.rs) is the same formula.
 fn ground_h(p: vec2<f32>) -> f32 {
     let q = p - globals.hwin.xy;
     let f = floor(q);
     let t = q - f;
     let i = vec2<i32>(f);
-    let a = mix(corner_h(i), corner_h(i + vec2<i32>(1, 0)), t.x);
-    let b = mix(corner_h(i + vec2<i32>(0, 1)), corner_h(i + vec2<i32>(1, 1)), t.x);
-    return mix(a, b, t.y);
+    var rows: array<f32, 4>;
+    for (var j = 0; j < 4; j++) {
+        let y = i.y + j - 1;
+        rows[j] = cubic4(corner_h(vec2<i32>(i.x - 1, y)), corner_h(vec2<i32>(i.x, y)), corner_h(vec2<i32>(i.x + 1, y)), corner_h(vec2<i32>(i.x + 2, y)), t.x);
+    }
+    let h = cubic4(rows[0], rows[1], rows[2], rows[3], t.y);
+    let c00 = corner_h(i);
+    let c10 = corner_h(i + vec2<i32>(1, 0));
+    let c01 = corner_h(i + vec2<i32>(0, 1));
+    let c11 = corner_h(i + vec2<i32>(1, 1));
+    return clamp(h, min(min(c00, c10), min(c01, c11)), max(max(c00, c10), max(c01, c11)));
 }
 
 struct VIn {
@@ -179,10 +192,6 @@ fn place(v0: VIn) -> vec3<f32> {
     var lift = 0.0;
     if (v0.kind > 500.0) {
         lift = v0.kind - 1000.0;
-    } else if (globals.cave.y > 0.5) {
-        let xz = select(v.pos.xz, v.off, anchored);
-        let tile = clamp(vec2<i32>(floor(xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
-        lift = textureLoad(hmap, tile, 0).r;
     } else {
         lift = ground_h(select(v.pos.xz, v.off, anchored)) + select(0.0, 0.02, anchored);
     }
@@ -325,12 +334,26 @@ fn material(v: VOut) -> vec3<f32> {
     return clamp(vec3<f32>(1.0) + (k - vec3<f32>(1.0)) * grain, vec3<f32>(0.35), vec3<f32>(1.7));
 }
 
+// Fine relief of the ground, a few centimetres high: two octaves of value noise. It only bends the light (the surface
+// the feet and the props stand on stays smooth), so nothing has to agree with it.
+fn ground_relief(p: vec2<f32>) -> f32 {
+    return (vnoise(p * 1.7) - 0.5) * 0.10 + (vnoise(p * 4.3 + vec2<f32>(7.7, 3.1)) - 0.5) * 0.05;
+}
+fn ground_bump(w: vec2<f32>) -> vec2<f32> {
+    let e = 0.12;
+    return vec2<f32>(
+        ground_relief(w + vec2<f32>(e, 0.0)) - ground_relief(w - vec2<f32>(e, 0.0)),
+        ground_relief(w + vec2<f32>(0.0, e)) - ground_relief(w - vec2<f32>(0.0, e)),
+    ) / (2.0 * e);
+}
+
 // surface direction of the ground at a point, from the height map
 fn ground_n(w: vec2<f32>) -> vec3<f32> {
     let e = 1.0;
     let gx = (ground_h(w + vec2<f32>(e, 0.0)) - ground_h(w - vec2<f32>(e, 0.0))) / (2.0 * e);
     let gz = (ground_h(w + vec2<f32>(0.0, e)) - ground_h(w - vec2<f32>(0.0, e))) / (2.0 * e);
-    return normalize(vec3<f32>(-gx, 1.0, -gz));
+    let b = ground_bump(w);
+    return normalize(vec3<f32>(-(gx + b.x), 1.0, -(gz + b.y)));
 }
 
 // light from the sky and the sun on a surface facing `n` at `wp`: a cool sky above and warm bounce from the ground
@@ -433,7 +456,28 @@ fn tile_of(t: vec2<i32>) -> vec2<i32> {
 fn tile_at(t: vec2<i32>) -> vec4<f32> {
     var v = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0);
     v.z = v.z - 16.0 * floor(v.z / 16.0);
+    // a river tile's shade channel carries its current (see flow_at_tile); the ground only sees plain shade
+    if (v.w > 1.5) { v.w = 1.0; }
     return v;
+}
+
+// the current of a water tile in metres a second: its shade channel holds 2 + (x + 16) * 40 + (y + 16), with x and y
+// in mm a tick; 1 is still water and anything below 1.5 is land shade
+fn flow_at_tile(t: vec2<i32>) -> vec2<f32> {
+    let w = textureLoad(tilemap, clamp(t - vec2<i32>(globals.hwin.xy), vec2<i32>(0), vec2<i32>(255)), 0).w;
+    if (w < 1.5) { return vec2<f32>(0.0); }
+    let n = w - 2.0;
+    let a = floor(n / 40.0);
+    return vec2<f32>(a - 16.0, n - a * 40.0 - 16.0) * 0.06;
+}
+
+// the current at a point, blended from tile centre to tile centre so it does not change in steps
+fn flow_vec(p: vec2<f32>) -> vec2<f32> {
+    let qs = p - vec2<f32>(0.5);
+    let t0 = vec2<i32>(floor(qs));
+    let fr = qs - floor(qs);
+    return mix(mix(flow_at_tile(t0), flow_at_tile(t0 + vec2<i32>(1, 0)), fr.x),
+               mix(flow_at_tile(t0 + vec2<i32>(0, 1)), flow_at_tile(t0 + vec2<i32>(1, 1)), fr.x), fr.y);
 }
 
 // the surface layer the sim keeps for a tile: the surface in the low three bits (1 mud, 2 puddle, 3 ice, 4 ash,
@@ -541,7 +585,7 @@ fn ground_static(tx: vec2<i32>) -> GStatic {
     let cap = smoothstep(11.5, 14.5, alt - steep * 3.0 + 1.2 * vnoise(w * 0.4));
     col = mix(col, vec3<f32>(0.90, 0.94, 1.0), cap * 0.92);
     r.col = col;
-    r.g = vec2<f32>(gx, gz);
+    r.g = vec2<f32>(gx, gz) + ground_bump(w);
     // puddles form on flat ground away from the shore, below the snow line; never on the sand of a water tile
     let puddles = steep < 0.25 && beach < -0.7 && cap < 0.5 && mine.z > 0.5;
     r.state = select(select(0.0, 1.0, puddles), 3.0, pooled);
@@ -717,6 +761,22 @@ fn ground_dyn(w: vec2<f32>, tx: vec2<i32>, g: GStatic) -> GDyn {
         if (crest > 0.8 && wnd > 0.7 && deep > 0.3 && hash21(vec2<f32>(tx) + floor(clock * 4.0)) > 0.9 - 0.2 * (wnd - 0.7)) {
             col = mix(col, vec3<f32>(0.88, 0.95, 0.97), 0.7);
         }
+        // a river: streaks of lighter water stretched along the current and carried with it. Two copies a half cycle
+        // apart fade in and out, so the pattern keeps moving without smearing as the current changes direction.
+        let fv = flow_vec(q);
+        let spd = length(fv);
+        if (spd > 0.02) {
+            let dir = fv / spd;
+            let perp = vec2<f32>(-dir.y, dir.x);
+            var streak = 0.0;
+            for (var i = 0; i < 2; i++) {
+                let cyc = fract(clock * 0.22 + f32(i) * 0.5);
+                let uv = q - fv * (cyc * 4.5);
+                let s = vec2<f32>(dot(uv, dir) * 0.6, dot(uv, perp) * 3.2) + f32(i) * vec2<f32>(7.3, 2.1);
+                streak += (1.0 - abs(2.0 * cyc - 1.0)) * smoothstep(0.58, 0.82, vnoise(s));
+            }
+            col = mix(col, vec3<f32>(0.78, 0.90, 0.93), 0.4 * streak * smoothstep(0.02, 0.08, spd) * (1.0 - 0.5 * deep));
+        }
         let band = abs(n1 - n2);
         if (band < 0.05) { col = col * 1.16 + vec3<f32>(0.03, 0.05, 0.05); }
         else if (band > 0.42) { col = col * 0.86; }
@@ -828,6 +888,15 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(finish(lit, wpos, 0.0), 1.0);
 }
 
+// Match the ray picker: hide only nearby rock above the player and between them and the eye.
+fn cave_roof_cut(world: vec3<f32>) -> bool {
+    if (globals.cave.y <= 0.5 || globals.peek.w <= 0.5) { return false; }
+    let d = world - globals.peek.xyz;
+    let toward_eye = cross(globals.cam_r.xyz, globals.cam_u.xyz);
+    let screen = vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz));
+    return d.y > 0.25 && dot(d, toward_eye) > 0.3 && length(d.xz) < 4.2 && length(screen) < 2.1;
+}
+
 @vertex fn vs_ground(v0: VIn) -> GIn {
     var o: GIn;
     let wp = place(v0);
@@ -839,6 +908,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk whose bake is complete: one lookup stands in for the whole static colour.
 @fragment fn fs_ground(v: GIn) -> @location(0) vec4<f32> {
+    if (cave_roof_cut(v.world)) { discard; }
     let tx = vec2<i32>(floor(v.wpos * GTF));
     let rt = ((tx % vec2<i32>(RING_TEXELS)) + vec2<i32>(RING_TEXELS)) % vec2<i32>(RING_TEXELS);
     let c = textureLoad(bake_col, rt, 0);
@@ -851,6 +921,7 @@ fn ground_finish(d: GDyn, wpos: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 
 // The ground of a chunk the bake has not reached yet (or lies beyond the ring): the same, worked out on the spot.
 @fragment fn fs_ground_live(v: GIn) -> @location(0) vec4<f32> {
+    if (cave_roof_cut(v.world)) { discard; }
     let tx = vec2<i32>(floor(v.wpos * GTF));
     return ground_finish(ground_dyn(v.wpos, tx, ground_static(tx)), v.wpos, v.world);
 }
@@ -880,55 +951,48 @@ struct BakeOut {
 }
 
 // ---- models and decals --------------------------------------------------------------------------------------------
-// Underground the rock is lit by the player's torch alone. `hmap`'s green channel marks the tiles of solid rock (the cave
-// writes it there in place of the climate), so the light is stopped by walls: a short march from the torch to the point.
-fn cave_open(src: vec3<f32>, dst: vec3<f32>) -> f32 {
-    for (var i = 1; i < 14; i = i + 1) {
-        let q = mix(src, dst, f32(i) / 14.0);
-        if (globals.cave.y > 0.5) {
-            let t = clamp(vec2<i32>(floor(q.xz - globals.hwin.xy)), vec2<i32>(0), vec2<i32>(255));
-            let rock = textureLoad(hmap, t, 0);
-            if (rock.g > 0.5 || q.y < rock.r - 0.12) { return 0.0; }
-        } else if (q.y < 2.2) {
-            let t = clamp(vec2<i32>(floor(q.xz)), vec2<i32>(0), vec2<i32>(255));
-            if (textureLoad(hmap, t, 0).g > 0.5) { return 0.0; }
-        }
-    }
-    return 1.0;
+// Negative model UVs carry exposure from the connected cave mesh. Rock and actors use distinct ranges
+// so the camera can open the roof without punching holes through bodies or carried models.
+fn cave_daylight(tag: f32) -> f32 {
+    if (tag <= -2.0) { return clamp(-tag - 2.0, 0.0, 1.0); }
+    return clamp((-tag - 1.0) / 0.99, 0.0, 1.0);
 }
 
-fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
-    let k = clamp(globals.cave.x - 1.0, 0.0, 1.0);
+fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>, exposure: f32) -> vec3<f32> {
+    let strength = clamp(globals.cave.x, 0.0, 1.0);
     let torch = globals.peek.xyz + vec3<f32>(0.0, 0.55, 0.0);
-    let reach = 12.0 * k;
-    var light = vec3<f32>(0.06, 0.07, 0.10);
-    if (reach > 0.5) {
+    let reach = 8.0;
+    var light = vec3<f32>(0.07, 0.078, 0.10);
+    if (exposure > 0.0) {
+        let day = env_light(n, v.world, 1.0) * globals.light.rgb + fires_at(n, v.world);
+        light = mix(light, day, exposure);
+    }
+    if (strength > 0.0 && globals.peek.w > 0.5) {
         let d = torch - v.world;
         let dist = length(d);
         if (dist < reach) {
             let dir = d / max(dist, 0.001);
-            let vis = cave_open(torch, v.world + dir * 0.2);
-            let att = pow(1.0 - dist / reach, 1.25);
+            let att = 1.0 - smoothstep(0.0, reach, dist);
             let ndl = max(dot(n, dir), 0.0) * 0.75 + 0.25;
             let flick = 0.90 + 0.06 * sin(globals.env.x * 13.0) + 0.04 * sin(globals.env.x * 29.0 + 1.3);
-            // (the tops of the rock are far above the torch: dim, a dark mass against the lit floor)
-            let rock_top = select(v.world.y > 1.5, v.uv.x > 1.5, globals.cave.y > 0.5);
-            let top = select(1.0, 0.35, rock_top && n.y > 0.8);
-            light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * 2.2 * vis * top;
+            light = light + vec3<f32>(1.0, 0.60, 0.28) * att * ndl * flick * (1.8 * strength);
         }
     }
     var lit: vec3<f32>;
     if (v.glow < 0.5) {
-        lit = col * quantize(light, 0.07);
+        lit = col * quantize(light, 0.05);
     } else {
         lit = col * (0.5 + 0.6 * v.glow);
     }
-    let p = globals.light.w;
-    let lum = dot(lit, vec3<f32>(0.30, 0.59, 0.11));
-    return pow(max(mix(vec3<f32>(lum), lit, 0.28 + 0.72 * p), vec3<f32>(0.0)), vec3<f32>(2.2));
+    // Seen from outside, a gallery fades into the haze like everything else. Underground the roof cut is on and the
+    // haze is left out, so a cave's own far walls are not painted the grey of the open sky.
+    return finish(lit, v.wpos, clamp(globals.cave.y, 0.0, 1.0));
 }
 
 @fragment fn fs(v: VOut) -> @location(0) vec4<f32> {
+    let cave_model = v.kind == 4.0 && v.uv.x <= -1.0;
+    if (cave_model && v.uv.x <= -2.0 && cave_roof_cut(v.world)) { discard; }
+    let exposure = select(1.0, cave_daylight(v.uv.x), cave_model);
     if (v.kind == 4.0 && v.mat > 1.5 && v.mat < 2.5 && (v.glow < 0.5 || v.glow > 1.5) && v.p3.y > 1.15 && leaf_gap(v.p3)) { discard; }
     // a crown standing between the eye and the player opens up around them: leaves near the player on screen, and
     // nearer the camera than the player, are thinned out in a pixel pattern (more toward the middle), so the
@@ -962,20 +1026,6 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
             if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.85 * k) { discard; }
         }
     }
-    let cave_on = globals.cave.x > 0.5;
-    // underground: rock between the eye and the player opens up around them, so they are never lost behind a wall
-    if (cave_on && v.kind == 4.0 && v.uv.x > 1.5 && globals.peek.w > 0.5) {
-        let d = v.world - globals.peek.xyz;
-        let to_eye = -cross(globals.cam_u.xyz, globals.cam_r.xyz);
-        let ahead = dot(d, to_eye);
-        let r = length(vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz) * 0.8));
-        if (ahead > 0.4 && r < 2.8) {
-            let k = 1.0 - smoothstep(1.3, 2.8, r);
-            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
-            let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-            if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.9 * k) { discard; }
-        }
-    }
     // the bright rim around whatever the pointer is on: one flat colour, no light, no haze
     if (v.glow > 1.5) {
         return vec4<f32>(pow(v.color, vec3<f32>(2.2)), 1.0);
@@ -1001,15 +1051,16 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
         n = nm;
         // snow on the upper faces of leaves
         if (v.mat > 1.5 && v.mat < 2.5 && v.glow < 0.5) {
-            col = mix(col, vec3<f32>(0.9, 0.94, 1.0), globals.env.w * 0.45 * smoothstep(0.45, 0.8, nm.y));
+            col = mix(col, vec3<f32>(0.9, 0.94, 1.0), exposure * globals.env.w * 0.45 * smoothstep(0.45, 0.8, nm.y));
         }
         // in the rain everything outdoors is wet: darker, and its upper faces catch a cool sheen of the sky
         if (v.glow < 0.5) {
-            col = col * (1.0 - 0.16 * globals.env.z) + vec3<f32>(0.04, 0.05, 0.06) * globals.env.z * smoothstep(0.6, 0.9, nm.y);
+            let wet = exposure * globals.env.z;
+            col = col * (1.0 - 0.16 * wet) + vec3<f32>(0.04, 0.05, 0.06) * wet * smoothstep(0.6, 0.9, nm.y);
         }
     }
-    if (cave_on) {
-        return vec4<f32>(cave_shade(v, col, n), alpha);
+    if (cave_model) {
+        return vec4<f32>(cave_shade(v, col, n, exposure), alpha);
     }
     // light: sky, sun (held back by shadows and clouds) and fires; things that glow light themselves
     var lit: vec3<f32>;

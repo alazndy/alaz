@@ -1,9 +1,19 @@
 use super::*;
-use crate::cave_terrain::{CaveMouth, CaveNav, CaveTile, SIDES};
-use crate::caves::{CaveSelf, Cell, ore_item, vein_ore};
+use crate::cave_terrain::{CaveMouth, CaveNav, CaveTile, SIDES, WorldPoint};
+use crate::caves::{CaveView, Cell, ore_item, vein_ore};
 use crate::rules::{Gear, Rules, ToolKind};
 use crate::world::cave_play::{CAVE_MINE_TICKS, ROCK_SWING_TICKS, RUBBLE_SWING_TICKS};
 use std::collections::BTreeMap;
+
+/// The cave takes over at this point on the ramp. Walking out releases it at the surface edge.
+const LIP_ENTER_MM: i64 = -250;
+/// A click on this part of the ramp requests an exit, even if the click lies on the lip tile.
+const LIP_EXIT_MM: i64 = -400;
+
+fn lip_depth(mouth: CaveMouth, (x, y): (i64, i64)) -> i64 {
+    let (cx, cy) = mouth.threshold.center_mm();
+    (x - cx) * i64::from(mouth.direction.0) + (y - cy) * i64::from(mouth.direction.1)
+}
 
 fn centre(x: i32, y: i32) -> (i64, i64) {
     CaveTile { x, y, z: 0 }.center_mm()
@@ -29,6 +39,20 @@ fn finish_task(a: &mut Agent) {
     a.task = Task::Idle;
     a.path.clear();
     a.path_goal = (-1, -1);
+    a.walk_route = None;
+    a.floor_target = None;
+}
+
+fn cave_walk_speed(a: &Agent, flooded: bool) -> i64 {
+    crate::nav::walking::walk_speed(a, if flooded { 2 } else { 0 })
+}
+
+fn set_cave_route(a: &mut Agent, target: (i64, i64), end: CaveTile, route: Vec<CaveTile>) {
+    use crate::nav::walking::WalkRoute;
+    let goal = WorldPoint { x_mm: target.0, y_mm: target.1, z_mm: i64::from(end.z) * 1_000 };
+    a.path = route.iter().map(|t| t.xy()).collect();
+    a.path_goal = goal.tile();
+    a.walk_route = Some(WalkRoute { goal, remaining: route.into_iter().map(Into::into).collect() });
 }
 
 fn cave_sight_line(start: CaveTile, end: CaveTile, floors: &BTreeMap<(i32, i32), i16>) -> bool {
@@ -60,6 +84,51 @@ fn cave_sight_line(start: CaveTile, end: CaveTile, floors: &BTreeMap<(i32, i32),
 }
 
 impl World {
+    /// Feet in world coordinates, including the slopes between navigation floors.
+    pub fn agent_walk_position(&self, a: &Agent) -> WorldPoint {
+        let mut point = a.position();
+        if a.fly || !crate::map::has_natural_caves(self.seed) {
+            return point;
+        }
+        let tile = if let Some(cave) = a.cave_view() {
+            cave.natural_tile()
+        } else {
+            if a.kind != AgentKind::Human {
+                return point;
+            }
+            let (x, y) = point.tile();
+            let Some(opening) = self.map.cave_openings_at(x, y).min_by_key(|&mouth| lip_depth(mouth, (a.x, a.y))) else {
+                return point;
+            };
+            if self.airborne(a.id).is_some() {
+                return point;
+            }
+            opening.threshold
+        };
+        let (cx, cy) = tile.center_mm();
+        let (x, y) = (a.x - cx, a.y - cy);
+        let progress = x.abs().max(y.abs());
+        let floor = i64::from(tile.z) * 1_000;
+        if progress == 0 {
+            point.z_mm = floor;
+            return point;
+        }
+        let (dx, dy) = if x.abs() >= y.abs() {
+            (x.signum() as i32, 0)
+        } else {
+            (0, y.signum() as i32)
+        };
+        let half = TILE_MM / 2;
+        let edge = if self.map.cave_openings_at(tile.x, tile.y).any(|m| m.threshold == tile && m.direction == (-dx, -dy)) {
+            i64::from(crate::map::elevation_at_mm(self.seed, cx + x * half / progress, cy + y * half / progress))
+        } else {
+            self.natural_nav().next_floor(tile, tile.x + dx, tile.y + dy)
+                .map_or(floor, |next| (i64::from(tile.z) + i64::from(next.z)) * 500)
+        };
+        point.z_mm = floor + (edge - floor) * progress / half;
+        point
+    }
+
     pub(crate) fn load_cave_edit(&mut self, tile: CaveTile) {
         if self.dug_cave.insert(tile) {
             self.dug_cave_digest ^= cave_edit_key(tile);
@@ -85,19 +154,32 @@ impl World {
         (n.kind == NodeKind::CaveMouth).then(|| self.map.natural_cave_mouth(n.tx, n.ty))?
     }
 
-    pub fn natural_cave_tiles(&self, c: CaveSelf, radius: i32) -> Vec<CaveTile> {
-        let Some(tile) = c.natural_tile() else {
-            return Vec::new();
-        };
+    pub fn cave_entrance_destination(&self, node: NodeId) -> Option<crate::cave_terrain::WorldPoint> {
+        let threshold = self.natural_mouth(node.0)?.threshold;
+        Some(crate::nav::walking::WalkFloor::from(threshold).center())
+    }
+
+    pub fn natural_cave_tiles(&self, c: CaveView, radius: i32) -> Vec<CaveTile> {
+        let tile = c.natural_tile();
         self.natural_nav().nearby_floors(tile, radius.clamp(0, 32))
     }
 
+    /// The connected gallery floors and their first solid ceilings in world coordinates.
+    /// Draw the rock under a rubble pile as well as the pile itself.
+    pub fn cave_entrance_section(&self, start: CaveTile, radius: i32) -> Vec<(CaveTile, Option<i16>)> {
+        let mut nav = CaveNav::new(&self.map, &self.dug_cave);
+        nav.nearby_floors(start, radius.clamp(0, 32)).into_iter().map(|floor| {
+            let (x, y) = floor.center_mm();
+            let surface = crate::map::elevation_at_mm(self.seed, x, y).div_euclid(1_000) as i16;
+            let ceiling = (floor.z + 2..=surface).find(|&z| nav.is_rock(CaveTile { z, ..floor }));
+            (floor, ceiling)
+        }).collect()
+    }
+
     /// What the player can discover with the current light. Remembered tiles belong to the local map.
-    pub fn natural_cave_sight(&self, c: CaveSelf) -> BTreeMap<CaveTile, Cell> {
-        let Some(start) = c.natural_tile() else {
-            return BTreeMap::new();
-        };
-        let radius = if c.light > 0 { 7 } else { 1 };
+    pub fn natural_cave_sight(&self, c: CaveView) -> BTreeMap<CaveTile, Cell> {
+        let start = c.natural_tile();
+        let radius = if c.light > 0 { 7 } else { 2 };
         let mut nav = self.natural_nav();
         let tiles = nav.nearby_floors(start, radius);
         let floors = tiles.iter().map(|tile| (tile.xy(), tile.z)).collect();
@@ -131,8 +213,8 @@ impl World {
         self.dug_cave_digest
     }
 
-    pub fn natural_cave_cell(&self, c: CaveSelf, x: i32, y: i32) -> Option<Cell> {
-        let tile = c.natural_tile()?;
+    pub fn natural_cave_cell(&self, c: CaveView, x: i32, y: i32) -> Option<Cell> {
+        let tile = c.natural_tile();
         let mut nav = self.natural_nav();
         if nav.adjacent_rubble(tile, x, y).is_some() {
             Some(Cell::Rubble)
@@ -145,8 +227,8 @@ impl World {
         }
     }
 
-    pub fn natural_cave_ore(&self, c: CaveSelf, x: i32, y: i32) -> Option<u8> {
-        let from = c.natural_tile()?;
+    pub fn natural_cave_ore(&self, c: CaveView, x: i32, y: i32) -> Option<u8> {
+        let from = c.natural_tile();
         self.natural_cave_ore_at(CaveTile { x, y, z: from.z })
     }
 
@@ -156,53 +238,127 @@ impl World {
             tile.x,
             tile.y,
         );
-        (roll % 100 < 19).then(|| vein_ore(CaveSelf::natural_depth_at(tile.z), roll / 100))
+        (roll % 100 < 19).then(|| vein_ore(CaveView::natural_depth_at(tile.z), roll / 100))
     }
 
     pub fn natural_cave_flooded(&self, tile: CaveTile) -> bool {
         let (x, y) = tile.center_mm();
-        CaveSelf::natural_depth_at(tile.z) == crate::world::cave_play::CAVE_MAX_DEPTH
+        CaveView::natural_depth_at(tile.z) == crate::world::cave_play::CAVE_MAX_DEPTH
             && !self.pumped_at(x, y)
     }
 
-    pub(super) fn natural_exit(&self, c: CaveSelf) -> Option<(i64, i64)> {
-        self.natural_cave_exit_at(c.natural_tile()?)
-    }
-
     pub fn natural_cave_exit_at(&self, tile: CaveTile) -> Option<(i64, i64)> {
-        SIDES.into_iter().find_map(|(dx, dy)| {
-            let (x, y) = (tile.x + dx, tile.y + dy);
-            let mouth = self.map.natural_cave_mouth(x, y)?;
-            (tile == mouth.threshold).then(|| centre(x, y))
-        })
+        let mouth = self.map.cave_openings_at(tile.x, tile.y).find(|m| m.threshold == tile)?;
+        Some(centre(tile.x - mouth.direction.0, tile.y - mouth.direction.1))
     }
 
-    pub(super) fn natural_leave_command(&mut self, ai: usize, mut c: CaveSelf) {
-        let Some(start) = c.natural_tile() else {
-            return;
-        };
-        let rules = self.rules_arc();
-        let a = &self.agents[ai];
-        let pick = pick_tier(&rules, a.kind, &a.inventory);
-        let route = self.natural_nav().route_to(
-            start,
-            |tile| self.natural_cave_exit_at(tile).is_some(),
-            |from, to| self.natural_step_access(from, to, pick, &rules).is_ok(),
-        );
+    pub(super) fn natural_leave_command(&mut self, ai: usize, mut c: CaveView) {
+        let start = c.natural_tile();
+        let route = self.natural_exit_route(start, &self.agents[ai]);
         let a = &mut self.agents[ai];
         if let Some(route) = route {
             let end = route.first().copied().unwrap_or(start);
-            a.path = route.into_iter().map(CaveTile::xy).collect();
-            a.path_goal = end.xy();
-            let (x, y) = end.center_mm();
+            let (mut x, mut y) = end.center_mm();
+            if let Some(mouth) = self.map.cave_openings_at(end.x, end.y).find(|m| m.threshold == end) {
+                x -= i64::from(mouth.direction.0) * (TILE_MM * 9 / 20);
+                y -= i64::from(mouth.direction.1) * (TILE_MM * 9 / 20);
+            }
             a.task = Task::Move { x, y };
+            a.floor_target = Some(i64::from(end.z) * 1_000);
+            set_cave_route(a, (x, y), end, route);
             c.leaving = true;
         } else {
             finish_task(a);
+            a.after_surface = None;
             self.events.push(Event::Rejected(a.id, Reject::Unreachable));
             c.leaving = false;
         }
-        a.cave = Some(c);
+        a.set_cave_view(c);
+    }
+
+    fn natural_exit_route(&self, start: CaveTile, a: &Agent) -> Option<Vec<CaveTile>> {
+        let rules = self.rules_arc();
+        let pick = pick_tier(&rules, a.kind, &a.inventory);
+        self.natural_nav().route_to(
+            start,
+            |tile| self.natural_cave_exit_at(tile).is_some(),
+            |from, to| self.natural_step_access(from, to, pick, &rules).is_ok(),
+        )
+    }
+
+    pub fn cave_exit_destination(&self, id: AgentId) -> Option<crate::cave_terrain::WorldPoint> {
+        let a = self.agents.get(id.0 as usize)?;
+        let start = a.cave_view()?.natural_tile();
+        let route = self.natural_exit_route(start, a)?;
+        let (x_mm, y_mm) = self.natural_cave_exit_at(route.first().copied().unwrap_or(start))?;
+        Some(crate::cave_terrain::WorldPoint {
+            x_mm,
+            y_mm,
+            z_mm: i64::from(crate::map::elevation_at_mm(self.seed, x_mm, y_mm)),
+        })
+    }
+
+    pub(super) fn route_to_floor(&mut self, ai: usize, position: crate::cave_terrain::WorldPoint) {
+        let (x, y) = (position.x_mm, position.y_mm);
+        let (tx, ty) = position.tile();
+        let surface = position.z_mm == i64::from(crate::map::elevation_at_mm(self.seed, x, y))
+            && !self.map.surface_cave_gap(tx, ty);
+        if let Some(cave) = self.agents[ai].cave_view() {
+            if surface {
+                self.natural_leave_command(ai, cave);
+                if self.agents[ai].cave_view().is_some_and(|c| c.leaving) {
+                    self.agents[ai].after_surface = Some(CommandKind::MoveTo { x, y });
+                }
+            }
+            return;
+        }
+        if surface {
+            return;
+        }
+
+        let a = &self.agents[ai];
+        let threshold = (crate::map::has_natural_caves(self.seed) && a.kind == AgentKind::Human)
+            .then(|| self.entrance_to(position, a)).flatten();
+        let a = &mut self.agents[ai];
+        if let Some(threshold) = threshold {
+            let (x, y) = threshold.center_mm();
+            a.after_entry = Some(position);
+            a.floor_target = Some(i64::from(threshold.z) * 1_000);
+            a.task = Task::Move { x, y };
+        } else {
+            finish_task(a);
+            self.events.push(Event::Rejected(a.id, Reject::Unreachable));
+        }
+    }
+
+    fn entrance_to(&self, position: crate::cave_terrain::WorldPoint, a: &Agent) -> Option<CaveTile> {
+        let z = i16::try_from(position.z_mm.div_euclid(1_000)).ok()?;
+        if !(-95..=70).contains(&z) || position.z_mm.rem_euclid(1_000) != 0 {
+            return None;
+        }
+        let (x, y) = position.tile();
+        let target = CaveTile { x, y, z };
+        let mut nav = self.natural_nav();
+        if !nav.floor(target) || self.natural_cave_rubble_at(target) {
+            return None;
+        }
+        let rules = self.rules_arc();
+        let pick = pick_tier(&rules, a.kind, &a.inventory);
+        let walker = a.position().tile();
+        nav.entrance_from(
+            target,
+            |tile| {
+                self.map.cave_openings_at(tile.x, tile.y)
+                    .filter(|mouth| mouth.threshold == tile)
+                    .map(|mouth| {
+                        let x = tile.x - mouth.direction.0;
+                        let y = tile.y - mouth.direction.1;
+                        (walker.0 - x).abs() + (walker.1 - y).abs()
+                    })
+                    .min()
+            },
+            |from, to| self.natural_step_access(to, from, pick, &rules).is_ok(),
+        )
     }
 
     fn natural_step_access(
@@ -215,8 +371,8 @@ impl World {
         if self.natural_cave_flooded(to) && !self.natural_cave_flooded(from) {
             return Err(Reject::Flooded);
         }
-        let depth = CaveSelf::natural_depth_at(to.z);
-        if depth > CaveSelf::natural_depth_at(from.z) {
+        let depth = CaveView::natural_depth_at(to.z);
+        if depth > CaveView::natural_depth_at(from.z) {
             let tier = rules.cave_tier(depth);
             if pick.is_none_or(|have| have < tier) {
                 return Err(Reject::NeedsTool {
@@ -233,19 +389,20 @@ impl World {
         nav: &mut CaveNav<'_>,
         start: CaveTile,
         goal: (i32, i32),
+        height: Option<i16>,
         pick: Option<u8>,
         rules: &Rules,
     ) -> Result<Vec<CaveTile>, Reject> {
         let access = |from, to| self.natural_step_access(from, to, pick, rules);
         if let Some(route) = nav.route_to(
             start,
-            |tile| tile.xy() == goal,
+            |tile| tile.xy() == goal && height.is_none_or(|z| z == tile.z),
             |from, to| access(from, to).is_ok(),
         ) {
             return Ok(route);
         }
         // Preserve the tool or water hint when the target has a route on foot but the player can't use it.
-        if let Some(route) = nav.route(start, goal, None) {
+        if let Some(route) = nav.route(start, goal, height) {
             let mut previous = start;
             for tile in route.into_iter().rev() {
                 access(previous, tile)?;
@@ -255,19 +412,50 @@ impl World {
         Err(Reject::Unreachable)
     }
 
-    pub(super) fn natural_way_out(&self, c: CaveSelf, a: &Agent) -> Option<((i64, i64), i32)> {
+    pub(super) fn natural_way_out(&self, c: CaveView, a: &Agent) -> Option<((i64, i64), i32)> {
         let (x, y) = *a.path.last()?;
         let (wx, wy) = centre(x, y);
         c.leaving
             .then_some(((wx - c.x, wy - c.y), a.path.len() as i32))
     }
 
-    pub(super) fn natural_deeper_spot(&self, c: CaveSelf) -> Option<(i64, i64)> {
-        let current = c.natural_tile()?;
+    pub(super) fn natural_deeper_spot(&self, c: CaveView) -> Option<(i64, i64)> {
+        let current = c.natural_tile();
         self.natural_cave_tiles(c, 16)
             .into_iter()
             .find(|tile| tile.z < current.z && tile.xy() != current.xy())
             .map(CaveTile::center_mm)
+    }
+
+    /// Walking onto the open lip of a natural cave goes in, as stepping into a hole does. No command and no light.
+    pub(super) fn run_cave_gaps(&mut self) {
+        if !crate::map::has_natural_caves(self.seed) {
+            return;
+        }
+        for ai in 0..self.agents.len() {
+            let a = &self.agents[ai];
+            if a.cave_view().is_some() || a.kind != AgentKind::Human || a.fly {
+                continue;
+            }
+            let (tx, ty) = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
+            if self.air.iter().any(|f| f.agent == a.id) {
+                continue;
+            }
+            let Some(mouth) = self.map.cave_openings_at(tx, ty).min_by_key(|&mouth| lip_depth(mouth, (a.x, a.y))) else { continue };
+            if lip_depth(mouth, (a.x, a.y)) < LIP_ENTER_MM { continue; }
+            self.enter_natural_cave(ai, mouth.threshold.z, (a.x, a.y));
+        }
+    }
+
+    /// Where a walker coming back up to the lip steps out onto the surface, once it is past the tile's outer edge.
+    fn natural_lip_exit(&self, c: CaveView, target: (i64, i64)) -> Option<CaveMouth> {
+        let tile = c.natural_tile();
+        self.map.cave_openings_at(tile.x, tile.y).find_map(|mouth| {
+            if tile != mouth.threshold {
+                return None;
+            }
+            (lip_depth(mouth, target) <= LIP_EXIT_MM).then_some(mouth)
+        })
     }
 
     pub(super) fn run_natural_cave_tasks(&mut self) {
@@ -276,12 +464,10 @@ impl World {
         }
         let rules = self.rules_arc();
         for ai in 0..self.agents.len() {
-            let Some(c) = self.agents[ai].cave else {
+            let Some(c) = self.agents[ai].cave_view() else {
                 continue;
             };
-            let Some(tile) = c.natural_tile() else {
-                continue;
-            };
+            let tile = c.natural_tile();
             match self.agents[ai].task {
                 Task::Walk { x, y } => self.natural_move(ai, c, tile, (x, y), false, &rules),
                 Task::Move { x, y } => self.natural_move(ai, c, tile, (x, y), true, &rules),
@@ -296,7 +482,7 @@ impl World {
     fn natural_move(
         &mut self,
         ai: usize,
-        mut c: CaveSelf,
+        mut c: CaveView,
         tile: CaveTile,
         target: (i64, i64),
         routed: bool,
@@ -317,40 +503,70 @@ impl World {
             let a = &mut self.agents[ai];
             a.path.clear();
             a.path_goal = (-1, -1);
+            a.walk_route = None;
         }
         let a = &self.agents[ai];
+        let exit = (!routed || goal == tile.xy() && a.path.len() <= 1 && a.floor_target.is_none_or(|z| z == a.z))
+            .then(|| self.natural_lip_exit(c, target)).flatten();
+        if let Some(mouth) = exit {
+            let speed = cave_walk_speed(a, self.natural_cave_flooded(tile));
+            let (dx, dy) = mouth.direction;
+            let depth = lip_depth(mouth, target);
+            let resume = if !routed && depth <= -TILE_MM / 2 {
+                a.task
+            } else {
+                Task::Idle
+            };
+            // A lip click requests the same exit as a click on the approach. Take the remaining steps past the seam.
+            let remaining = (depth + TILE_MM / 2 + 1).max(0);
+            let mut target = (target.0 - i64::from(dx) * remaining, target.1 - i64::from(dy) * remaining);
+            let (min_x, min_y) = (i64::from(tile.x) * TILE_MM, i64::from(tile.y) * TILE_MM);
+            if dx == 0 {
+                target.0 = target.0.clamp(min_x, min_x + TILE_MM - 1);
+            }
+            if dy == 0 {
+                target.1 = target.1.clamp(min_y, min_y + TILE_MM - 1);
+            }
+            (c.x, c.y) = crate::nav::walking::move_toward((c.x, c.y), target, speed);
+            if c.tile() == (tile.x - dx, tile.y - dy) {
+                self.leave_at(ai, &c, resume);
+            } else {
+                self.agents[ai].set_cave_view(c);
+            }
+            return;
+        }
         let pick = pick_tier(rules, a.kind, &a.inventory);
+        let height = a.floor_target.and_then(|z| i16::try_from(z.div_euclid(1_000)).ok());
         let mut nav = CaveNav::new(&self.map, &self.dug_cave).with_rubble(&self.cave_rubble);
         let waypoint = if routed {
-            let cached = a
-                .path
-                .last()
+            let cached = a.walk_route.as_ref()
+                .filter(|r| (r.goal.x_mm, r.goal.y_mm) == target && height.is_none_or(|z| i64::from(z) * 1_000 == r.goal.z_mm))
+                .and_then(|r| r.remaining.last())
                 .copied()
-                .filter(|_| a.path_goal == goal)
-                .filter(|&(x, y)| {
-                    tile.xy() == (x, y)
-                        || nav.next_floor(tile, x, y).is_some_and(|next| {
-                            self.natural_step_access(tile, next, pick, rules).is_ok()
-                        })
+                .filter(|f| {
+                    let next = CaveTile { x: f.x, y: f.y, z: f.z_mm.div_euclid(1_000) as i16 };
+                    tile == next || nav.next_floor(tile, f.x, f.y) == Some(next)
+                        && self.natural_step_access(tile, next, pick, rules).is_ok()
                 });
             if let Some(next) = cached {
-                next
+                (next.x, next.y)
             } else if c.leaving && goal != tile.xy() {
                 self.natural_leave_command(ai, c);
                 return;
             } else {
-                let path = self.natural_move_route(&mut nav, tile, goal, pick, rules);
+                let path = self.natural_move_route(&mut nav, tile, goal, height, pick, rules);
                 let a = &mut self.agents[ai];
                 match path {
                     Ok(path) => {
-                        a.path = path.into_iter().map(CaveTile::xy).collect();
-                        a.path_goal = goal;
+                        let end = path.first().copied().unwrap_or(tile);
+                        set_cave_route(a, target, end, path);
                         a.path.last().copied().unwrap_or(goal)
                     }
                     Err(reason) => {
                         finish_task(a);
+                        a.after_surface = None;
                         c.leaving = false;
-                        a.cave = Some(c);
+                        a.set_cave_view(c);
                         self.events.push(Event::Rejected(a.id, reason));
                         return;
                     }
@@ -384,9 +600,10 @@ impl World {
             }
             return;
         };
-        let depth = CaveSelf::natural_depth_at(next.z);
+        let depth = CaveView::natural_depth_at(next.z);
         let already_wet = self.natural_cave_flooded(tile);
         let access = self.natural_step_access(tile, next, pick, rules);
+        let at_exit = self.natural_cave_exit_at(tile).is_some();
         let a = &mut self.agents[ai];
         if let Err(rejection) = access {
             if c.leaving {
@@ -397,36 +614,23 @@ impl World {
             }
             return;
         }
-        let (tx, ty) = if next.xy() == goal && goal == tile.xy() && !c.leaving {
+        let final_waypoint = a.path.len() <= 1 && height.is_none_or(|z| tile.z == z);
+        let (tx, ty) = if final_waypoint && next == tile && goal == tile.xy() && (!c.leaving || at_exit) {
             target
         } else {
             next.center_mm()
         };
-        let (dx, dy) = (tx - c.x, ty - c.y);
-        let length = ((dx * dx + dy * dy) as u64).isqrt() as i64;
-        let mut speed = a.kind.speed_mm() * (1000 - i64::from(a.inventory.gear().burden)) / 1000;
-        if c.light == 0 {
-            speed = speed * 60 / 100;
-        }
-        if a.broken > 0 {
-            speed = speed * 55 / 100;
-        }
-        if already_wet {
-            speed = speed * 45 / 100;
-        }
-        let speed = speed.max(1);
-        if length <= speed {
-            c.x = tx;
-            c.y = ty;
+        (c.x, c.y) = crate::nav::walking::move_toward((c.x, c.y), (tx, ty), cave_walk_speed(a, already_wet));
+        if (c.x, c.y) == (tx, ty) {
             if routed && a.path.last() == Some(&waypoint) {
                 a.path.pop();
+                if let Some(route) = &mut a.walk_route {
+                    route.remaining.pop();
+                }
             }
             if waypoint == goal && a.path.is_empty() {
                 finish_task(a);
             }
-        } else {
-            c.x += dx * speed / length;
-            c.y += dy * speed / length;
         }
         if c.tile() == next.xy() {
             if c.depth() != depth {
@@ -441,17 +645,15 @@ impl World {
                     self.events.push(Event::Milestone(Milestone::DrainMine));
                 }
             }
-            c.set_elevation(next.z);
+            c.z = next.z;
         }
-        a.x = c.x;
-        a.y = c.y;
-        a.cave = Some(c);
+        a.set_cave_view(c);
     }
 
     fn natural_dig(
         &mut self,
         ai: usize,
-        c: CaveSelf,
+        c: CaveView,
         from: CaveTile,
         x: i32,
         y: i32,
@@ -479,7 +681,7 @@ impl World {
                 || self
                     .agents
                     .iter()
-                    .any(|a| a.cave.and_then(|c| c.natural_tile()) == Some(floor))
+                    .any(|a| a.cave_view().map(|c| c.natural_tile()) == Some(floor))
         }) {
             let a = &mut self.agents[ai];
             finish_task(a);
@@ -577,7 +779,7 @@ impl World {
         let occupied = self
             .agents
             .iter()
-            .filter_map(|a| a.cave.and_then(|c| c.natural_tile()))
+            .filter_map(|a| a.cave_view().map(|c| c.natural_tile()))
             .collect::<std::collections::BTreeSet<_>>();
         let mut candidates = self.natural_nav().nearby_floors(from, 2);
         candidates.retain(|tile| {
@@ -592,7 +794,7 @@ impl World {
         }
         for i in 0..self.agents.len() {
             let a = &self.agents[i];
-            if let Some(cave) = a.cave.filter(|c| c.elevation_m().is_some() && c.leaving)
+            if let Some(cave) = a.cave_view().filter(|c| c.leaving)
                 && candidates.iter().any(|tile| a.path.contains(&tile.xy()))
             {
                 self.natural_leave_command(i, cave);
@@ -601,19 +803,34 @@ impl World {
     }
 
     fn is_mouth_floor(&self, tile: CaveTile) -> bool {
-        SIDES.into_iter().any(|(dx, dy)| {
-            [1, 2].into_iter().any(|step| {
-                self.map
-                    .natural_cave_mouth(tile.x - dx * step, tile.y - dy * step)
-                    .is_some_and(|mouth| mouth.threshold == tile || mouth.landing == tile)
+        self.map.cave_openings_at(tile.x, tile.y).any(|mouth| mouth.threshold == tile)
+            || SIDES.into_iter().any(|(dx, dy)| {
+                self.map.cave_openings_at(tile.x - dx, tile.y - dy).any(|mouth| mouth.landing == tile)
             })
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn walk_into_fixture(w: &mut World, id: AgentId, node: NodeId) {
+        let mouth = w.natural_mouth(node.0).unwrap();
+        let position = w.cave_entrance_destination(node).unwrap();
+        w.step(&[Command { agent: id, kind: CommandKind::MoveToFloor { position } }]);
+        for _ in 0..100 {
+            if w.agents[id.0 as usize].cave_view().is_some() { break; }
+            w.step(&[]);
+        }
+        assert!(w.agents[id.0 as usize].cave_view().is_some());
+        let (x, y) = mouth.landing.center_mm();
+        w.step(&[Command { agent: id, kind: CommandKind::MoveTo { x, y } }]);
+        for _ in 0..100 {
+            if w.agents[id.0 as usize].task == Task::Idle { break; }
+            w.step(&[]);
+        }
+    }
+
 
     #[test]
     fn cave_sight_stops_at_walls_and_rising_floors() {
@@ -675,15 +892,15 @@ mod tests {
         }
         let id = w.spawn_agent(start.center_mm().0, start.center_mm().1);
         let (x, y) = start.center_mm();
-        w.agents[0].cave = Some(CaveSelf {
-            node: w.node_at(222, 150).unwrap().0,
-            level: (start.z + 100) as u8,
+        w.agents[0].set_cave_view(CaveView {
+
+            z: start.z,
             x,
             y,
             light: 600,
-            full: 600,
-            dark: 0,
-            cool: 0,
+
+
+
             leaving: false,
         });
         assert_eq!(
@@ -702,7 +919,7 @@ mod tests {
             }
             w.step(&[]);
         }
-        assert_eq!(w.agents[0].cave.unwrap().natural_tile(), Some(end));
+        assert_eq!(w.agents[0].cave_view().unwrap().natural_tile(), end);
     }
 
     #[test]
@@ -710,7 +927,7 @@ mod tests {
         let seed = crate::map::tag_seed_natural(42, 256);
         let mut w = World::with_size(seed, 256, 256);
         let mut nav = w.natural_nav();
-        let (node, floor, from) = w
+        let (_node, floor, from) = w
             .nodes
             .iter()
             .enumerate()
@@ -751,18 +968,18 @@ mod tests {
         let (x, y) = from.center_mm();
         let id = w.spawn_agent(x, y);
         w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        let c = CaveSelf {
-            node,
-            level: (from.z + 100) as u8,
+        let c = CaveView {
+
+            z: from.z,
             x,
             y,
             light: 600,
-            full: 600,
-            dark: 0,
-            cool: 0,
+
+
+
             leaving: false,
         };
-        w.agents[0].cave = Some(c);
+        w.agents[0].set_cave_view(c);
         w.step(&[Command {
             agent: id,
             kind: CommandKind::CaveDig {
@@ -820,21 +1037,15 @@ mod tests {
         let id = w.spawn_agent(x, y);
         w.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
         w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        w.step(&[Command {
-            agent: id,
-            kind: CommandKind::EnterCave { node: entry },
-        }]);
+        walk_into_fixture(&mut w, id, entry);
         let a = &mut w.agents[0];
-        let cave = a.cave.as_mut().unwrap();
+        let mut cave = a.cave_view().unwrap();
         (cave.x, cave.y) = start.center_mm();
-        cave.set_elevation(start.z);
-        cave.cool = 0;
-        (a.x, a.y) = (cave.x, cave.y);
+        cave.z = start.z;
+        a.set_cave_view(cave);
 
-        w.step(&[Command {
-            agent: id,
-            kind: CommandKind::CaveLeave,
-        }]);
+        let position = w.cave_exit_destination(id).unwrap();
+        w.step(&[Command { agent: id, kind: CommandKind::MoveToFloor { position } }]);
         assert_eq!(w.agents[0].path_goal, first.xy());
         assert!(w.cave_way_out(id).is_some());
         w.load_cave_rubble(blocked);
@@ -842,13 +1053,13 @@ mod tests {
         assert_eq!(w.agents[0].path_goal, alternate.xy());
         assert!(!w.agents[0].path.contains(&blocked.xy()));
         for _ in 0..1_400 {
-            if w.agents[0].cave.is_none() {
+            if w.agents[0].cave_view().is_none() {
                 break;
             }
             w.step(&[]);
         }
-        assert!(w.agents[0].cave.is_none(), "an alternate way led outside");
-        assert_eq!((w.agents[0].x, w.agents[0].y), expected_exit);
+        assert!(w.agents[0].cave_view().is_none(), "an alternate way led outside: {:?} {:?} {:?} lip {:?}", w.agents[0].cave_view(), w.agents[0].task, w.agents[0].path, alternate);
+        assert_eq!((w.agents[0].x.div_euclid(TILE_MM), w.agents[0].y.div_euclid(TILE_MM)), (expected_exit.0.div_euclid(TILE_MM), expected_exit.1.div_euclid(TILE_MM)));
         assert!(w.natural_cave_rubble_at(blocked));
     }
 
@@ -880,16 +1091,13 @@ mod tests {
         let id = w.spawn_agent(x, y);
         w.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
         w.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        w.step(&[Command {
-            agent: id,
-            kind: CommandKind::EnterCave { node },
-        }]);
+        walk_into_fixture(&mut w, id, node);
         // Start at the brink so this test measures drainage independently of the journey down.
         let a = &mut w.agents[0];
-        let mut cave = a.cave.unwrap();
+        let mut cave = a.cave_view().unwrap();
         (cave.x, cave.y) = from.center_mm();
-        cave.set_elevation(from.z);
-        a.cave = Some(cave);
+        cave.z = from.z;
+        a.set_cave_view(cave);
         (a.x, a.y) = (cave.x, cave.y);
         let (x, y) = into.center_mm();
         let walk = Command {
@@ -903,7 +1111,7 @@ mod tests {
                 |event| matches!(event, Event::Rejected(agent, Reject::Flooded) if *agent == id)
             )
         );
-        assert_eq!(w.agents[0].cave.unwrap().natural_tile(), Some(from));
+        assert_eq!(w.agents[0].cave_view().unwrap().natural_tile(), from);
 
         w.buildings
             .push(Building::new(BuildingKind::SteamPump, x + 3_000, y));
@@ -926,12 +1134,12 @@ mod tests {
         assert!(!w.natural_cave_flooded(into));
         w.step(&[walk]);
         for _ in 0..120 {
-            if w.agents[0].cave.unwrap().natural_tile() == Some(into) {
+            if w.agents[0].cave_view().unwrap().natural_tile() == into {
                 break;
             }
             w.step(&[]);
         }
-        assert_eq!(w.agents[0].cave.unwrap().natural_tile(), Some(into));
+        assert_eq!(w.agents[0].cave_view().unwrap().natural_tile(), into);
         assert!(w.milestone_done(Milestone::DrainMine));
     }
 
@@ -945,20 +1153,20 @@ mod tests {
         let miner = world.spawn_agent(x, y);
         world.agents[0].inventory.counts[ItemKind::Torch as usize] = 2;
         world.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        world.step(&[Command {
-            agent: miner,
-            kind: CommandKind::EnterCave { node: entry },
-        }]);
-        let c = world.agents[0].cave.unwrap();
-        let stand = c.natural_tile().unwrap();
-        let (tx, ty) = world.cave_dig_target(miner).expect("a wall to mine");
+        walk_into_fixture(&mut world, miner, entry);
+        let view = world.agents[0].cave_view().unwrap();
         let mut nav = world.natural_nav();
-        let accessible: Vec<_> = SIDES
-            .into_iter()
-            .filter_map(|(dx, dy)| nav.next_floor(stand, stand.x + dx, stand.y + dy))
-            .filter(|tile| !world.is_mouth_floor(*tile))
-            .collect();
-        assert!(!accessible.is_empty());
+        let (stand, tx, ty) = world.natural_cave_tiles(view, 12).into_iter().find_map(|stand| {
+            let can_fall = SIDES.into_iter().any(|(dx, dy)| nav.next_floor(stand, stand.x + dx, stand.y + dy)
+                .is_some_and(|t| !world.is_mouth_floor(t) && !world.natural_cave_flooded(t)));
+            if !can_fall { return None; }
+            SIDES.into_iter().find_map(|(dx, dy)| {
+                let (x, y) = (stand.x + dx, stand.y + dy);
+                (nav.walls(stand, x, y) && !world.is_mouth_floor(CaveTile { x, y, z: stand.z })).then_some((stand, x, y))
+            })
+        }).expect("a mineable wall near an unsupported passage");
+        let (x, y) = stand.center_mm();
+        world.agents[0].set_cave_view(CaveView { x, y, z: stand.z, ..view });
         let tick = (world.tick..world.tick + 5_000)
             .find(|&tick| {
                 let roll = rockfall_roll(seed, stand, tick);
@@ -995,11 +1203,8 @@ mod tests {
         let rescuer = world.spawn_agent(x, y);
         let ai = rescuer.0 as usize;
         world.agents[ai].inventory.counts[ItemKind::Torch as usize] = 2;
-        world.step(&[Command {
-            agent: rescuer,
-            kind: CommandKind::EnterCave { node: other },
-        }]);
-        let c = world.agents[ai].cave.unwrap();
+        walk_into_fixture(&mut world, rescuer, other);
+        let c = world.agents[ai].cave_view().unwrap();
         let (approach, pile) = world
             .natural_cave_tiles(c, 28)
             .into_iter()
@@ -1018,15 +1223,15 @@ mod tests {
             kind: CommandKind::MoveTo { x, y },
         }]);
         for _ in 0..1_200 {
-            if world.agents[ai].cave.and_then(|c| c.natural_tile()) == Some(approach)
+            if world.agents[ai].cave_view().map(|c| c.natural_tile()) == Some(approach)
                 && world.agents[ai].task == Task::Idle
             {
                 break;
             }
             world.step(&[]);
         }
-        let c = world.agents[ai].cave.unwrap();
-        assert_eq!(c.natural_tile(), Some(approach));
+        let c = world.agents[ai].cave_view().unwrap();
+        assert_eq!(c.natural_tile(), approach);
         assert_eq!(
             world.natural_cave_cell(c, pile.x, pile.y),
             Some(Cell::Rubble)

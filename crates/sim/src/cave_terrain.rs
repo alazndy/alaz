@@ -4,18 +4,25 @@ use crate::{map::elevation_at_mm, rng::value_noise_3d};
 
 mod navigation;
 pub use navigation::{CaveEntrance, CaveMouth, CaveTile};
-pub(crate) use navigation::{CaveNav, SIDES, cave_mouth};
+pub(crate) use navigation::{CaveNav, SIDES, cave_mouth, surface_openings};
 mod small_world;
 pub(crate) use small_world::SmallWorldCaves;
 
 const BEDROCK_Z_MM: i64 = -96_000;
 
 /// Absolute world position in millimetres. X and Y are horizontal, and Z grows upwards.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorldPoint {
     pub x_mm: i64,
     pub y_mm: i64,
     pub z_mm: i64,
+}
+
+impl WorldPoint {
+    pub fn tile(self) -> (i32, i32) {
+        use crate::map::TILE_MM;
+        (self.x_mm.div_euclid(TILE_MM) as i32, self.y_mm.div_euclid(TILE_MM) as i32)
+    }
 }
 
 /// Geometry before fluids and player edits are applied.
@@ -109,8 +116,12 @@ pub struct CaveColumn {
 }
 
 impl CaveColumn {
+    pub(crate) fn surface_mm(&self) -> i64 {
+        i64::from(self.surface_mm)
+    }
+
     pub fn sample(&self, z_mm: i64) -> DensitySample {
-        let ground = i64::from(self.surface_mm)
+        let ground = self.surface_mm()
             .saturating_sub(z_mm)
             .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         let p = [self.x_mm, self.y_mm, z_mm];

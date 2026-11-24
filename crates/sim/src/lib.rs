@@ -15,6 +15,7 @@ mod items_serde;
 mod nav;
 pub mod physics;
 pub mod rng;
+mod rivers;
 pub mod rules;
 pub mod save;
 pub mod surface;
@@ -28,7 +29,7 @@ mod tests;
 mod surface_tests;
 
 pub use agents::{AgentKind, RouteStep};
-pub use caves::{Cave, CaveSelf};
+pub use caves::CaveView;
 pub use buildings::{Building, BuildingKind, Job};
 pub use command::{AgentId, Command, CommandKind, NodeId, RecipeId};
 pub use map::{climate, elevation_mm, ItemKind, Map, NodeKind, Terrain};

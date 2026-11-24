@@ -7,9 +7,10 @@
 use crate::map::{Map, Terrain, TILE_MM};
 use crate::agents::AgentKind;
 use crate::world::Agent;
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hasher};
+
+pub(crate) mod walking;
 
 /// Tiny fast hasher for tile keys (std's SipHash dominates A* time). Only used for lookups,
 /// never iterated, so its output cannot influence results.
@@ -39,8 +40,6 @@ impl Hasher for TileHasher {
         self.0 ^= self.0 >> 29;
     }
 }
-
-type Fast<K, V> = HashMap<K, V, BuildHasherDefault<TileHasher>>;
 
 /// Tiles blocked by buildings. Derived from the building list (never saved or hashed): rebuilt when
 /// the list changes length, extended when a building goes up.
@@ -156,32 +155,17 @@ impl Nav<'_> {
         let ok = |t: (i32, i32)| {
             t.0 >= min_x && t.0 <= max_x && t.1 >= min_y && t.1 <= max_y && (t == g || t == s || self.passable(t.0, t.1))
         };
-        // best known cost and parent per tile
-        let mut seen: Fast<u32, (i32, u32)> = Fast::default();
-        let mut open = BinaryHeap::new();
-        seen.insert(key(s), (0, key(s)));
-        open.push(Reverse((h(s), key(s))));
-        let mut best = (h(s), key(s));
-        let mut expanded = 0;
-        let mut found = false;
-        while let Some(Reverse((_, k))) = open.pop() {
-            let cur = ((k % w as u32) as i32, (k / w as u32) as i32);
-            let gc = seen[&k].0;
-            if cur == g {
-                found = true;
-                best = (0, k);
-                break;
-            }
-            expanded += 1;
-            if expanded > MAX_EXPANSIONS {
-                break;
-            }
-            if h(cur) < best.0 {
-                best = (h(cur), k);
-            }
+        let entrances: Vec<_> = self.map.cave_openings_at(g.0, g.1)
+            .map(|mouth| (g.0 - mouth.direction.0, g.1 - mouth.direction.1)).collect();
+        let tile = |k: u32| ((k % w as u32) as i32, (k / w as u32) as i32);
+        let mut route = walking::search(key(s), |k| k == key(g), |k| h(tile(k)), |k, edges| {
+            let cur = tile(k);
             for (dx, dy) in [(1, 0), (0, 1), (-1, 0), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)] {
                 let n = (cur.0 + dx, cur.1 + dy);
                 if !ok(n) {
+                    continue;
+                }
+                if n == g && !entrances.is_empty() && !entrances.contains(&cur) {
                     continue;
                 }
                 let step = if dx != 0 && dy != 0 {
@@ -201,26 +185,11 @@ impl Nav<'_> {
                 } else {
                     0
                 };
-                let ng = gc + step + climb;
-                let nk = key(n);
-                if seen.get(&nk).is_none_or(|&(old, _)| ng < old) {
-                    seen.insert(nk, (ng, k));
-                    open.push(Reverse((ng + h(n), nk)));
-                }
+                edges.push((key(n), step + climb));
             }
-        }
-        let _ = found;
-        if best.1 == key(s) {
-            return None;
-        }
-        let mut rev = Vec::new();
-        let mut k = best.1;
-        while k != key(s) {
-            rev.push(((k % w as u32) as i32, (k / w as u32) as i32));
-            k = seen[&k].1;
-        }
-        rev.reverse();
-        Some(rev)
+        }, MAX_EXPANSIONS, true)?;
+        route.reverse();
+        Some(route.into_iter().map(tile).collect())
     }
 
     /// String-pull a tile route into fewer waypoints: skip ahead while the straight line stays clear.
@@ -258,15 +227,8 @@ pub(crate) enum Free {
 /// Walk straight toward (tx, ty), the way the keys push: no route planning, and no care at an edge either. Where
 /// the ground drops away more steeply than legs can follow, the walker goes over and falls.
 pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
-    let mut speed = a.kind.speed_mm();
-    if a.sprint && a.stamina > 0 {
-        speed = speed * 17 / 10;
-    }
-    if a.broken > 0 {
-        speed = (speed * 55 / 100).max(1);
-    }
+    let mut speed = walking::walk_speed(a, 0);
     let gear = a.inventory.gear();
-    speed = (speed * (1000 - gear.burden as i64) / 1000).max(1);
     if !a.fly {
         speed = (speed * nav.ground.walk_permille(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32, gear.grip) as i64 / 1000).max(1);
     }
@@ -283,16 +245,20 @@ pub(crate) fn walk_free(a: &mut Agent, nav: &Nav, tx: i64, ty: i64) -> Free {
         };
     }
     let step = len.min(speed);
-    let (nx, ny) = (a.x + dx * step / len, a.y + dy * step / len);
+    let (nx, ny) = walking::move_toward((a.x, a.y), (tx, ty), speed);
     let here = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
     let next = (nx.div_euclid(TILE_MM) as i32, ny.div_euclid(TILE_MM) as i32);
     // people may walk on into water on their own (wading, then swimming); routes still go round it
     let into_water = a.kind == AgentKind::Human && nav.map.terrain(next.0, next.1) == Some(Terrain::Water);
-    if next != here && !nav.passable(next.0, next.1) && !into_water {
+    // ...and into the open lip of a cave, which they simply walk down into
+    let into_cave = a.kind == AgentKind::Human && nav.map.cave_openings_at(next.0, next.1).any(|mouth| {
+        next == here || (next.0 - mouth.direction.0, next.1 - mouth.direction.1) == here
+    });
+    if next != here && !nav.passable(next.0, next.1) && !into_water && !into_cave {
         return Free::Blocked;
     }
     let drop = (crate::map::elevation_at_mm(nav.map.seed, a.x, a.y) - crate::map::elevation_at_mm(nav.map.seed, nx, ny)) as i64;
-    if drop > step * 3 / 2 + 5 {
+    if !into_cave && drop > step * 3 / 2 + 5 {
         return Free::Launch { vx: nx - a.x, vy: ny - a.y };
     }
     match step_toward(a, nav, tx, ty, true) {
@@ -307,34 +273,18 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
     if a.fly {
         // sandbox flight: straight over water, rock and buildings, four times a walker's pace
         let speed = a.kind.speed_mm() * 4;
-        let (dx, dy) = (tx - a.x, ty - a.y);
-        let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
-        let (nx, ny) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
+        let (nx, ny) = walking::move_toward((a.x, a.y), (tx, ty), speed);
         if nav.map.terrain_mm(nx, ny).is_none() {
             return Step::Blocked;
         }
         a.x = nx;
         a.y = ny;
+        a.z = i64::from(crate::map::elevation_at_mm(nav.map.seed, nx, ny));
         return if (nx, ny) == (tx, ty) { Step::Arrived } else { Step::Moved };
     }
-    let mut speed = a.kind.speed_mm();
     let depth = crate::map::water_depth(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
-    if a.sprint && a.stamina > 0 && depth < 2 {
-        speed = speed * 17 / 10;
-    }
-    // wading is heavy going; swimming slower still
-    speed = match depth {
-        1 => speed * 55 / 100,
-        2 => speed * 45 / 100,
-        _ => speed,
-    }
-    .max(1);
-    if a.broken > 0 {
-        // a broken leg: half speed
-        speed = (speed * 55 / 100).max(1);
-    }
+    let mut speed = walking::walk_speed(a, depth);
     let gear = a.inventory.gear();
-    speed = (speed * (1000 - gear.burden as i64) / 1000).max(1);
     // mud and standing water drag at the feet (the soles' grip helps in mud)
     if depth == 0 {
         speed = (speed * nav.ground.walk_permille(nav.map, a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32, gear.grip) as i64 / 1000).max(1);
@@ -344,7 +294,7 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
         // uphill is slower, downhill a little quicker: grade over the intended step, in permille
         let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
         if len > 0 {
-            let (px, py) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
+            let (px, py) = walking::move_toward((a.x, a.y), (tx, ty), speed);
             let rise = (crate::map::elevation_at_mm(nav.map.seed, px, py) - crate::map::elevation_at_mm(nav.map.seed, a.x, a.y)) as i64;
             let grade = rise * 1000 / len.min(speed).max(1);
             // good soles keep their grip: less of the climb's slowing
@@ -357,12 +307,16 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
             }
         }
     }
-    let len = ((dx * dx + dy * dy) as u64).isqrt() as i64;
-    let (nx, ny) = if len <= speed { (tx, ty) } else { (a.x + dx * speed / len, a.y + dy * speed / len) };
+    let (nx, ny) = walking::move_toward((a.x, a.y), (tx, ty), speed);
     let next_tile = (nx.div_euclid(TILE_MM) as i32, ny.div_euclid(TILE_MM) as i32);
     let current_tile = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
-    if next_tile != current_tile && !a.fly && nav.map.surface_cave_gap(next_tile.0, next_tile.1) {
-        return Step::Blocked;
+    if next_tile != current_tile {
+        let mut mouths = nav.map.cave_openings_at(next_tile.0, next_tile.1).peekable();
+        if mouths.peek().is_some() && (a.kind != AgentKind::Human || !mouths.any(|mouth| {
+            (next_tile.0 - mouth.direction.0, next_tile.1 - mouth.direction.1) == current_tile
+        })) {
+            return Step::Blocked;
+        }
     }
     match nav.map.terrain_mm(nx, ny) {
         None => return Step::Blocked,
@@ -373,6 +327,7 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
     }
     a.x = nx;
     a.y = ny;
+    a.z = i64::from(crate::map::elevation_at_mm(nav.map.seed, nx, ny));
     if (nx, ny) == (tx, ty) { Step::Arrived } else { Step::Moved }
 }
 
@@ -384,6 +339,7 @@ pub(crate) fn advance(a: &mut Agent, nav: &mut Nav, tx: i64, ty: i64) -> Step {
     let goal = (tx.div_euclid(TILE_MM) as i32, ty.div_euclid(TILE_MM) as i32);
     if a.path_goal != goal {
         a.path.clear();
+        a.walk_route = None;
         a.path_goal = goal;
     }
     let center = |t: (i32, i32)| (t.0 as i64 * TILE_MM + TILE_MM / 2, t.1 as i64 * TILE_MM + TILE_MM / 2);
@@ -391,8 +347,10 @@ pub(crate) fn advance(a: &mut Agent, nav: &mut Nav, tx: i64, ty: i64) -> Step {
     if let Some(&next) = a.path.last()
         && !nav.passable(next.0, next.1) && next != goal {
             a.path.clear();
+        a.walk_route = None;
         }
     if a.path.is_empty() {
+        a.walk_route = None;
         // caught inside a building footprint (it went up on top of us, or a worker came out of its door):
         // there is no route from a blocked tile, so just walk straight out
         let here = (a.x.div_euclid(TILE_MM) as i32, a.y.div_euclid(TILE_MM) as i32);
@@ -415,12 +373,23 @@ pub(crate) fn advance(a: &mut Agent, nav: &mut Nav, tx: i64, ty: i64) -> Step {
         wp.reverse();
         a.path = wp;
     }
-    let Some(&next) = a.path.last() else { return Step::Blocked };
+    let dest = crate::cave_terrain::WorldPoint {
+        x_mm: tx, y_mm: ty, z_mm: i64::from(crate::map::elevation_at_mm(nav.map.seed, tx, ty)),
+    };
+    let route = a.walk_route.get_or_insert_with(|| walking::WalkRoute {
+        goal: dest,
+        remaining: a.path.iter().map(|&(x, y)| walking::WalkFloor {
+            x, y, z_mm: i64::from(crate::map::elevation_mm(nav.map.seed, x, y)),
+        }).collect(),
+    });
+    route.goal = dest;
+    let Some(next) = route.remaining.last().copied() else { return Step::Blocked };
     // the very last waypoint is the goal tile: aim at the exact target instead of its center
-    let (wx, wy) = if a.path.len() == 1 && next == goal { (tx, ty) } else { center(next) };
+    let (wx, wy) = if route.remaining.len() == 1 && (next.x, next.y) == goal { (tx, ty) } else { center((next.x, next.y)) };
     match step_toward(a, nav, wx, wy, false) {
         Step::Arrived => {
             a.path.pop();
+            if let Some(route) = &mut a.walk_route { route.remaining.pop(); }
             if (a.x, a.y) == (tx, ty) { Step::Arrived } else { Step::Moved }
         }
         s => s,

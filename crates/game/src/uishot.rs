@@ -220,7 +220,6 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         time_scale: 1,
         evo: 9.0,
         yaw: 0.0,
-        fade: 0.0,
         cave_tiles: None,
     };
     let mut knap = KnapState::default();
@@ -340,6 +339,68 @@ pub(crate) fn shoot_machines(dir: &Path, level: u8) -> std::io::Result<PathBuf> 
     Ok(path)
 }
 
+/// The start screen's version screen in each phase, as `<dir>/update-<phase>.png`.
+pub(crate) fn shoot_version_screens(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    use crate::update_ui::{Backend, Phase, UpdateState};
+    use alaz_updater::install::Next;
+    use alaz_updater::release::{Asset, Channel, Update};
+    use alaz_updater::version::Version;
+    fn none(_: Channel) -> Result<Option<Update>, String> {
+        Ok(None)
+    }
+    fn nope(_: &Update) -> Result<Next, String> {
+        Err("no".into())
+    }
+    let asset = |name: &str| Asset { name: name.to_string(), browser_download_url: format!("https://github.com/x/{name}"), size: 8_837_510 };
+    let found = || Update { version: Version::parse("0.6.0").unwrap(), package: asset("ALAZ-0.6.0-linux-x86_64.tar.gz"), sums: asset("SHA256SUMS") };
+    let phases: Vec<(&str, Channel, Phase)> = vec![
+        ("idle", Channel::Stable, Phase::Idle),
+        ("uptodate", Channel::Stable, Phase::UpToDate),
+        ("available", Channel::Preview, Phase::Available(found())),
+        ("installing", Channel::Preview, Phase::Installing(found())),
+        ("failed", Channel::Stable, Phase::Failed("checksum of ALAZ-0.6.0-linux-x86_64.tar.gz does not match".into())),
+        ("done", Channel::Stable, Phase::Done(Next::Restart)),
+    ];
+    let mut paths = Vec::new();
+    for (name, channel, phase) in phases {
+        let mut menu = crate::menu::Menu::new(false);
+        menu.open_update_screen();
+        menu.updater = UpdateState::new(Backend { check: none, install: nope }, channel);
+        menu.updater.phase = phase;
+        let mut binds = crate::keys::Keybinds::default();
+        let ctx = egui::Context::default();
+        let mut tex = HashMap::new();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SHOT_W as f32, SHOT_H as f32));
+        let mut last = None;
+        // the screen fades in over a third of a second: run frames until it has fully arrived
+        for i in 0..8 {
+            let input = egui::RawInput { screen_rect: Some(screen), time: Some(i as f64 * 0.2), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                let _ = menu.draw(ui.ctx(), &mut binds);
+            });
+            apply_textures(&mut tex, &out.textures_delta);
+            out.textures_delta.clear();
+            last = Some(out);
+        }
+        let out = last.expect("frames ran");
+        let ppp = out.pixels_per_point;
+        let prims = ctx.tessellate(out.shapes, ppp);
+        let mut canvas = vec![[58.0f32, 72.0, 60.0, 255.0]; (SHOT_W * SHOT_H) as usize];
+        rasterize(&mut canvas, &prims, &tex, ppp, (SHOT_W, SHOT_H));
+        let mut rgba = Vec::with_capacity(canvas.len() * 4);
+        for c in canvas {
+            for ch in &c[..3] {
+                rgba.push(ch.round().clamp(0.0, 255.0) as u8);
+            }
+            rgba.push(255);
+        }
+        let path = dir.join(format!("update-{name}.png"));
+        std::fs::write(&path, assets::encode_png(SHOT_W, SHOT_H, &rgba))?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
 /// Runs every era and tab into `dir`, printing what it wrote.
 pub fn run(dir: &Path) {
     if let Err(e) = std::fs::create_dir_all(dir) {
@@ -372,6 +433,18 @@ pub fn run(dir: &Path) {
                 eprintln!("machines {level}: {e}");
                 std::process::exit(1);
             }
+        }
+    }
+    match shoot_version_screens(dir) {
+        Ok(ps) => {
+            for p in &ps {
+                println!("{}", p.display());
+            }
+            n += ps.len();
+        }
+        Err(e) => {
+            eprintln!("version screen: {e}");
+            std::process::exit(1);
         }
     }
     assets::pause(false);

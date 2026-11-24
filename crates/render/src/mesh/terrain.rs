@@ -70,17 +70,17 @@ pub(crate) fn tile_spr(art: &Art, t: Terrain, h: u32) -> Spr {
 pub(crate) fn build_terrain(out: &mut Mesh, art: &Art, world: &World, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
     for ty in y0..y1 {
         for tx in x0..x1 {
-            if world.map.surface_cave_gap(tx, ty) {
-                continue;
-            }
             let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
             let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
             let s = tile_spr(art, t, h);
             let k = if t == Terrain::Water { 1.0 } else { tile_shade(world, tx, ty) };
             let (fx, fz) = (tx as f32, ty as f32);
             let c = |dx: f32, dz: f32| Vertex { pos: [fx + dx, 0.0, fz + dz], color: [k, k, k], glow: 0.0, uv: [s.x as f32, s.y as f32], off: [if t == Terrain::Water { 1.0 } else { 0.0 }, 0.0], kind: 1.0 };
-            let (a, b, cc, d) = (c(0.0, 0.0), c(1.0, 0.0), c(1.0, 1.0), c(0.0, 1.0));
-            out.extend_from_slice(&[a, b, cc, a, cc, d]);
+            // Four quads a tile: the smooth ground surface needs vertices closer than a metre to show.
+            for (qx, qz) in [(0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)] {
+                let (a, b, cc, d) = (c(qx, qz), c(qx + 0.5, qz), c(qx + 0.5, qz + 0.5), c(qx, qz + 0.5));
+                out.extend_from_slice(&[a, b, cc, a, cc, d]);
+            }
             // (ground boundaries are drawn ragged by the shader now, from the tile window)
             let _ = edge_blend;
         }

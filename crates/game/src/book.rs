@@ -155,7 +155,7 @@ mod tests {
             |ui, s: &mut State| {
                 let ui_ctx = UiCtx {
                     hints: &[], build_mode: None, grid_snap: false, selection: s.selection, recording: false, recorded: &[], me: AgentId(0),
-                    net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, fade: 0.0, cave_tiles: None,
+                    net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 0.0, cave_tiles: None,
                 };
                 crate::hud::draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
             },

@@ -1,203 +1,133 @@
 use crate::renderer::*;
 use crate::*;
 use alaz_sim::cave_terrain::CaveTile;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Globals slots that hold the swell's six wave phases (the spare `w` of cam, hwin, cam_r and cam_u).
 pub(crate) const WAVE_SLOTS: [usize; 6] = [22, 23, 26, 27, 63, 67];
-/// Globals slot of the underground flag (`globals.cave.x`): 0 on the surface, else 1 + the torch's strength.
-/// It must not share a slot with anything written on the surface, or models are shaded as if underground.
+/// Globals slots for torch strength and the local camera cut.
 pub(crate) const CAVE_SLOT: usize = 120;
 /// Globals slot of the small resource under the pointer (xyz, w = 1 if there is one): crowns open up around it.
 pub(crate) const LOOK_SLOT: usize = 124;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct NaturalCaveKey {
+struct CaveSceneKey {
     seed: u64,
-    tile: CaveTile,
+    bounds: (i32, i32, i32, i32),
+    player_floor: Option<CaveTile>,
     revision: u64,
 }
 
 pub(super) struct NaturalCaveView {
-    key: NaturalCaveKey,
-    layout: Arc<CaveLayout>,
-    flooded: Vec<(i32, i32)>,
+    key: CaveSceneKey,
+    entrances: Arc<CaveSection>,
+    floors: Arc<CaveSection>,
+    daylight: Arc<BTreeMap<CaveTile, f32>>,
+    carve: Arc<EntranceCarve>,
+    flooded: BTreeSet<CaveTile>,
     water_tick: u64,
-    depth: u8,
-    mesh: (wgpu::Buffer, u32),
-}
-
-#[derive(Default, PartialEq, Eq)]
-struct CaveLayout {
-    floors: BTreeMap<(i32, i32), i16>,
-    rubble: BTreeMap<(i32, i32), i16>,
-}
-
-impl CaveLayout {
-    fn sample(world: &World, cave: alaz_sim::CaveSelf) -> Self {
-        let floors: BTreeMap<_, _> = world.natural_cave_tiles(cave, 24)
-            .into_iter().map(|tile| (tile.xy(), tile.z)).collect();
-        let mut rubble = BTreeMap::new();
-        for (&(x, y), &z) in &floors {
-            for (dx, dy) in [(0, 1), (1, 0), (0, -1), (-1, 0)] {
-                let (x, y) = (x + dx, y + dy);
-                if !floors.contains_key(&(x, y)) {
-                    for height in [z, z - 1, z + 1] {
-                        if world.natural_cave_rubble_at(CaveTile { x, y, z: height }) {
-                            rubble.entry((x, y)).or_insert(height);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        Self { floors, rubble }
-    }
-
-    fn flooded(&self, world: &World) -> Vec<(i32, i32)> {
-        self.floors.iter().filter_map(|(&(x, y), &z)| {
-            world.natural_cave_flooded(CaveTile { x, y, z }).then_some((x, y))
-        }).collect()
-    }
+    mesh: Option<(wgpu::Buffer, u32)>,
 }
 
 #[derive(Clone, Copy)]
-struct HeightArea {
-    min: (i32, i32),
-    max: (i32, i32),
+pub(super) struct SurfaceCutaway {
+    center: glam::Vec3,
+    right: glam::Vec3,
+    up: glam::Vec3,
 }
 
-impl HeightArea {
-    fn full((x, y): (i32, i32)) -> Self {
-        let n = HWIN as i32 - 1;
-        Self { min: (x, y), max: (x + n, y + n) }
-    }
-
-    fn extent(self) -> wgpu::Extent3d {
-        wgpu::Extent3d {
-            width: (self.max.0 - self.min.0 + 1) as u32,
-            height: (self.max.1 - self.min.1 + 1) as u32,
-            depth_or_array_layers: 1,
-        }
-    }
-
-    fn covering(tiles: impl Iterator<Item = (i32, i32)>) -> Option<Self> {
-        let mut tiles = tiles;
-        let first = tiles.next()?;
-        Some(tiles.fold(Self { min: first, max: first }, |area, (x, y)| Self {
-            min: (area.min.0.min(x), area.min.1.min(y)),
-            max: (area.max.0.max(x), area.max.1.max(y)),
-        }))
-    }
-
-    fn pixels(self, layout: &CaveLayout, solid_elevation: i16) -> Vec<[f32; 4]> {
-        let size = self.extent();
-        let mut pixels = vec![[f32::from(solid_elevation), 1.0, 0.0, 0.0]; (size.width * size.height) as usize];
-        let mut place = |(x, y): (i32, i32), elevation: f32| {
-            let (x, y) = ((x - self.min.0) as u32, (y - self.min.1) as u32);
-            if x < size.width && y < size.height {
-                pixels[(y * size.width + x) as usize] = [elevation, 0.0, 0.0, 0.0];
-            }
-        };
-        for (&xy, &height) in &layout.floors {
-            place(xy, f32::from(height));
-        }
-        for (&xy, &height) in &layout.rubble {
-            place(xy, f32::from(height) + 0.62);
-        }
-        pixels
+impl SurfaceCutaway {
+    fn contains(self, point: glam::Vec3) -> bool {
+        let d = point - self.center;
+        d.y > 0.25
+            && d.dot(self.right.cross(self.up)) > 0.3
+            && glam::Vec2::new(d.x, d.z).length_squared() < 4.2 * 4.2
+            && glam::Vec2::new(d.dot(self.right), d.dot(self.up)).length_squared() < 2.1 * 2.1
     }
 }
 
-fn natural_height_origin(tile: CaveTile) -> (i32, i32) {
-    let origin = |axis: i32| axis.div_euclid(64) * 64 + 32 - HWIN as i32 / 2;
-    (origin(tile.x), origin(tile.y))
-}
-
-fn natural_height_delta(previous: &CaveLayout, next: &CaveLayout) -> Option<HeightArea> {
-    fn changed<'a>(
-        a: &'a BTreeMap<(i32, i32), i16>,
-        b: &'a BTreeMap<(i32, i32), i16>,
-    ) -> impl Iterator<Item = (i32, i32)> + 'a {
-        a.iter().filter_map(|(&xy, &z)| (b.get(&xy) != Some(&z)).then_some(xy))
+fn cave_scene_section(world: &World, entrances: &CaveSection, player_floor: Option<CaveTile>) -> CaveSection {
+    let mut section = entrances.clone();
+    if let Some(floor) = player_floor {
+        // Include the traversable gallery around the player in the same coordinates as the entrances.
+        for (tile, ceiling) in world.cave_entrance_section(floor, 24) {
+            section.insert(tile, ceiling);
+        }
     }
-    HeightArea::covering(
-        changed(&previous.floors, &next.floors)
-            .chain(changed(&next.floors, &previous.floors))
-            .chain(changed(&previous.rubble, &next.rubble))
-            .chain(changed(&next.rubble, &previous.rubble)),
-    )
+    section
 }
 
 impl Renderer {
-    pub fn natural_cave_floor(&self, x: i32, y: i32) -> Option<i16> {
-        let view = self.natural_cave_view.as_ref()?;
-        view.layout.floors.get(&(x, y)).or_else(|| view.layout.rubble.get(&(x, y))).copied()
+    pub fn cave_floor_heights(&self, x: i32, y: i32) -> impl Iterator<Item = i16> + '_ {
+        let low = CaveTile { x, y, z: i16::MIN };
+        let high = CaveTile { x, y, z: i16::MAX };
+        self.natural_cave_view.iter().flat_map(move |v| v.floors.range(low..=high).map(|(tile, _)| tile.z))
     }
 
-    fn update_natural_cave(&mut self, world: &World, cave: Option<alaz_sim::CaveSelf>) {
-        let Some(cave) = cave else {
+    pub fn has_cave_floor(&self, x: i32, y: i32, z: i16) -> bool {
+        self.natural_cave_view.as_ref().is_some_and(|v| v.floors.contains_key(&CaveTile { x, y, z }))
+    }
+
+    pub fn natural_cave_floor(&self, x: i32, y: i32) -> Option<i16> {
+        if let Some(tile) = self.natural_cave_view.as_ref()?.key.player_floor {
+            self.cave_floor_heights(x, y).min_by_key(|&z| tile.z.abs_diff(z))
+        } else {
+            self.cave_floor_heights(x, y).max()
+        }
+    }
+
+    pub fn surface_cutaway_contains(&self, point: glam::Vec3) -> bool {
+        self.surface_cutaway.is_some_and(|cut| cut.contains(point))
+    }
+
+    fn update_natural_cave(&mut self, world: &World, bounds: (i32, i32, i32, i32), player_floor: Option<CaveTile>) {
+        if !alaz_sim::map::has_natural_caves(world.seed) {
             self.natural_cave_view = None;
             return;
-        };
-        let Some(z) = cave.elevation_m() else {
-            self.natural_cave_view = None;
-            return;
-        };
-        let (x, y) = cave.tile();
-        let tile = CaveTile { x, y, z };
-        let key = NaturalCaveKey { seed: world.seed, tile, revision: world.natural_cave_revision() };
+        }
+        let key = CaveSceneKey { seed: world.seed, bounds, player_floor, revision: world.natural_cave_revision() };
         let water_tick = world.tick / 30;
         let previous = self.natural_cave_view.as_ref();
         if previous.is_some_and(|v| v.key == key && v.water_tick == water_tick) {
             return;
         }
-        // Only the exact starting voxel resolves which floor belongs in a stacked column.
-        let layout = if let Some(v) = previous.filter(|v| v.key == key) {
-            Arc::clone(&v.layout)
+
+        let entrances = previous
+            .filter(|v| v.key.seed == key.seed && v.key.bounds == key.bounds && v.key.revision == key.revision)
+            .map_or_else(|| Arc::new(collect_cave_entrances(world, bounds)), |v| Arc::clone(&v.entrances));
+        let floors = if let Some(v) = previous.filter(|v| v.key == key) {
+            Arc::clone(&v.floors)
+        } else if player_floor.is_none() {
+            Arc::clone(&entrances)
         } else {
-            let sampled = CaveLayout::sample(world, cave);
-            match previous.filter(|v| *v.layout == sampled) {
-                Some(v) => Arc::clone(&v.layout),
-                None => Arc::new(sampled),
-            }
+            let section = cave_scene_section(world, &entrances, player_floor);
+            previous.filter(|v| *v.floors == section)
+                .map_or_else(|| Arc::new(section), |v| Arc::clone(&v.floors))
         };
-        let flooded = layout.flooded(world);
-        let depth = cave.depth();
-        let mesh = if let Some(v) = previous.filter(|v| {
-            v.key.seed == key.seed && v.depth == depth && v.flooded == flooded && Arc::ptr_eq(&v.layout, &layout)
-        }) {
+        let same_floors = previous.filter(|v| v.key.seed == key.seed && Arc::ptr_eq(&v.floors, &floors));
+        let daylight = same_floors.map_or_else(|| Arc::new(cave_daylight(world, &floors)), |v| Arc::clone(&v.daylight));
+        let carve = same_floors.map_or_else(|| Arc::new(entrance_carve(world, &floors)), |v| Arc::clone(&v.carve));
+        let flooded = floors.keys().copied().filter(|&tile| world.natural_cave_flooded(tile)).collect();
+        let mesh = if let Some(v) = same_floors.filter(|v| v.key.revision == key.revision && v.flooded == flooded) {
             v.mesh.clone()
+        } else if floors.is_empty() {
+            None
         } else {
-            let vertices = build_natural_cave(world, &layout.floors, &layout.rubble, depth);
-            (self.vertex_buffer(&vertices), vertices.len() as u32)
+            let vertices = build_cave_scene(world, &floors, &daylight, &flooded);
+            Some((self.vertex_buffer(&vertices), vertices.len() as u32))
         };
-        let origin = natural_height_origin(tile);
-        let changed = match previous {
-            Some(v) if v.key.tile.z == z && natural_height_origin(v.key.tile) == origin => {
-                if Arc::ptr_eq(&v.layout, &layout) { None } else { natural_height_delta(&v.layout, &layout) }
-            }
-            _ => Some(HeightArea::full(origin)),
-        };
-        if let Some(area) = changed {
-            let size = area.extent();
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    origin: wgpu::Origin3d { x: (area.min.0 - origin.0) as u32, y: (area.min.1 - origin.1) as u32, z: 0 },
-                    ..self.height_tex.as_image_copy()
-                },
-                bytemuck::cast_slice(&area.pixels(&layout, z)),
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size.width * 16), rows_per_image: Some(size.height) },
-                size,
-            );
-        }
-        // Surface and legacy caves share the texture and must upload their data when they return.
-        self.height_at = None;
-        self.surf_wkey = None;
-        self.surf_key = None;
-        self.surf_on = false;
-        self.natural_cave_view = Some(NaturalCaveView { key, layout, flooded, water_tick, depth, mesh });
+        self.natural_cave_view = Some(NaturalCaveView { key, entrances, floors, daylight, carve, flooded, water_tick, mesh });
     }
+}
+
+/// The shade channel of a water tile: 1.0 for still water, and for a river 2.0 plus the current (mm a tick, each
+/// component -16..=16) packed as (x + 16) * 40 + (y + 16). The shader decodes it in `flow_at_tile`; land never sees it
+/// because `tile_at` hides anything above 1.5.
+pub(super) fn water_flow_code((cx, cy): (i64, i64)) -> f32 {
+    if (cx, cy) == (0, 0) {
+        return 1.0;
+    }
+    2.0 + ((cx.clamp(-16, 16) + 16) * 40 + (cy.clamp(-16, 16) + 16)) as f32
 }
 
 const TRACK_SPACING_M: f32 = 0.8;
@@ -247,6 +177,17 @@ impl TrackStepper {
 mod track_tests {
     use super::*;
     use glam::Vec2;
+
+    #[test]
+    fn a_rivers_current_survives_the_trip_through_the_tile_texture() {
+        assert_eq!(water_flow_code((0, 0)), 1.0);
+        for (cx, cy) in [(5, 0), (-5, 0), (0, 7), (3, -4), (-16, 16), (99, -99)] {
+            let n = water_flow_code((cx, cy)) - 2.0;
+            let a = (n / 40.0).floor();
+            let (dx, dy) = (a - 16.0, n - a * 40.0 - 16.0);
+            assert_eq!((dx, dy), (cx.clamp(-16, 16) as f32, cy.clamp(-16, 16) as f32));
+        }
+    }
 
     #[test]
     fn paw_marks_stay_at_footfalls_when_animal_turns_or_stops() {
@@ -337,6 +278,46 @@ impl Renderer {
         self.surf_key = Some(key);
     }
 
+    /// Hollow the ground at the cave mouths: patch the changed tile corners into the height texture, and drop the
+    /// chunks whose ground was built or baked from the old heights.
+    fn apply_cave_carve(&mut self, world: &World, hx: i32, hy: i32) {
+        let desired = self.natural_cave_view.as_ref().map_or_else(Default::default, |v| Arc::clone(&v.carve));
+        let win = HWIN as i32;
+        if Arc::ptr_eq(&desired, &self.carve_applied) || (desired.is_empty() && self.carve_applied.is_empty()) || self.height_cpu.len() != (win * win * 4) as usize {
+            return;
+        }
+        let old = std::mem::replace(&mut self.carve_applied, Arc::clone(&desired));
+        let corners: BTreeSet<(i32, i32)> = old.keys().chain(desired.keys()).copied().collect();
+        let mut stale = BTreeSet::new();
+        for (tx, ty) in corners {
+            let (x, y) = (tx - hx, ty - hy);
+            if x < 0 || y < 0 || x >= win || y >= win {
+                continue;
+            }
+            let want = desired.get(&(tx, ty)).copied().unwrap_or_else(|| alaz_sim::elevation_mm(world.seed, tx, ty) as f32 / 1000.0);
+            let i = ((y * win + x) * 4) as usize;
+            if self.height_cpu[i] == want {
+                continue;
+            }
+            self.height_cpu[i] = want;
+            let mut target = self.height_tex.as_image_copy();
+            target.origin = wgpu::Origin3d { x: x as u32, y: y as u32, z: 0 };
+            self.queue.write_texture(
+                target,
+                bytemuck::cast_slice(&self.height_cpu[i..i + 4]),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16), rows_per_image: Some(1) },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            // the smooth surface reaches two tiles either side of a corner
+            for (ax, ay) in [(tx - 2, ty - 2), (tx + 1, ty - 2), (tx - 2, ty + 1), (tx + 1, ty + 1)] {
+                stale.insert((ax.div_euclid(CHUNK_TILES), ay.div_euclid(CHUNK_TILES)));
+            }
+        }
+        for key in stale {
+            self.chunks.remove(&key);
+        }
+    }
+
     pub fn render(
         &mut self,
         world: &World,
@@ -378,70 +359,42 @@ impl Renderer {
         let scale = cam.scale();
         let (sw, sh) = cam.tex_dims();
 
-        // underground: the surface is not drawn, the cave is, lit by the torch alone
-        let cave: Option<alaz_sim::CaveSelf> = world.agents.iter().find(|a| a.id == me).and_then(|a| a.cave);
-        let cave_key = cave.map(|c| (c.node, if c.elevation_m().is_some() { 0 } else { c.level }));
-        if cave_key != self.cave_was {
-            self.cave_was = cave_key;
-            self.anim.clear();
-        }
-        self.update_natural_cave(world, cave);
-        let natural_tile = self.natural_cave_view.as_ref().map(|v| v.key.tile);
-        let natural_layout = self.natural_cave_view.as_ref().map(|v| Arc::clone(&v.layout));
-        let natural_view = natural_layout.as_deref();
-        let natural_mesh = self.natural_cave_view.as_ref().map(|v| v.mesh.clone());
-        let gh = |x: f32, z: f32| {
-            if let Some((v, tile)) = natural_view.zip(natural_tile) {
-                f32::from(v.floors.get(&(x.floor() as i32, z.floor() as i32)).copied().unwrap_or(tile.z))
-            } else if cave.is_some() { 0.0 } else { ground_height(world.seed, x, z) }
-        };
+        let player = world.agents.iter().find(|a| a.id == me);
+        let cave = player.and_then(|a| a.cave_view());
+        let player_floor = cave.map(|c| {
+            let (x, y) = c.tile();
+            CaveTile { x, y, z: c.elevation_m() }
+        });
+        let (cx0, cy0, cx1, cy1, view_m) = visible_chunks(&cam, self.aspect(), world);
+        let bounds = (cx0 * CHUNK_TILES, cy0 * CHUNK_TILES, (cx1 + 1) * CHUNK_TILES, (cy1 + 1) * CHUNK_TILES);
+        self.update_natural_cave(world, bounds, player_floor);
+        let cave_floors = self.natural_cave_view.as_ref().map(|v| Arc::clone(&v.floors));
+        let cave_daylight = self.natural_cave_view.as_ref().map(|v| Arc::clone(&v.daylight));
+        let natural_mesh = self.natural_cave_view.as_ref().and_then(|v| v.mesh.clone());
+        let gh = |x: f32, z: f32| ground_height(world.seed, x, z);
         // --- globals: view-projection from the texel-snapped camera + time-of-day light tint
         let l = daylight_permille(world.tick) as f32 / 1000.0;
-        let t = if cave.is_some() { 0.0 } else { ((1.0 - l) / 0.7).clamp(0.0, 1.0) };
+        let t = ((1.0 - l) / 0.7).clamp(0.0, 1.0);
         // the season colours the whole picture a little: fresh spring, warm summer, rusty autumn, cold winter
         let season_tint: [f32; 3] = [[1.0, 1.03, 1.0], [1.06, 1.02, 0.95], [1.10, 0.97, 0.84], [0.94, 1.0, 1.10]][world.season() as usize];
-        let tint: [f32; 3] = if cave.is_some() { [1.0; 3] } else { std::array::from_fn(|i| (1.0 + (NIGHT_TINT[i] - 1.0) * t) * season_tint[i]) };
+        let tint: [f32; 3] = std::array::from_fn(|i| (1.0 + (NIGHT_TINT[i] - 1.0) * t) * season_tint[i]);
         let (snap_cam, off) = cam.snapped();
-        let sky = if cave.is_some() { 0.0 } else { match world.weather() {
+        let sky = match world.weather() {
             alaz_sim::time::Weather::Clear => 0.0,
             alaz_sim::time::Weather::Rain => 1.0,
             alaz_sim::time::Weather::Snow => 2.0,
-        } };
+        };
         // the weather fades in and out instead of switching
         let wtarget = if sky > 0.0 { 1.0 } else { 0.0 };
-        self.weather_amount += (wtarget - self.weather_amount) * if cave.is_some() { 1.0 } else { 0.01 };
+        self.weather_amount += (wtarget - self.weather_amount) * 0.01;
         if sky > 0.0 {
             self.weather_kind = sky;
         }
-        // The height window moves in 64-tile steps, leaving at least the whole cave cutaway inside it.
-        let (hx, hy) = if let Some(tile) = natural_tile { natural_height_origin(tile) } else if cave.is_some() { (0, 0) } else { (((cam.target.x as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64, ((cam.target.z as i32 - HWIN as i32 / 2) as f32 / 64.0).round() as i32 * 64) };
-        let height_key = match cave {
-            Some(c) => (u64::MAX - c.node as u64, c.level as i32, world.caves.get(&c.node).map_or(0, |k| k.version) as i32),
-            None => (world.seed, hx, hy),
-        };
-        if let Some(c) = cave.filter(|_| natural_view.is_none() && self.height_at != Some(height_key)) {
-            // Legacy caves have a flat ground and a solid-rock mask for the torch.
-            let mut pixels = vec![0f32; (HWIN * HWIN * 4) as usize];
-            if let Some(lv) = world.caves.get(&c.node).and_then(|k| k.level(c.level)) {
-                for ty in 0..alaz_sim::caves::CAVE_H {
-                    for tx in 0..alaz_sim::caves::CAVE_W {
-                        if lv.cell(tx, ty) == alaz_sim::caves::Cell::Rock {
-                            pixels[((ty as u32 * HWIN + tx as u32) * 4 + 1) as usize] = 1.0;
-                        }
-                    }
-                }
-            }
-            self.queue.write_texture(
-                self.height_tex.as_image_copy(),
-                bytemuck::cast_slice(&pixels),
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(HWIN * 16), rows_per_image: Some(HWIN) },
-                wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
-            );
-            self.height_at = Some(height_key);
-            self.surf_wkey = None;
-            self.surf_key = None;
-            self.surf_on = false;
-        } else if cave.is_none() && self.height_at != Some(height_key) {
+        // Terrain height, climate, and shoreline use the same window for the whole scene.
+        let origin = |v: f32| ((v - HWIN as f32 / 2.0) / 64.0).round() as i32 * 64;
+        let (hx, hy) = (origin(cam.target.x), origin(cam.target.z));
+        let height_key = (world.seed, hx, hy);
+        if self.height_at != Some(height_key) {
             let shore = shore_field(world, hx, hy);
             let data: Vec<f32> = (0..HWIN as i32 * HWIN as i32)
                 .flat_map(|i| {
@@ -460,10 +413,14 @@ impl Renderer {
             let tiles: Vec<f32> = (0..HWIN as i32 * HWIN as i32)
                 .flat_map(|i| {
                     let (tx, ty) = (hx + i % HWIN as i32, hy + i / HWIN as i32);
-                    let t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
+                    let mut t = world.map.terrain(tx, ty).unwrap_or(Terrain::Water);
+                    // the gravel of a ford wears the stone ground: grey pebbles in the stream, not a bar of sand
+                    if t == Terrain::Sand && alaz_sim::map::is_ford_gravel(&world.map, tx, ty) {
+                        t = Terrain::Rock;
+                    }
                     let h = (alaz_sim::rng::hash2(world.seed ^ 0x7772, tx, ty) >> 20) as u32;
                     let s = tile_spr(&self.art, t, h);
-                    let k = if t == Terrain::Water { 1.0 } else { tile_shade(world, tx, ty) };
+                    let k = if t == Terrain::Water { water_flow_code(alaz_sim::map::current_mm(&world.map, tx, ty)) } else { tile_shade(world, tx, ty) };
                     [s.x as f32, s.y as f32, t as u8 as f32, k]
                 })
                 .collect();
@@ -474,15 +431,16 @@ impl Renderer {
                 wgpu::Extent3d { width: HWIN, height: HWIN, depth_or_array_layers: 1 },
             );
             self.tile_cpu = tiles;
+            self.height_cpu = data;
+            self.carve_applied = Arc::new(BTreeMap::new());
             self.height_at = Some((world.seed, hx, hy));
             // (the window was written bare: the surface layer goes on again)
             self.surf_wkey = None;
             self.surf_key = None;
             self.surf_on = false;
         }
-        if cave.is_none() {
-            self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
-        }
+        self.apply_cave_carve(world, hx, hy);
+        self.update_surfaces(world, hx, hy, (cam.target.x as i32, cam.target.z as i32));
         let mut g = [0f32; 164];
         g[..16].copy_from_slice(&snap_cam.view_proj(1.0).to_cols_array());
         // the sun crosses the sky from morning (east, +x) to evening (west); at night a weak moon casts from above
@@ -507,10 +465,10 @@ impl Renderer {
             (view, r, view.transform_point3(center))
         };
         g[48..51].copy_from_slice(&sun_dir);
-        g[51] = if cave.is_some() { 0.0 } else { sun_strength };
+        g[51] = sun_strength;
         // clouds: more of them in bad weather; they drift with the wind
         let clock = world.tick as f32 / 60.0;
-        g[52] = if cave.is_some() { 0.0 } else { 0.35 + 0.55 * self.weather_amount };
+        g[52] = 0.35 + 0.55 * self.weather_amount;
         // the one wind of the world: everything that moves in the air or on the water goes its way
         let (heading, strength) = alaz_sim::time::wind(world.seed, world.tick, world.settings.season_days as u64);
         let (wa, ws) = (heading as f32 / 1000.0, strength as f32 / 1000.0);
@@ -536,41 +494,34 @@ impl Renderer {
             }
         }
         let _ = clock;
-        // the player's own body, so whatever stands between it and the camera can open up around it
-        if let Some(a) = world.agents.iter().find(|a| a.id == me) {
-            let (px, pz) = match a.cave {
-                Some(c) => (c.x as f32 / 1000.0, c.y as f32 / 1000.0),
-                None => (a.x as f32 / 1000.0, a.y as f32 / 1000.0),
-            };
-            g[56..60].copy_from_slice(&[px, gh(px, pz) + 0.9, pz, 1.0]);
-        }
+        // The camera and both render paths use the same player position.
+        let player_center = player.map(|a| {
+            let p = world.agent_walk_position(a);
+            let v = glam::Vec3::new(p.x_mm as f32 / 1000.0, p.z_mm as f32 / 1000.0 + 0.9, p.y_mm as f32 / 1000.0);
+            g[56..60].copy_from_slice(&[v.x, v.y, v.z, 1.0]);
+            v
+        });
         // a plant the pointer is on, under a big crown, shows through it
         if let Some((tx, ty)) = self.hover_node
             && let Some(n) = world.node_at(tx, ty).map(|id| &world.nodes[id.0 as usize]).filter(|n| n.kind != alaz_sim::NodeKind::Tree) {
                 let (x, z) = (n.tx as f32 + 0.5, n.ty as f32 + 0.5);
                 g[LOOK_SLOT..LOOK_SLOT + 4].copy_from_slice(&[x, gh(x, z) + 0.4, z, 1.0]);
             }
-        // underground: the cave slot is 0 on the surface, else 1 + the torch's strength (0 = dark, 1 = burning well)
-        if let Some(c) = cave {
-            let left = c.light as f32 / (c.full.max(1) as f32);
-            let strength = if c.light == 0 { 0.0 } else { 0.4 + 0.6 * (left / 0.2).min(1.0) };
-            let cur = self.cave_light;
-            self.cave_light += (strength - cur) * (1.0 - (-6.0 * self.last_frame.elapsed().as_secs_f32().min(0.1)).exp());
-            g[CAVE_SLOT] = 1.0 + self.cave_light;
-            g[CAVE_SLOT + 1] = natural_view.is_some() as u8 as f32;
-        } else {
-            self.cave_light = 1.0;
-        }
-        {
-            let (p, y) = (cam.pitch_deg.to_radians(), cam.yaw_deg.to_radians());
-            let f = -glam::Vec3::new(p.cos() * y.sin(), p.sin(), p.cos() * y.cos());
-            let r = glam::Vec3::new(y.cos(), 0.0, -y.sin());
-            let u = r.cross(f);
-            g[60..63].copy_from_slice(&r.to_array());
-            g[64..67].copy_from_slice(&u.to_array());
-        }
+        let torch = cave.is_some_and(|c| c.light > 0) as u8 as f32;
+        self.cave_light += (torch - self.cave_light) * (1.0 - (-6.0 * cdt).exp());
+        g[CAVE_SLOT] = self.cave_light;
+        let (pitch, yaw) = (cam.pitch_deg.to_radians(), cam.yaw_deg.to_radians());
+        let forward = -glam::Vec3::new(pitch.cos() * yaw.sin(), pitch.sin(), pitch.cos() * yaw.cos());
+        let right = glam::Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        let up = right.cross(forward);
+        g[60..63].copy_from_slice(&right.to_array());
+        g[64..67].copy_from_slice(&up.to_array());
+        self.surface_cutaway = player_center
+            .filter(|v| cave.is_some() && gh(v.x, v.z) > v.y - 0.35)
+            .map(|center| SurfaceCutaway { center, right, up });
+        g[CAVE_SLOT + 1] = self.surface_cutaway.is_some() as u8 as f32;
         // fires light their surroundings: the eight burning ones nearest the camera (xyz, w = reach in metres)
-        if cave.is_none() {
+        {
             let mut fires: Vec<(f32, [f32; 4])> = world
                 .buildings
                 .iter()
@@ -645,9 +596,6 @@ impl Renderer {
         // worker threads beside the rest of the frame (the old mesh keeps showing meanwhile); the chunks one ring
         // beyond the picture are built ahead, so ground arrives before it is seen.
         self.frame_no += 1;
-        let (cx0, cy0, cx1, cy1, view_cave) = visible_chunks(&cam, self.aspect(), world);
-        // underground no chunk of the surface is wanted, and nothing of the surface is inside the picture
-        let (cx0, cy0, cx1, cy1, view_m) = if cave.is_some() { (0, 0, -1, -1, (1e9, 1e9, 1e9, 1e9)) } else { (cx0, cy0, cx1, cy1, view_cave) };
         let mut visible: Vec<(i32, i32)> = Vec::new();
         for cy in cy0..=cy1 {
             for cx in cx0..=cx1 {
@@ -667,9 +615,6 @@ impl Renderer {
             let mut ring = Vec::new();
             for cy in (cy0 - 1).max(0)..=(cy1 + 1).min(max(world.map.h)) {
                 for cx in (cx0 - 1).max(0)..=(cx1 + 1).min(max(world.map.w)) {
-                    if cave.is_some() {
-                        continue;
-                    }
                     if cx < cx0 || cx > cx1 || cy < cy0 || cy > cy1 {
                         ring.push((cx, cy));
                     }
@@ -739,7 +684,7 @@ impl Renderer {
             // the same texel size; it is redrawn only when the sun stepped, the box size changed, the camera nears the edge
             // of its margin, or a chunk's models changed. Each frame the window of it that the picture needs is copied
             // into the dynamic map (same texels, same depth range), and what moves is drawn over that.
-            let shadows_on = self.quality.shadows != crate::ShadowQuality::Off && cave.is_none();
+            let shadows_on = self.quality.shadows != crate::ShadowQuality::Off;
             let redraw_static = {
                 let st = &mut self.shadow_static;
                 // (a size one step larger than wanted is kept: the box does not flicker between two sizes)
@@ -790,9 +735,6 @@ impl Renderer {
                 let mut near = Vec::new();
                 for cy in (cy0 - 1).max(0)..=(cy1 + 1).min(max(world.map.h)) {
                     for cx in (cx0 - 1).max(0)..=(cx1 + 1).min(max(world.map.w)) {
-                        if cave.is_some() {
-                            continue;
-                        }
                         near.push((cx, cy));
                     }
                 }
@@ -936,44 +878,21 @@ impl Renderer {
             // how evolved the people look: the caller's smoothed value, or the world's perception as it stands
             let evo = self.evo.unwrap_or_else(|| crate::evo_pos(world.perception_permille() as f32));
             let mut body_jobs: Vec<BodyJob> = Vec::with_capacity(world.agents.len());
-            // the cave's blocks in view, then the torches
-            if let Some(c) = cave.filter(|_| natural_view.is_none()) {
-                let want = (c.node, c.level, world.caves.get(&c.node).map_or(0, |k| k.version), world.caves.get(&c.node).is_some_and(|k| k.wet));
-                if self.cave_blocks.as_ref().is_none_or(|(k, _)| *k != want)
-                    && let Some(lv) = world.caves.get(&c.node).and_then(|k| k.level(c.level)) {
-                        let nb = (alaz_sim::caves::CAVE_W / BLOCK) as usize;
-                        let blocks = (0..nb * nb).map(|i| build_cave_block(lv, world.seed, c.node, c.depth(), (i % nb) as i32, (i / nb) as i32)).collect();
-                        self.cave_blocks = Some((want, blocks));
-                    }
-                if let Some((_, blocks)) = &self.cave_blocks {
-                    let nb = (alaz_sim::caves::CAVE_W / BLOCK) as usize;
-                    let (vx0, vz0, vx1, vz1) = (view_cave.0 + 6.0, view_cave.1 + 6.0, view_cave.2 - 6.0, view_cave.3 - 6.0);
-                    for (i, b) in blocks.iter().enumerate() {
-                        let (bx, bz) = ((i % nb) as f32 * BLOCK as f32, (i / nb) as f32 * BLOCK as f32);
-                        // (a margin for the walls' height; the view's own margin is large)
-                        if bx + BLOCK as f32 + 3.0 >= vx0 && bx - 3.0 <= vx1 && bz + BLOCK as f32 + 3.0 >= vz0 && bz - 3.0 <= vz1 {
-                            dynamic.extend_from_slice(b);
-                        }
-                    }
-                }
-            } else {
-                self.cave_blocks = None;
-            }
             for a in &world.agents {
-                let here = match (&cave, &a.cave) {
-                    (None, None) => true,
-                    (Some(m), Some(c)) => if let Some(v) = natural_view {
-                        c.elevation_m().is_some_and(|z| v.floors.get(&c.tile()) == Some(&z))
-                    } else { c.node == m.node && c.level == m.level },
-                    _ => false,
-                };
-                if !here {
+                let c = a.cave_view();
+                let layer = c.map(|c| {
+                    let (x, y) = c.tile();
+                    CaveTile { x, y, z: c.elevation_m() }
+                });
+                let position = world.agent_walk_position(a);
+                let (x, z) = (position.x_mm as f32 / 1000.0, position.y_mm as f32 / 1000.0);
+                if a.id != me && (!inside(x, z) || layer.is_some_and(|t| !cave_floors.as_ref().is_some_and(|f| f.contains_key(&t)))) {
                     continue;
                 }
-                let (x, z) = match a.cave {
-                    Some(c) => (c.x as f32 / 1000.0, c.y as f32 / 1000.0),
-                    None => (a.x as f32 / 1000.0, a.y as f32 / 1000.0),
-                };
+                let grounded_at = position.z_mm as f32 / 1000.0;
+                let cave_exposure = layer.map(|t| cave_daylight.as_ref().and_then(|light| light.get(&t)).copied().unwrap_or(0.0));
+                let custom_floor = layer.is_some() || (grounded_at - gh(x, z)).abs() > 0.015 && world.airborne(a.id).is_none();
+                let floor_height = custom_floor.then_some(grounded_at);
                 let w = self.anim.entry(a.id.0).or_insert(Walk::at(x, z, 0.0, a.health));
                 let (x, z) = w.smooth(x, z, world.tick, alpha);
                 // a blow makes the body flinch and flash
@@ -998,7 +917,9 @@ impl Renderer {
                 let working = work != Work::None && w.amp < 0.3;
                 let cyc = work_cycle(world, a, work, w, alpha, secs, dt);
                             let outfit = outfit_bits(&a.inventory);
-                let slope = {
+                let slope = if layer.is_some() {
+                    0.0
+                } else {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (gh(x + sx, z + sz) - gh(x - sx, z - sz)) / 1.2
                 };
@@ -1013,22 +934,22 @@ impl Renderer {
                     Some((_, v)) => Pose { air: if v.abs() < 0.05 { 0.05 } else { v }, amp: 0.0, work: Work::None, ..pose },
                     None => pose,
                 };
-                let depth = match (a.cave, &cave) {
-                    (Some(c), _) if c.elevation_m().is_some() => {
+                let depth = match c {
+                    Some(c) => {
                         let (x, y) = c.tile();
-                        2 * world.natural_cave_flooded(alaz_sim::cave_terrain::CaveTile { x, y, z: c.elevation_m().unwrap() }) as u8
+                        2 * world.natural_cave_flooded(alaz_sim::cave_terrain::CaveTile { x, y, z: c.elevation_m() }) as u8
                     }
-                    (Some(c), _) => world.caves.get(&c.node).and_then(|k| k.level(c.level)).map_or(0, |lv| match lv.cell(c.x.div_euclid(1000) as i32, c.y.div_euclid(1000) as i32) {
-                        alaz_sim::caves::Cell::Shallow => 1,
-                        alaz_sim::caves::Cell::Deep => 2,
-                        _ => 0,
-                    }),
                     _ => alaz_sim::map::water_depth(&world.map, a.x.div_euclid(1000) as i32, a.y.div_euclid(1000) as i32),
                 };
-                // a torch in the hand of everyone underground: the light itself is the player's alone
-                if let Some(c) = a.cave {
+                // The held light uses the same support altitude as the body.
+                if c.is_some_and(|c| c.light > 0) {
                     let (h, ts) = (w.heading, secs);
-                    push_torch(&mut dynamic, x + h.cos() * 0.3 + h.sin() * 0.12, z - h.sin() * 0.3 + h.cos() * 0.12, ts, c.light as f32 / c.full.max(1) as f32);
+                    let first = dynamic.len();
+                    push_torch(&mut dynamic, x + h.cos() * 0.3 + h.sin() * 0.12, z - h.sin() * 0.3 + h.cos() * 0.12, ts, 1.0);
+                    for v in &mut dynamic.verts[first..] {
+                        v.kind = 1000.0 + grounded_at;
+                        v.uv[0] = -1.0 - 0.99 * cave_exposure.unwrap_or(0.0);
+                    }
                 }
                 // the body leans into a turn and a little forward when it hurries (not when swimming or in the air)
                 let lean = if a.kind == AgentKind::Human && flight.is_none() && depth == 0 {
@@ -1050,6 +971,8 @@ impl Renderer {
                     pose,
                     chips: if working { Some((work, target, cyc)) } else { None },
                     lift: flight.map(|(l, _)| l),
+                    floor_height,
+                    cave_exposure,
                     lean,
                     heading: w.heading,
                     depth: if flight.is_none() { depth } else { 0 },
@@ -1069,7 +992,7 @@ impl Renderer {
                     let f = i as f32;
                     let walk = mode == "walk";
                     let pose = Pose { heading: yaw, phase: secs * 5.0 + f * 0.7, amp: if walk { 1.0 } else { 0.0 }, t: secs, outfit: *outfit, id: self.lineup_id, evo: f, slope: 0.0, lod: mode == "lod", sit: mode == "sit", ..Pose::idle(secs) };
-                    body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32 });
+                    body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, floor_height: None, cave_exposure: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32 });
                 }
             }
             let (body_mesh, me_range) = build_bodies(&body_jobs, art, wind);
@@ -1395,122 +1318,5 @@ mod globals_slots {
         let source = crate::quality::scene_source(include_str!("../shader.wgsl"), crate::quality::Quality::default());
         let shader = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
         Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&shader).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod cave_upload_tests {
-    use super::*;
-    use alaz_sim::{CaveSelf, Command, CommandKind, ItemKind};
-
-    #[test]
-    fn cave_height_patch_matches_a_full_upload_when_floors_change_layers() {
-        let tile = CaveTile { x: 58, y: 80, z: -8 };
-        let origin = natural_height_origin(tile);
-        assert_eq!(origin, natural_height_origin(CaveTile { x: 59, ..tile }));
-        let old = CaveLayout {
-            floors: BTreeMap::from([((58, 80), -8), ((59, 80), -8), ((58, 81), -9)]),
-            rubble: BTreeMap::from([((57, 81), -8)]),
-        };
-        let next = CaveLayout {
-            floors: BTreeMap::from([((59, 80), -8), ((58, 81), -11), ((57, 81), -8)]),
-            rubble: BTreeMap::from([((58, 80), -8), ((60, 81), -9)]),
-        };
-        let area = HeightArea::full(origin);
-        let mut patched = area.pixels(&old, tile.z);
-        let patch = natural_height_delta(&old, &next).unwrap();
-        let extent = patch.extent();
-        assert!(extent.width < 10 && extent.height < 10);
-        for (row, pixels) in patch.pixels(&next, tile.z).chunks_exact(extent.width as usize).enumerate() {
-            let offset = (patch.min.1 - origin.1 + row as i32) as usize * HWIN as usize
-                + (patch.min.0 - origin.0) as usize;
-            patched[offset..offset + pixels.len()].copy_from_slice(pixels);
-        }
-        assert_eq!(patched, area.pixels(&next, tile.z));
-        assert!(natural_height_delta(&next, &next).is_none());
-    }
-
-    fn seeded_walk(seed: u64, mouth: (i32, i32)) -> (World, Vec<CaveSelf>) {
-        let mut world = World::with_size(alaz_sim::map::tag_seed_natural(seed, 256), 256, 256);
-        world.wild.clear();
-        let node = world.node_at(mouth.0, mouth.1).unwrap();
-        let (x, y) = world.nodes[node.0 as usize].center_mm();
-        let agent = world.spawn_agent(x, y);
-        world.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
-        world.agents[0].inventory.counts[ItemKind::IronPickaxe as usize] = 1;
-        world.step(&[Command { agent, kind: CommandKind::EnterCave { node } }]);
-        let start = world.agents[0].cave.unwrap();
-        let (sx, sy) = start.tile();
-        let furthest = world.natural_cave_tiles(start, 18).into_iter()
-            .filter(|&tile| !world.natural_cave_flooded(tile) && world.natural_cave_exit_at(tile).is_none())
-            .max_by_key(|tile| (tile.x - sx).abs() + (tile.y - sy).abs())
-            .unwrap();
-        let (x, y) = furthest.center_mm();
-        world.step(&[Command { agent, kind: CommandKind::MoveTo { x, y } }]);
-        let mut samples = vec![start];
-        for _ in 0..2_500 {
-            let Some(cave) = world.agents[0].cave else { break };
-            if samples.last().is_none_or(|last| (last.tile(), last.elevation_m()) != (cave.tile(), cave.elevation_m())) {
-                samples.push(cave);
-            }
-            if world.agents[0].task == alaz_sim::world::Task::Idle {
-                break;
-            }
-            world.step(&[]);
-        }
-        assert!(samples.len() >= 8, "seed {seed}: only {} visited tiles", samples.len());
-        (world, samples)
-    }
-
-    #[ignore = "CPU timing of natural cave view preparation and upload payloads"]
-    #[test]
-    fn seeded_cave_upload_cost() {
-        use std::{hint::black_box, time::Instant};
-
-        for (seed, mouth) in [(4, (190, 102)), (42, (222, 150)), (66, (26, 122))] {
-            let (world, walk) = seeded_walk(seed, mouth);
-            let mut totals = [0.0; 2];
-            let mut sizes = [0; 2];
-            let mut rebuilt_meshes = 0;
-            const REPEATS: usize = 5;
-            for _ in 0..REPEATS {
-                for patch in [false, true] {
-                    let mut previous: Option<(CaveTile, CaveLayout, u8)> = None;
-                    for &cave in &walk {
-                        let t0 = Instant::now();
-                        let (x, y) = cave.tile();
-                        let z = cave.elevation_m().unwrap();
-                        let tile = CaveTile { x, y, z };
-                        let origin = if patch { natural_height_origin(tile) } else { (x - HWIN as i32 / 2, y - HWIN as i32 / 2) };
-                        let layout = CaveLayout::sample(&world, cave);
-                        let prev = previous.as_ref();
-                        if patch {
-                            black_box(layout.flooded(&world));
-                        }
-                        if !patch || prev.is_none_or(|(_, old, depth)| *old != layout || *depth != cave.depth()) {
-                            black_box(build_natural_cave(&world, &layout.floors, &layout.rubble, cave.depth()));
-                            rebuilt_meshes += usize::from(patch);
-                        }
-                        let area = if let (true, Some((last, old, _))) = (patch, prev)
-                            && last.z == z && natural_height_origin(*last) == origin {
-                            natural_height_delta(old, &layout)
-                        } else {
-                            Some(HeightArea::full(origin))
-                        };
-                        if let Some(area) = area {
-                            sizes[usize::from(patch)] += black_box(area.pixels(&layout, z)).len() * 16;
-                        }
-                        previous = Some((tile, layout, cave.depth()));
-                        totals[usize::from(patch)] += t0.elapsed().as_secs_f64();
-                    }
-                }
-            }
-            let count = walk.len() * REPEATS;
-            println!(
-                "seed {seed}: {} tiles, CPU/tile {:.3} -> {:.3} ms, height bytes/tile {} -> {}, rebuilt {}/{} meshes",
-                walk.len(), totals[0] * 1000.0 / count as f64, totals[1] * 1000.0 / count as f64,
-                sizes[0] / count, sizes[1] / count, rebuilt_meshes, count,
-            );
-        }
     }
 }

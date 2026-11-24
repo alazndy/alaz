@@ -126,3 +126,7 @@ Ayrıntılar için README'ye bak.
 - Z tuşu eşya bırakır; köpeğine sağ tıkla, sev.
 - Balta sesi, yumuşak dönüş ve eğilme, toplanacak şey parlar, zamanlama oyununda isabet efektleri.
 - "İlk adımlar" listesi hedef şeridiyle aynı sırada.
+
+## Güncelleme
+
+Başlangıç ekranındaki **Sürüm** düğmesi yeni sürüm olup olmadığını GitHub'dan öğrenir. Oyun her açılışta bir kez, yalnızca sürüm listesini okur; kapatmak için `ALAZ_NO_UPDATE_CHECK=1`. Hiçbir şey sen **Güncelle**'ye basmadan inmez. İnen dosya sürümün `SHA256SUMS` listesiyle denetlenir, tutmazsa kurulmaz. Kanal: **Kararlı** (yalnızca tam sürümler) ya da **Önizleme** (`v0.6.0-rc.1` gibi deneme sürümleri de). Çalışan oyundan (duraklatma menüsü) güncelleme yapılmaz.

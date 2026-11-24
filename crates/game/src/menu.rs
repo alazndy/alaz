@@ -52,6 +52,9 @@ pub struct Menu {
     keys_screen: bool,
     /// The graphics settings screen is open.
     gfx_screen: bool,
+    /// The version screen is open.
+    update_screen: bool,
+    pub updater: crate::update_ui::UpdateState,
     /// Waiting for a key press to bind to (action, slot).
     capturing: Option<(Action, usize)>,
     pub error: Option<String>,
@@ -125,6 +128,8 @@ impl Menu {
             confirm_delete: None,
             keys_screen: std::env::var_os("ALAZ_DEMO_KEYS").is_some(),
             gfx_screen: std::env::var_os("ALAZ_DEMO_GFXSCREEN").is_some(),
+            update_screen: false,
+            updater: crate::update_ui::UpdateState::live(),
             capturing: None,
             error: None,
             connecting: false,
@@ -143,6 +148,11 @@ impl Menu {
         };
         m.refresh();
         m
+    }
+
+    /// Opens the version screen directly (the screenshot tool has no click to do it).
+    pub(crate) fn open_update_screen(&mut self) {
+        self.update_screen = true;
     }
 
     pub fn refresh(&mut self) {
@@ -793,6 +803,97 @@ impl Menu {
         crate::gfxcfg::set(q);
     }
 
+    /// The version screen: what is installed, which channel to follow, and the update when one is found.
+    fn draw_update(&mut self, ctx: &egui::Context) -> Option<MenuAction> {
+        use crate::update_ui::Phase;
+        use alaz_updater::install::Next;
+        use alaz_updater::release::Channel;
+        self.updater.poll();
+        if self.updater.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        let t = self.intro(ctx);
+        let screen = ctx.content_rect();
+        let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
+        bg.rect_filled(screen, 0.0, Color32::from_black_alpha(205));
+        let e = ease(t / 0.35);
+        let note = Color32::from_rgb(190, 176, 150);
+        let mut act = None;
+        let mut leave = false;
+        // a setup program has been started: the game has to close so it can replace the files
+        if matches!(self.updater.phase, Phase::Done(Next::Exit)) {
+            return Some(MenuAction::Quit);
+        }
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
+            ui.set_opacity(e);
+            card(ui, 470.0, |ui| {
+                ui.label(egui::RichText::new("Sürüm").size(33.0).strong().color(GOLD));
+                ui.label(egui::RichText::new(format!("Kurulu sürüm: {}", alaz_updater::version::Version::current())).color(INK));
+                ui.add_space(8.0);
+                section(ui, "Hangi sürümleri izleyeyim?");
+                let mut i = usize::from(self.updater.channel == Channel::Preview);
+                segmented(ui, "update_channel", &["Kararlı", "Önizleme"], &mut i);
+                self.updater.set_channel(if i == 1 { Channel::Preview } else { Channel::Stable });
+                ui.label(egui::RichText::new("Önizleme: yayına girmeden önceki deneme sürümlerini de gösterir.").small().color(note));
+                ui.add_space(8.0);
+                match &self.updater.phase {
+                    Phase::Idle => {
+                        ui.label(egui::RichText::new("Henüz denetlenmedi.").color(note));
+                    }
+                    Phase::Checking => {
+                        ui.label(egui::RichText::new("Denetleniyor…").color(note));
+                    }
+                    Phase::UpToDate => {
+                        ui.label(egui::RichText::new("Güncelsin. Daha yeni sürüm yok.").color(INK));
+                    }
+                    Phase::Available(update) => {
+                        ui.label(egui::RichText::new(format!("Yeni sürüm: {}", update.version)).color(GOLD));
+                        ui.label(egui::RichText::new("İndirilen dosya, yayındaki SHA-256 listesiyle denetlenir. Tutmazsa kurulmaz.").small().color(note));
+                    }
+                    Phase::Installing(update) => {
+                        ui.label(egui::RichText::new(format!("{} indiriliyor ve kuruluyor…", update.version)).color(note));
+                    }
+                    Phase::Failed(err) => {
+                        ui.colored_label(Color32::from_rgb(240, 110, 110), crate::update_ui::explain(err));
+                        ui.label(egui::RichText::new(err.as_str()).size(13.0).color(note));
+                    }
+                    Phase::Done(_) => {
+                        ui.label(egui::RichText::new("Kuruldu. Yeni sürümle başlamak için oyunu yeniden başlat.").color(INK));
+                    }
+                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    match &self.updater.phase {
+                        Phase::Available(_) => {
+                            if button(ui, "Güncelle", vec2(130.0, 34.0), Look::Primary).clicked() {
+                                self.updater.start_install();
+                            }
+                        }
+                        Phase::Done(_) => {
+                            if button(ui, "Yeniden başlat", vec2(160.0, 34.0), Look::Primary).clicked() {
+                                crate::update_ui::relaunch();
+                                act = Some(MenuAction::Quit);
+                            }
+                        }
+                        Phase::Checking | Phase::Installing(_) => {}
+                        _ => {
+                            if button(ui, "Denetle", vec2(130.0, 34.0), Look::Primary).clicked() {
+                                self.updater.start_check();
+                            }
+                        }
+                    }
+                    if !self.updater.busy() && button(ui, "Geri", vec2(110.0, 34.0), Look::Plain).clicked() {
+                        leave = true;
+                    }
+                });
+            });
+        });
+        if leave {
+            self.update_screen = false;
+        }
+        act
+    }
+
     pub fn draw(&mut self, ctx: &egui::Context, binds: &mut Keybinds) -> Option<MenuAction> {
         crate::hud::apply_style(ctx);
         if self.keys_screen {
@@ -802,6 +903,9 @@ impl Menu {
         if self.gfx_screen {
             self.draw_graphics(ctx);
             return None;
+        }
+        if self.update_screen {
+            return self.draw_update(ctx);
         }
         if self.mp_screen {
             return self.draw_multiplayer(ctx);
@@ -971,8 +1075,11 @@ impl Menu {
                         act = Some(MenuAction::New { slot, seed, size, hardcore, settings });
                     }
                     ui.add_space(10.0);
+                    if let Some(v) = self.updater.available().filter(|_| !self.paused) {
+                        ui.label(egui::RichText::new(format!("Yeni sürüm var: {v}")).small().color(GOLD));
+                    }
                     ui.horizontal(|ui| {
-                        let parts = if self.paused { 2.0 } else { 3.0 };
+                        let parts = if self.paused { 2.0 } else { 4.0 };
                         let w = (ui.available_width() - 12.0 * (parts - 1.0)) / parts;
                         if !self.paused && button(ui, "Çok oyunculu", vec2(w, 34.0), Look::Plain).clicked() {
                             self.mp_screen = true;
@@ -982,6 +1089,10 @@ impl Menu {
                         }
                         if button(ui, "Grafik", vec2(w, 34.0), Look::Plain).clicked() {
                             self.gfx_screen = true;
+                        }
+                        // updating replaces the program, so it is only offered where no world is running
+                        if !self.paused && button(ui, "Sürüm", vec2(w, 34.0), Look::Plain).clicked() {
+                            self.update_screen = true;
                         }
                     });
                     ui.add_space(2.0);
@@ -1045,6 +1156,76 @@ mod tests {
             },
             state,
         )
+    }
+
+    fn fake_update() -> alaz_updater::release::Update {
+        let asset = |name: &str| alaz_updater::release::Asset { name: name.to_string(), browser_download_url: format!("https://github.com/x/{name}"), size: 1 };
+        alaz_updater::release::Update { version: alaz_updater::version::Version::parse("99.0.0").unwrap(), package: asset("ALAZ-pkg"), sums: asset("SHA256SUMS") }
+    }
+
+    fn fake_backend() -> crate::update_ui::Backend {
+        crate::update_ui::Backend {
+            check: |_| Ok(Some(fake_update())),
+            install: |_| Ok(alaz_updater::install::Next::Restart),
+        }
+    }
+
+    fn settle(h: &mut egui_kittest::Harness<'static, S>, until: &str) {
+        for _ in 0..200 {
+            h.step();
+            if h.query_by_label_contains(until).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let phase = match &h.state().menu.updater.phase {
+            crate::update_ui::Phase::Idle => "idle",
+            crate::update_ui::Phase::Checking => "checking",
+            crate::update_ui::Phase::UpToDate => "up to date",
+            crate::update_ui::Phase::Available(_) => "available",
+            crate::update_ui::Phase::Installing(_) => "installing",
+            crate::update_ui::Phase::Failed(_) => "failed",
+            crate::update_ui::Phase::Done(_) => "done",
+        };
+        panic!("the screen never showed {until:?} (the update state is {phase})");
+    }
+
+    #[test]
+    fn version_screen_checks_then_installs_only_on_the_click() {
+        let mut menu = Menu::new(false);
+        menu.updater = crate::update_ui::UpdateState::new(fake_backend(), alaz_updater::release::Channel::Stable);
+        let mut h = harness(menu);
+        h.run();
+        h.get_by_label("Sürüm").click();
+        h.run();
+        h.get_by_label_contains("Kurulu sürüm").click();
+        assert!(h.query_by_label_contains("Henüz denetlenmedi").is_some(), "nothing is looked up before the player asks");
+        h.get_by_label("Denetle").click();
+        settle(&mut h, "Yeni sürüm: 99.0.0");
+        assert!(h.query_by_label_contains("Kuruldu").is_none(), "finding an update does not install it");
+        h.run();
+        h.get_by_label("Güncelle").click();
+        h.step();
+        h.step();
+        settle(&mut h, "Kuruldu");
+        assert!(h.state().got.is_none(), "the game is not closed behind the player's back");
+    }
+
+    #[test]
+    fn the_start_screen_says_when_a_newer_version_was_found() {
+        let mut menu = Menu::new(false);
+        menu.updater = crate::update_ui::UpdateState::new(fake_backend(), alaz_updater::release::Channel::Stable);
+        menu.updater.phase = crate::update_ui::Phase::Available(fake_update());
+        let mut h = harness(menu);
+        h.run();
+        assert!(h.query_by_label_contains("Yeni sürüm var: 99.0.0").is_some());
+    }
+
+    #[test]
+    fn a_running_game_cannot_be_updated_from_the_pause_menu() {
+        let mut h = harness(Menu::new(true));
+        h.run();
+        assert!(h.query_by_label("Sürüm").is_none());
     }
 
     #[test]
