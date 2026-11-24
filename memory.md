@@ -34,6 +34,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Wild animals (not wolves) go to drink: in thirsty spells of 6 epochs (1 spell in 3, picked from seed and animal id) `Wild::wander` aims at `nearest_bank`, a fixed-order ring scan of 20 tiles. No new saved field, so old saves still load. Fish already existed (`fish_school`, any water with depth 1 or more, rod or spear) and also work in fourth-generator water (test added).
 - Natural causeways (`Crossing::Bridge` in `rivers.rs`): a rock bar like a ford, across rivers with 4x RIVER_AT drainage or more and 10 to 24 tiles of water, one every 60 tiles. Same `gravel` mask, so the renderer draws them as stone. Seed 7 at 256 has 4 (spans 11 to 20). Lakes and the sea are never crossed. A player-built bridge was left out on purpose: it needs a saved terrain overlay, a save version bump and about 12 water code paths.
 - Tests never touch the player's data: under `cfg!(test)` `saveio::base_dir()` and the keys file use `<tmp>/alaz-test-<pid>` unless `ALAZ_SAVE_DIR` is set. Before this, `zoom=0.90` in the real `ui.cfg` broke two layout tests.
+- Cave mouths by world size (`cave_mouths_by_size`, ignored): 128 m has 1 to 2 mouths, 256 m 1 to 6, 512 m 6 to 28, 1024 m 43 to 75, 2048 m 184 to 306. A small world (up to 256 m) puts mouths on any tile; larger ones only on the 4 x 4 lattice, so scan accordingly. The nearest mouth to the spawn was 34 to 159 m in every world tried. Guard: `every_new_world_has_a_cave_mouth_within_a_walk_of_the_spawn` (12 worlds, always runs) and `..._wide` (72 worlds, ignored, all pass, worst case at most 250 m).
 
 ## Important Links & Paths
 
@@ -72,3 +73,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-24] [Claude Kaira]: Added natural rock causeways over wide fourth-generator rivers (test: a walker crosses dry).
 - [2026-11-24] [Claude Kaira]: Cleared 10 of 11 audit warnings by turning off postcard's default `heapless-cas` feature (no format change; all workspace tests pass). Update failures now show a Turkish explanation.
 - [2026-11-24] [Claude Kaira]: Isolated the game tests from the player's own ui.cfg, saves and key bindings (branch fix/test-isolation).
+- [2026-11-24] [Claude Kaira]: Measured natural cave mouths by world size and added guard tests (branch test/cave-coverage).
