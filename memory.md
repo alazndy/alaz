@@ -34,6 +34,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Wild animals (not wolves) go to drink: in thirsty spells of 6 epochs (1 spell in 3, picked from seed and animal id) `Wild::wander` aims at `nearest_bank`, a fixed-order ring scan of 20 tiles. No new saved field, so old saves still load. Fish already existed (`fish_school`, any water with depth 1 or more, rod or spear) and also work in fourth-generator water (test added).
 - Natural causeways (`Crossing::Bridge` in `rivers.rs`): a rock bar like a ford, across rivers with 4x RIVER_AT drainage or more and 10 to 24 tiles of water, one every 60 tiles. Same `gravel` mask, so the renderer draws them as stone. Seed 7 at 256 has 4 (spans 11 to 20). Lakes and the sea are never crossed. A player-built bridge was left out on purpose: it needs a saved terrain overlay, a save version bump and about 12 water code paths.
 - Tests never touch the player's data: under `cfg!(test)` `saveio::base_dir()` and the keys file use `<tmp>/alaz-test-<pid>` unless `ALAZ_SAVE_DIR` is set. Before this, `zoom=0.90` in the real `ui.cfg` broke two layout tests.
+- Relay hosting: the domain is `alazlab.com`, DNS is on Cloudflare (checked 2026-11-24). `relay.alazlab.com` has no record yet. When it is made it must be an A record set to "DNS only" (grey cloud): the orange proxy does not pass the relay's own TLS protocol on 443. The cloud VM and its account do not exist yet; see `packaging/relay/RUNBOOK.md`.
 
 ## Important Links & Paths
 
@@ -72,3 +73,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-24] [Claude Kaira]: Added natural rock causeways over wide fourth-generator rivers (test: a walker crosses dry).
 - [2026-11-24] [Claude Kaira]: Cleared 10 of 11 audit warnings by turning off postcard's default `heapless-cas` feature (no format change; all workspace tests pass). Update failures now show a Turkish explanation.
 - [2026-11-24] [Claude Kaira]: Isolated the game tests from the player's own ui.cfg, saves and key bindings (branch fix/test-isolation).
+- [2026-11-24] [Claude Kaira]: Looked up the DNS of alazlab.com (Cloudflare, no relay record) and recorded the answer and the grey-cloud rule in the relay runbook.

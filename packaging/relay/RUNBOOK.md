@@ -4,7 +4,7 @@ Bu dosya yazıldı, **çalıştırılmadı**. Hiçbir adım Göktuğ onaylamadan
 
 ## Açık sorular (Göktuğ cevaplayacak)
 
-1. **DNS sağlayıcısı hangisi?** `alazlab.com` alan adı nerede yönetiliyor? Bilinmiyor.
+1. ~~DNS sağlayıcısı hangisi?~~ **Cevap (2026-11-24): Cloudflare.** `dig NS alazlab.com` → `cass.ns.cloudflare.com` ve `joaquin.ns.cloudflare.com`. `alazlab.com` ve `www` Cloudflare proxy'sinin arkasında bir siteye gidiyor. `relay.alazlab.com` için henüz **hiç kayıt yok** (A ve AAAA boş).
 2. **Bulut hesabı hangisi?** Örnek olarak Oracle Cloud'un ücretsiz VM'i kullanıldı. Henüz hesap yok.
 3. **Let's Encrypt için e-posta** verilsin mi? Script şimdilik e-postasız kayıt yapar (`--register-unsafely-without-email`). Süre uyarıları gelmez.
 
@@ -68,7 +68,7 @@ Her kontrol bağlantısı saniyede yaklaşık 50 kez, her tünel yönü saniyede
 
 1. Bulut sağlayıcıda küçük bir Linux VM aç (Oracle ücretsiz VM, Ubuntu veya Debian).
 2. VM'e **sabit (reserved) bir genel IPv4 adresi** ver. IP değişirse DNS bozulur.
-3. DNS sağlayıcısında bir **A kaydı** oluştur: ad `relay` (yani `relay.alazlab.com`), değer VM'in IPv4 adresi. **AAAA kaydı açma.** Relay şimdilik sadece IPv4'te dinler (`0.0.0.0:443`). IPv6 istemci AAAA görürse bağlanamaz.
+3. DNS sağlayıcısında (Cloudflare) bir **A kaydı** oluştur. **Proxy durumu "DNS only" (gri bulut) olmalı.** Turuncu bulut yalnızca HTTP(S) trafiğini geçirir; relay'in kendi TLS protokolü 443'te bu proxy'den geçmez ve bağlantı kurulamaz. Sertifika da bu yüzden doğrudan VM'de alınır (HTTP-01 için 80/tcp VM'e ulaşmalı): ad `relay` (yani `relay.alazlab.com`), değer VM'in IPv4 adresi. **AAAA kaydı açma.** Relay şimdilik sadece IPv4'te dinler (`0.0.0.0:443`). IPv6 istemci AAAA görürse bağlanamaz.
 4. Bulut ağ kurallarında (güvenlik listesi, security group) **gelen** trafiğe şunları aç:
    - 443/tcp: herkese. Relay burada dinler.
    - 80/tcp: herkese, **sürekli açık**. Yenileme düzenli çalışır. Certbot 80'i sadece yenilerken tutar, diğer zamanlarda orada hiçbir şey dinlemez.
