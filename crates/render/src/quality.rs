@@ -134,6 +134,20 @@ pub fn res() -> f32 {
     }
 }
 
+/// How many times finer than the small picture the scene is drawn before it is averaged down to it (2 = 4 samples
+/// to a texel). The texel grid does not move with the camera's turning, so a single sample per texel flickers along
+/// every edge as the camera turns; averaging a few samples settles it. `ALAZ_SUPERSAMPLE=1` turns it off, 3 is the
+/// most.
+pub fn supersample() -> u32 {
+    static SS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *SS.get_or_init(|| std::env::var("ALAZ_SUPERSAMPLE").ok().and_then(|v| v.trim().parse::<u32>().ok()).map_or(2, |n| n.clamp(1, 3)))
+}
+
+/// The outline and pixel shaders with the supersampling factor put in front as a constant.
+pub(crate) fn ss_source(body: &str) -> String {
+    format!("const SS: i32 = {};\n{body}", supersample())
+}
+
 /// Numbers the scene shader needs, as constants put in front of its source (so the compiler folds them as it did
 /// when they were typed in).
 pub(crate) fn shader_header(q: Quality) -> String {
@@ -142,9 +156,10 @@ pub(crate) fn shader_header(q: Quality) -> String {
         PixelDetail::Coarse => 21,
     };
     format!(
-        "const GT: i32 = {gt}; const GTF: f32 = {gt}.0; const RING_TEXELS: i32 = {}; const SHADOWS: bool = {};\n",
+        "const GT: i32 = {gt}; const GTF: f32 = {gt}.0; const RING_TEXELS: i32 = {}; const SHADOWS: bool = {}; const SSF: f32 = {}.0;\n",
         4 * crate::renderer::CHUNK_TILES * gt,
-        q.shadows != ShadowQuality::Off
+        q.shadows != ShadowQuality::Off,
+        supersample()
     )
 }
 

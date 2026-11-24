@@ -145,10 +145,10 @@ impl Renderer {
                 self.apply_scene(set);
             }
             Which::Outline => {
-                self.outline.pipeline = guarded(device, || pipelines::fullscreen(device, "outline", &module(name, src), &l.outline, format))?;
+                self.outline.pipeline = guarded(device, || pipelines::fullscreen(device, "outline", &module(name, &crate::quality::ss_source(src)), &l.outline, format))?;
             }
             Which::Pixel => {
-                self.pixel.pipeline = guarded(device, || pipelines::fullscreen(device, "pixel", &module(name, src), &l.pixel, format))?;
+                self.pixel.pipeline = guarded(device, || pipelines::fullscreen(device, "pixel", &module(name, &crate::quality::ss_source(src)), &l.pixel, format))?;
             }
         }
         Ok(())

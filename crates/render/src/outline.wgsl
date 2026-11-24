@@ -1,5 +1,6 @@
 // Ink lines at the small picture's resolution: a texel gets ink when a neighbour behind it is much farther away,
-// so the nearer object is outlined by one texel.
+// so the nearer object is outlined by one texel. The scene is drawn SS times finer, so the neighbours are SS samples
+// away and the line is still one texel wide.
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var depth: texture_depth_2d;
 
@@ -18,10 +19,10 @@ fn d_at(q: vec2<i32>, lim: vec2<i32>) -> f32 {
     let q = vec2<i32>(frag.xy);
     let c = textureLoad(scene, clamp(q, vec2<i32>(0), lim), 0).rgb;
     let d0 = d_at(q, lim);
-    let dl = d_at(q + vec2<i32>(-1, 0), lim);
-    let dr = d_at(q + vec2<i32>(1, 0), lim);
-    let du = d_at(q + vec2<i32>(0, -1), lim);
-    let dd = d_at(q + vec2<i32>(0, 1), lim);
+    let dl = d_at(q + vec2<i32>(-SS, 0), lim);
+    let dr = d_at(q + vec2<i32>(SS, 0), lim);
+    let du = d_at(q + vec2<i32>(0, -SS), lim);
+    let dd = d_at(q + vec2<i32>(0, SS), lim);
     // the ground's own slope is the same on both sides, so only a real step (more than a slope) counts
     let sx = abs(dr - dl) * 0.5;
     let sy = abs(dd - du) * 0.5;
@@ -36,7 +37,7 @@ fn d_at(q: vec2<i32>, lim: vec2<i32>) -> f32 {
         var near = false;
         for (var j = -1; j <= 1; j = j + 1) {
             for (var i = -1; i <= 1; i = i + 1) {
-                if (textureLoad(scene, clamp(q + vec2<i32>(i, j), vec2<i32>(0), lim), 0).a < 0.25) { near = true; }
+                if (textureLoad(scene, clamp(q + vec2<i32>(i, j) * SS, vec2<i32>(0), lim), 0).a < 0.25) { near = true; }
             }
         }
         if (near) { col = vec3<f32>(1.0, 0.93, 0.62); }

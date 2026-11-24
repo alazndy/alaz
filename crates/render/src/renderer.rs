@@ -461,7 +461,7 @@ impl Renderer {
         let (outline, outline_pl) = {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("outline"),
-                source: wgpu::ShaderSource::Wgsl(hotreload::OUTLINE.into()),
+                source: wgpu::ShaderSource::Wgsl(crate::quality::ss_source(hotreload::OUTLINE).into()),
             });
             let tex = |binding, sample_type| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -481,7 +481,7 @@ impl Renderer {
         let (pixel, pixel_pl) = {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("pixel"),
-                source: wgpu::ShaderSource::Wgsl(hotreload::PIXEL.into()),
+                source: wgpu::ShaderSource::Wgsl(crate::quality::ss_source(hotreload::PIXEL).into()),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("pixel"),
@@ -788,11 +788,22 @@ impl Renderer {
         self.hidden_pipeline = set.hidden;
     }
 
+    /// The size of the scene's textures for a window: the small picture is never more than 1/1.2 of the window across
+    /// (the finest zoom), and it is drawn `supersample()` times finer.
+    fn supersampled(w: u32, h: u32) -> (u32, u32) {
+        let ss = crate::quality::supersample();
+        let fit = |n: u32| (n * ss * 5).div_ceil(6) + 4 * ss;
+        (fit(w), fit(h))
+    }
+
     fn make_color(device: &wgpu::Device, format: wgpu::TextureFormat, w: u32, h: u32) -> wgpu::TextureView {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("scene"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                size: {
+                    let (w, h) = Self::supersampled(w, h);
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -857,7 +868,10 @@ impl Renderer {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("depth"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                size: {
+                    let (w, h) = Self::supersampled(w, h);
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,

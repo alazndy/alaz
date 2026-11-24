@@ -114,7 +114,8 @@ impl Renderer {
             None
         } else {
             let vertices = build_cave_scene(world, &floors, &daylight, &flooded);
-            Some((self.vertex_buffer(&vertices), vertices.len() as u32))
+            // (a zero-size buffer cannot be sliced when it is drawn)
+            (!vertices.is_empty()).then(|| (self.vertex_buffer(&vertices), vertices.len() as u32))
         };
         self.natural_cave_view = Some(NaturalCaveView { key, entrances, floors, daylight, carve, flooded, water_tick, mesh });
     }
@@ -1021,10 +1022,11 @@ impl Renderer {
                 dynamic.wind = wind;
                 me_body = 0..0;
                 v.push(&mut dynamic, world.tick);
-                if dynamic.is_empty() {
-                    // (an empty buffer cannot be bound: one triangle with no area)
-                    dynamic.extend_from_slice(&[bytemuck::Zeroable::zeroed(); 3]);
-                }
+            }
+            // an empty buffer cannot be bound (wgpu panics when it is sliced): one triangle with no area stands in. It
+            // happens whenever nothing moves in view, for instance when the player is dead and no animal is near
+            if dynamic.is_empty() {
+                dynamic.extend_from_slice(&[bytemuck::Zeroable::zeroed(); 3]);
             }
             let dyn_buf = self.vertex_buffer(&dynamic);
 
@@ -1115,7 +1117,8 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 // the picture is drawn into the top-left sw x sh texels of the scene texture
-                pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+                let ss = crate::quality::supersample() as f32;
+                pass.set_viewport(0.0, 0.0, sw as f32 * ss, sh as f32 * ss, 0.0, 1.0);
                 pass.set_bind_group(0, Some(&self.bind_group), &[]);
                 pass.set_pipeline(&self.tri_pipeline);
                 for &what in part {
@@ -1187,7 +1190,8 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_viewport(0.0, 0.0, sw as f32, sh as f32, 0.0, 1.0);
+                let ss = crate::quality::supersample() as f32;
+                pass.set_viewport(0.0, 0.0, sw as f32 * ss, sh as f32 * ss, 0.0, 1.0);
                 pass.set_pipeline(&self.outline.pipeline);
                 pass.set_bind_group(0, Some(&self.outline.group), &[]);
                 pass.draw(0..3, 0..1);

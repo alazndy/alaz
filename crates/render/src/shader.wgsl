@@ -1007,7 +1007,7 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>, exposure: f32) -> vec3<f32>
         if (ahead > 0.6 && r < 2.6) {
             let k = 1.0 - smoothstep(1.2, 2.6, r);
             // a 4x4 ordered pattern in 2-pixel squares: even, fine holes rather than blots
-            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
+            let c = vec2<u32>(floor(v.clip.xy / (2.0 * SSF))) % vec2<u32>(4u);
             let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
             let dither = (bayer[c.y * 4u + c.x] + 0.5) / 16.0;
             if (dither < 0.85 * k) { discard; }
@@ -1021,7 +1021,7 @@ fn cave_shade(v: VOut, col: vec3<f32>, n: vec3<f32>, exposure: f32) -> vec3<f32>
         let r = length(vec2<f32>(dot(d, globals.cam_r.xyz), dot(d, globals.cam_u.xyz) * 0.8));
         if (ahead > 0.6 && r < 1.8) {
             let k = 1.0 - smoothstep(0.8, 1.8, r);
-            let c = vec2<u32>(floor(v.clip.xy / 2.0)) % vec2<u32>(4u);
+            let c = vec2<u32>(floor(v.clip.xy / (2.0 * SSF))) % vec2<u32>(4u);
             let bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
             if ((bayer[c.y * 4u + c.x] + 0.5) / 16.0 < 0.85 * k) { discard; }
         }

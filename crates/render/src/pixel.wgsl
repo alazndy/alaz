@@ -58,6 +58,18 @@ fn rain(g0: vec3<f32>, q: vec2<i32>, wa: f32, up_down: f32) -> vec3<f32> {
     return g;
 }
 
+// One texel of the small picture: the average of the SS x SS samples the scene was drawn with there (in linear light,
+// so an edge between a bright and a dark texel lands on the right grey).
+fn texel(t: vec2<i32>) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    for (var b = 0; b < SS; b = b + 1) {
+        for (var a = 0; a < SS; a = a + 1) {
+            sum = sum + textureLoad(scene, t * SS + vec2<i32>(a, b), 0).rgb;
+        }
+    }
+    return sum / f32(SS * SS);
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
     let x = f32((i << 1u) & 2u);
     let y = f32(i & 2u);
@@ -65,7 +77,7 @@ fn rain(g0: vec3<f32>, q: vec2<i32>, wa: f32, up_down: f32) -> vec3<f32> {
 }
 
 @fragment fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
-    let lim = vec2<i32>(textureDimensions(scene)) - vec2<i32>(1);
+    let lim = vec2<i32>(textureDimensions(scene)) / SS - vec2<i32>(1);
     let q = vec2<i32>(floor((frag.xy + p.a.zw) / p.a.x));
     // sharp bilinear: a texel is a hard block, blended with its neighbour only across the one screen pixel where
     // their edge falls. A texel is not a whole number of screen pixels at every zoom (1.8 at the default), and
@@ -78,10 +90,10 @@ fn rain(g0: vec3<f32>, q: vec2<i32>, wa: f32, up_down: f32) -> vec3<f32> {
     let w = clamp((f - vec2<f32>(0.5)) * p.a.x + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
     let i0 = clamp(vec2<i32>(i), vec2<i32>(0), lim);
     let i1 = clamp(vec2<i32>(i) + vec2<i32>(1), vec2<i32>(0), lim);
-    let c00 = textureLoad(scene, i0, 0).rgb;
-    let c10 = textureLoad(scene, vec2<i32>(i1.x, i0.y), 0).rgb;
-    let c01 = textureLoad(scene, vec2<i32>(i0.x, i1.y), 0).rgb;
-    let c11 = textureLoad(scene, i1, 0).rgb;
+    let c00 = texel(i0);
+    let c10 = texel(vec2<i32>(i1.x, i0.y));
+    let c01 = texel(vec2<i32>(i0.x, i1.y));
+    let c11 = texel(i1);
     let lin = mix(mix(c00, c10, w.x), mix(c01, c11, w.x), w.y);
     var g = pow(lin, vec3<f32>(1.0 / 2.2));
     let cine = p.b.w;
