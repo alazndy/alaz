@@ -34,6 +34,7 @@ Finish the full backlog. It includes cave access and exploration saves, multipla
 - Wild animals (not wolves) go to drink: in thirsty spells of 6 epochs (1 spell in 3, picked from seed and animal id) `Wild::wander` aims at `nearest_bank`, a fixed-order ring scan of 20 tiles. No new saved field, so old saves still load. Fish already existed (`fish_school`, any water with depth 1 or more, rod or spear) and also work in fourth-generator water (test added).
 - Natural causeways (`Crossing::Bridge` in `rivers.rs`): a rock bar like a ford, across rivers with 4x RIVER_AT drainage or more and 10 to 24 tiles of water, one every 60 tiles. Same `gravel` mask, so the renderer draws them as stone. Seed 7 at 256 has 4 (spans 11 to 20). Lakes and the sea are never crossed. A player-built bridge was left out on purpose: it needs a saved terrain overlay, a save version bump and about 12 water code paths.
 - Tests never touch the player's data: under `cfg!(test)` `saveio::base_dir()` and the keys file use `<tmp>/alaz-test-<pid>` unless `ALAZ_SAVE_DIR` is set. Before this, `zoom=0.90` in the real `ui.cfg` broke two layout tests.
+- World start times (release, 8 cores, `world_start_times` and `world_start_phases`, ignored tests): 128 to 1024 m about 0.1 to 0.2 s, 2048 m 1.1 s, 4096 m 7.6 s (map tiles 2.3 s, node scan 4.0 s: about a million cave-mouth searches on the 4x4 lattice), 8192 m and larger 0.3 s because they are made in chunks (`EAGER_MAX_TILES` = 4096 x 4096 is the line). The menu offers 4 km. Equal bands versus 32-row bands in `par_rows` made only 15 percent difference, so it was left alone. The start now shows a \"Dünya hazırlanıyor\" screen first (`Game::deferred`, `Menu::busy`); the window still does not answer while it works. Lowering the eager line would change old 4 km saves, so it needs a new seed tag.
 
 ## Important Links & Paths
 
@@ -72,3 +73,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-24] [Claude Kaira]: Added natural rock causeways over wide fourth-generator rivers (test: a walker crosses dry).
 - [2026-11-24] [Claude Kaira]: Cleared 10 of 11 audit warnings by turning off postcard's default `heapless-cas` feature (no format change; all workspace tests pass). Update failures now show a Turkish explanation.
 - [2026-11-24] [Claude Kaira]: Isolated the game tests from the player's own ui.cfg, saves and key bindings (branch fix/test-isolation).
+- [2026-11-24] [Claude Kaira]: Measured world start times by size and added the busy screen (branch perf/startup-times).
