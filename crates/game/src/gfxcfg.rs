@@ -7,6 +7,68 @@ use std::sync::Mutex;
 
 static CURRENT: Mutex<Option<Quality>> = Mutex::new(None);
 static DIRTY: AtomicBool = AtomicBool::new(false);
+static PREFS: Mutex<Option<Prefs>> = Mutex::new(None);
+static PREFS_DIRTY: AtomicBool = AtomicBool::new(false);
+
+/// What the settings screen sets besides graphics: how loud each kind of sound is, and whether the window fills the
+/// screen (borderless).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Prefs {
+    pub volumes: crate::audio::Volumes,
+    pub fullscreen: bool,
+}
+
+/// The settings in `pairs` (ui.cfg lines); anything missing or unreadable keeps its default.
+fn parse_prefs(pairs: &[(String, String)]) -> Prefs {
+    let mut p = Prefs::default();
+    for (k, v) in pairs {
+        let num = || v.parse::<f32>().ok().filter(|x| x.is_finite());
+        match k.as_str() {
+            "volume" => p.volumes.master = num().unwrap_or(p.volumes.master),
+            "sfx" => p.volumes.effects = num().unwrap_or(p.volumes.effects),
+            "ambience" => p.volumes.ambience = num().unwrap_or(p.volumes.ambience),
+            "music" => p.volumes.music = num().unwrap_or(p.volumes.music),
+            "fullscreen" => p.fullscreen = v == "1",
+            _ => {}
+        }
+    }
+    p.volumes = p.volumes.clamped();
+    p
+}
+
+/// The whole text of ui.cfg.
+fn render_cfg(zoom: Option<f32>, q: Quality, p: Prefs) -> String {
+    let mut out = String::new();
+    if let Some(z) = zoom {
+        out += &format!("zoom={z:.2}\n");
+    }
+    out += &format!("pixels={}\nshadows={}\ndecor={}\n", q.pixels.key(), q.shadows.key(), q.decor as u8);
+    let v = p.volumes;
+    out += &format!("volume={:.2}\nsfx={:.2}\nambience={:.2}\nmusic={:.2}\nfullscreen={}\n", v.master, v.effects, v.ambience, v.music, p.fullscreen as u8);
+    out
+}
+
+/// The sound and window settings saved last time (the defaults when none).
+pub fn prefs() -> Prefs {
+    let mut cur = PREFS.lock().unwrap();
+    *cur.get_or_insert_with(|| parse_prefs(&read_pairs()))
+}
+
+/// Chooses new sound and window settings: kept in ui.cfg, and the game loop applies them.
+pub fn set_prefs(p: Prefs) {
+    let p = Prefs { volumes: p.volumes.clamped(), ..p };
+    if p == prefs() {
+        return;
+    }
+    *PREFS.lock().unwrap() = Some(p);
+    PREFS_DIRTY.store(true, Ordering::Relaxed);
+    save_cfg(None);
+}
+
+/// A change waiting to be applied, once.
+pub fn take_prefs_change() -> Option<Prefs> {
+    PREFS_DIRTY.swap(false, Ordering::Relaxed).then(prefs)
+}
 
 fn path() -> std::path::PathBuf {
     crate::saveio::base_dir().join("ui.cfg")
@@ -21,12 +83,7 @@ fn read_pairs() -> Vec<(String, String)> {
 pub fn save_cfg(zoom: Option<f32>) {
     let pairs = read_pairs();
     let zoom = zoom.or_else(|| pairs.iter().find(|(k, _)| k == "zoom").and_then(|(_, v)| v.parse().ok()));
-    let q = current();
-    let mut out = String::new();
-    if let Some(z) = zoom {
-        out += &format!("zoom={z:.2}\n");
-    }
-    out += &format!("pixels={}\nshadows={}\ndecor={}\n", q.pixels.key(), q.shadows.key(), q.decor as u8);
+    let out = render_cfg(zoom, current(), prefs());
     let _ = std::fs::create_dir_all(crate::saveio::base_dir());
     let _ = std::fs::write(path(), out);
 }
@@ -99,4 +156,46 @@ pub fn controls(ui: &mut egui::Ui) {
         }
     });
     set(q);
+}
+
+#[cfg(test)]
+mod prefs_tests {
+    use super::*;
+    use crate::audio::Volumes;
+
+    fn pairs(text: &str) -> Vec<(String, String)> {
+        text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect()
+    }
+
+    #[test]
+    fn what_is_written_is_read_back() {
+        let p = Prefs { volumes: Volumes { master: 0.4, effects: 0.8, ambience: 0.0, music: 0.65 }, fullscreen: true };
+        let text = render_cfg(Some(1.1), Quality::default(), p);
+        assert_eq!(parse_prefs(&pairs(&text)), p);
+        assert!(text.contains("zoom=1.10") && text.contains("pixels="), "the graphics lines are still written");
+    }
+
+    #[test]
+    fn a_file_without_the_new_keys_gets_the_defaults() {
+        assert_eq!(parse_prefs(&pairs("zoom=0.90\npixels=fine\n")), Prefs::default());
+        assert!(!Prefs::default().fullscreen);
+    }
+
+    #[test]
+    fn bad_numbers_cannot_break_the_volume() {
+        let p = parse_prefs(&pairs("volume=banana\nsfx=9\nmusic=-3\nambience=NaN\n"));
+        assert_eq!(p.volumes.master, Volumes::default().master);
+        assert_eq!(p.volumes.effects, 1.0);
+        assert_eq!(p.volumes.music, 0.0);
+        assert_eq!(p.volumes.ambience, Volumes::default().ambience);
+    }
+
+    #[test]
+    fn a_graphics_change_does_not_wipe_the_sound_settings() {
+        let p = Prefs { volumes: Volumes { master: 0.3, ..Volumes::default() }, fullscreen: true };
+        let mut q = Quality::default();
+        q.decor = !q.decor;
+        let text = render_cfg(None, q, p);
+        assert_eq!(parse_prefs(&pairs(&text)), p);
+    }
 }

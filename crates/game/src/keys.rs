@@ -32,6 +32,8 @@ pub enum Action {
     Save,
     Load,
     Mute,
+    /// Fill the screen with the window (borderless), or give it back.
+    Fullscreen,
     Grid,
     Drop,
     /// Hold the work fast with the other hand (the craft minigames that need it).
@@ -42,7 +44,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 30] = [
+    pub const ALL: [Action; 31] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -68,6 +70,7 @@ impl Action {
         Action::Save,
         Action::Load,
         Action::Mute,
+        Action::Fullscreen,
         Action::Grid,
         Action::Drop,
         Action::Grip,
@@ -102,8 +105,9 @@ impl Action {
             Action::Save => "Kaydet",
             Action::Load => "Kayıt yükle",
             Action::Mute => "Sesi aç / kapat",
+            Action::Fullscreen => "Tam ekran",
             Action::Grid => "Izgaraya oturt",
-            Action::Drop => "Eşya bırak (üstündeki eşyadan 1, Shift ile hepsi; yoksa en çoktan 1)",
+            Action::Drop => "Eşya bırak (Shift: hepsi)",
             Action::Grip => "Tut (işi diğer elinle sabitle, basılı tut)",
             Action::Creative => "Yaratıcı panel (eşya ver, zaman, hava)",
             Action::Menu => "Menü / iptal",
@@ -137,6 +141,7 @@ impl Action {
             Action::Save => "save",
             Action::Load => "load",
             Action::Mute => "mute",
+            Action::Fullscreen => "fullscreen",
             Action::Grid => "grid",
             Action::Drop => "drop",
             Action::Grip => "grip",
@@ -173,6 +178,7 @@ impl Action {
             Action::Save => (K::F5, None),
             Action::Load => (K::F9, None),
             Action::Mute => (K::KeyM, None),
+            Action::Fullscreen => (K::F11, None),
             Action::Grid => (K::KeyG, None),
             Action::Drop => (K::KeyZ, None),
             Action::Grip => (K::KeyT, None),

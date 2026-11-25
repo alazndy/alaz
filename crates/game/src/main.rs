@@ -1287,8 +1287,36 @@ impl App {
         )
     }
 
+    /// Fill the screen with the window (borderless) or give it back; the choice is kept for next time.
+    fn toggle_fullscreen(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let now = g.window.fullscreen().is_some();
+        let mut p = gfxcfg::prefs();
+        p.fullscreen = !now;
+        gfxcfg::set_prefs(p);
+    }
+
+    /// Apply sound and window settings changed since the last frame (or all of them at start).
+    fn apply_prefs(&mut self, all: bool) {
+        let Some(p) = (if all { Some(gfxcfg::prefs()) } else { gfxcfg::take_prefs_change() }) else { return };
+        if let Some(a) = &self.audio {
+            a.set_volumes(p.volumes);
+        }
+        if let Some(g) = &self.gfx {
+            let want = p.fullscreen.then_some(winit::window::Fullscreen::Borderless(None));
+            if g.window.fullscreen().is_some() != p.fullscreen {
+                g.window.set_fullscreen(want);
+            }
+        }
+    }
+
     fn on_action(&mut self, action: keys::Action) {
         use keys::Action as A;
+        // the window can be filled or given back anywhere, in a menu too
+        if action == A::Fullscreen {
+            self.toggle_fullscreen();
+            return;
+        }
         // while a menu is open only the menu key and saving make sense
         if self.menu.is_some() {
             if action == A::Menu && self.menu.as_ref().is_some_and(|m| m.paused && !m.capturing()) {
@@ -1309,6 +1337,8 @@ impl App {
                     self.menu = Some(menu::Menu::new(true));
                 }
             }
+            // handled above, before the menu check
+            A::Fullscreen => {}
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame
             A::Grip => {}
@@ -1692,6 +1722,7 @@ impl App {
     }
 
     fn frame(&mut self) {
+        self.apply_prefs(false);
         let now = Instant::now();
         let raw_dt = (now - self.last).as_secs_f32();
         let dt = (now - self.last).as_secs_f32().min(0.25);
@@ -2992,6 +3023,7 @@ impl ApplicationHandler for App {
         let renderer = Renderer::with_quality(window.clone(), gfxcfg::current());
         self.gfx = Some(Gfx { window, renderer });
         self.last = Instant::now();
+        self.apply_prefs(true);
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, ev: WindowEvent) {

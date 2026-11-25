@@ -10,6 +10,8 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+mod music;
+
 const RATE: u32 = 44_100;
 const SR: f32 = RATE as f32;
 /// Frames written per mixer step (10 ms).
@@ -47,6 +49,45 @@ enum Msg {
     Play(Sfx),
     Mute(bool),
     Scene(Scene),
+    Volumes(Volumes),
+}
+
+/// How loud each kind of sound is, each 0..1 (the slider's position; the gain is its square, which sounds even).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Volumes {
+    pub master: f32,
+    pub effects: f32,
+    pub ambience: f32,
+    pub music: f32,
+}
+
+impl Default for Volumes {
+    fn default() -> Self {
+        Volumes { master: 1.0, effects: 1.0, ambience: 1.0, music: 0.5 }
+    }
+}
+
+impl Volumes {
+    /// Every value held to 0..1 (a hand-edited file or a bad number cannot make it louder or give NaN).
+    pub fn clamped(self) -> Volumes {
+        let c = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        Volumes { master: c(self.master), effects: c(self.effects), ambience: c(self.ambience), music: c(self.music) }
+    }
+
+    /// Move each value a fraction `k` of the way to `to`, so a slider never clicks.
+    fn approach(&mut self, to: Volumes, k: f32) {
+        self.master += (to.master - self.master) * k;
+        self.effects += (to.effects - self.effects) * k;
+        self.ambience += (to.ambience - self.ambience) * k;
+        self.music += (to.music - self.music) * k;
+    }
+}
+
+/// One stereo frame of everything, at these volumes: ambience, effects (centred) and music, then the master.
+fn mix(v: Volumes, amb: (f32, f32), sfx: f32, music: (f32, f32)) -> (f32, f32) {
+    let g = |x: f32| x * x;
+    let (a, e, m, all) = (g(v.ambience) * 0.75, g(v.effects), g(v.music), g(v.master));
+    ((amb.0 * a + sfx * e + music.0 * m) * all, (amb.1 * a + sfx * e + music.1 * m) * all)
 }
 
 /// What is around the player right now; every value is 0..1.
@@ -307,6 +348,8 @@ fn mixer(rx: Receiver<Msg>, mut sink: Sink) {
     let mut voices: Vec<(usize, usize)> = Vec::new(); // (bank index, position)
     let mut muted = false;
     let mut amb = Ambience::new();
+    let mut music = music::Music::new();
+    let (mut vol, mut vol_goal) = (Volumes::default(), Volumes::default());
     let mut buf = vec![0i16; CHUNK * 2];
     let mut next = Instant::now();
     loop {
@@ -324,7 +367,11 @@ fn mixer(rx: Receiver<Msg>, mut sink: Sink) {
                                 voices.push((i, 0));
                             }
                 }
-                Ok(Msg::Scene(sc)) => amb.set(sc),
+                Ok(Msg::Scene(sc)) => {
+                    amb.set(sc);
+                    music.set(sc);
+                }
+                Ok(Msg::Volumes(v)) => vol_goal = v.clamped(),
                 Ok(Msg::Mute(m)) => {
                     muted = m;
                     if m {
@@ -345,9 +392,13 @@ fn mixer(rx: Receiver<Msg>, mut sink: Sink) {
                     *pos += 1;
                 }
             }
-            let (l, r) = amb.frame();
+            let amb_frame = amb.frame();
+            let music_frame = music.frame();
+            // about 30 ms to follow a slider
+            vol.approach(vol_goal, 0.00075);
             let k = if muted { 0.0 } else { 1.0 };
-            let (l, r) = ((l * 0.75 + sfx) * k, (r * 0.75 + sfx) * k);
+            let (l, r) = mix(vol, amb_frame, sfx, music_frame);
+            let (l, r) = (l * k, r * k);
             buf[f * 2] = ((l * 0.8).tanh() * 15000.0) as i16;
             buf[f * 2 + 1] = ((r * 0.8).tanh() * 15000.0) as i16;
         }
@@ -396,6 +447,11 @@ impl Audio {
     /// What the ambience should sound like now.
     pub fn set_scene(&self, scene: Scene) {
         let _ = self.tx.send(Msg::Scene(scene));
+    }
+
+    /// Set how loud each kind of sound is.
+    pub fn set_volumes(&self, v: Volumes) {
+        let _ = self.tx.send(Msg::Volumes(v.clamped()));
     }
 
     pub fn toggle_mute(&mut self) {
@@ -779,5 +835,48 @@ impl Ambience {
         self.voices.retain(|v| !v.done());
 
         (l, r)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn volumes_are_held_to_the_slider_range() {
+        let v = Volumes { master: 3.0, effects: -1.0, ambience: f32::NAN, music: 0.4 }.clamped();
+        assert_eq!(v, Volumes { master: 1.0, effects: 0.0, ambience: 1.0, music: 0.4 });
+    }
+
+    #[test]
+    fn master_zero_is_silence_and_each_group_has_its_own_knob() {
+        let all = Volumes::default();
+        let (l, r) = mix(all, (0.4, 0.4), 0.3, (0.2, 0.2));
+        assert!(l > 0.0 && r > 0.0);
+        assert_eq!(mix(Volumes { master: 0.0, ..all }, (0.4, 0.4), 0.3, (0.2, 0.2)), (0.0, 0.0));
+        // with only the effects on, only the effect is heard
+        let only_sfx = Volumes { master: 1.0, effects: 1.0, ambience: 0.0, music: 0.0 };
+        assert_eq!(mix(only_sfx, (0.4, 0.4), 0.3, (0.2, 0.2)), (0.3, 0.3));
+        let only_music = Volumes { master: 1.0, effects: 0.0, ambience: 0.0, music: 1.0 };
+        assert_eq!(mix(only_music, (0.4, 0.4), 0.3, (0.2, 0.1)), (0.2, 0.1));
+    }
+
+    #[test]
+    fn half_the_slider_is_a_quarter_of_the_gain() {
+        let half = Volumes { master: 0.5, ..Volumes::default() };
+        let (full, low) = (mix(Volumes::default(), (0.0, 0.0), 1.0, (0.0, 0.0)).0, mix(half, (0.0, 0.0), 1.0, (0.0, 0.0)).0);
+        assert!((low / full - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_moving_slider_glides_and_arrives() {
+        let mut v = Volumes::default();
+        let goal = Volumes { master: 0.0, ..v };
+        v.approach(goal, 0.00075);
+        assert!(v.master < 1.0 && v.master > 0.99, "one sample moves a little: {}", v.master);
+        for _ in 0..44_100 {
+            v.approach(goal, 0.00075);
+        }
+        assert!(v.master < 0.001, "a second is plenty: {}", v.master);
     }
 }
