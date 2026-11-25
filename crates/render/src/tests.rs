@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i.is_multiple_of(3) { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i.is_multiple_of(3) { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false, drink: 0.0 }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -779,5 +779,27 @@ mod far_tree_tests {
         };
         let (near, far) = (count(TreeDetail::Full), count(TreeDetail::Far));
         assert!(far > 0 && far < near, "far {far} near {near}");
+    }
+}
+
+#[cfg(test)]
+mod drinking {
+    use super::*;
+
+    fn deer(drink: f32) -> Mesh {
+        let mut m = Mesh::new();
+        let pose = Pose { id: 0, drink, ..Pose::idle(0.0) };
+        push_wild(&mut m, alaz_sim::WildSpecies::Deer, 0.0, 0.0, pose);
+        m
+    }
+
+    /// A drinking animal puts its head down to the water, and an ordinary one is not changed by the new field.
+    #[test]
+    fn a_drinking_deer_lowers_its_head() {
+        let top = |m: &Mesh| m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+        let (up, down) = (deer(0.0), deer(1.0));
+        assert!(top(&down) < top(&up) - 0.2, "head and antlers come down: {} -> {}", top(&up), top(&down));
+        let same = deer(0.0);
+        assert!(up.iter().zip(same.iter()).all(|(a, b)| a.pos == b.pos), "drink 0 draws what it always drew");
     }
 }

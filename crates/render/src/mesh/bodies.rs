@@ -25,11 +25,13 @@ pub(crate) struct Walk {
     pub(crate) strike: f32,
     /// How fast the body is turning (radians a second): turns ease in and out, and the body leans into them.
     pub(crate) spin: f32,
+    /// An animal drinking at the water's edge, eased 0 to 1: the head goes down to the water.
+    pub(crate) drink: f32,
 }
 
 impl Walk {
     pub(crate) fn at(x: f32, z: f32, heading: f32, hp: i32) -> Walk {
-        Walk { x, z, heading, phase: 0.0, amp: 0.0, hp, hurt: 0.0, prev: [x, z], sim: [x, z], tick: 0, stride: 0.3, speed: 0.0, craft: 0, strike: 9.0, spin: 0.0 }
+        Walk { x, z, heading, phase: 0.0, amp: 0.0, hp, hurt: 0.0, prev: [x, z], sim: [x, z], tick: 0, stride: 0.3, speed: 0.0, craft: 0, strike: 9.0, spin: 0.0, drink: 0.0 }
     }
 
     /// Where to draw it this frame: between the last two simulated positions.
@@ -388,11 +390,13 @@ pub(crate) struct Pose {
     pub(crate) lod: bool,
     /// Sitting at the evening fire: hips down, a loose slouch.
     pub(crate) sit: bool,
+    /// An animal drinking, 0 to 1 (see `Walk::drink`).
+    pub(crate) drink: f32,
 }
 
 impl Pose {
     pub(crate) fn idle(t: f32) -> Pose {
-        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, evo: 9.0, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false }
+        Pose { heading: 0.0, phase: 0.0, amp: 0.0, t, work: Work::None, tool: Tool::Hand, outfit: 0, id: 0, evo: 9.0, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false, drink: 0.0 }
     }
 }
 

@@ -46,6 +46,25 @@ impl SurfaceCutaway {
     }
 }
 
+/// The heading (as the walk cycle measures it: `atan2(dx, dz)`) from a dry spot at (x, z) metres toward the nearest
+/// water on the four sides of its tile, if there is water there: the way an animal turns to drink.
+fn water_beside(map: &alaz_sim::map::Map, x: f32, z: f32) -> Option<f32> {
+    use alaz_sim::map::Terrain;
+    let (tx, ty) = (x.floor() as i32, z.floor() as i32);
+    if map.terrain(tx, ty).is_none_or(|t| t == Terrain::Water) {
+        return None;
+    }
+    [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        .into_iter()
+        .filter(|&(dx, dy)| map.terrain(tx + dx, ty + dy) == Some(Terrain::Water))
+        .map(|(dx, dy)| {
+            let (cx, cz) = ((tx + dx) as f32 + 0.5, (ty + dy) as f32 + 0.5);
+            ((cx - x).powi(2) + (cz - z).powi(2), (cx - x).atan2(cz - z))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, heading)| heading)
+}
+
 fn cave_scene_section(world: &World, entrances: &CaveSection, player_floor: Option<CaveTile>) -> CaveSection {
     let mut section = entrances.clone();
     if let Some(floor) = player_floor {
@@ -821,7 +840,16 @@ impl Renderer {
                 let st = self.wild_anim.entry(w.id).or_insert(Walk::at(wx, wz, (w.id as f32 * 2.399) % std::f32::consts::TAU, 0));
                 let (wx, wz) = st.smooth(wx, wz, world.tick, alpha);
                 step_walk(st, wx, wz, dt, quad_stride(wild_leg(w.species)));
-                let idle = Pose { heading: st.heading, phase: st.phase, amp: st.amp, id: w.id, stride: st.stride, ..Pose::idle(secs) };
+                // standing at the water's edge it turns to the water and drinks
+                let at_rest = st.speed < 0.05 && st.amp < 0.05;
+                let water = if at_rest { water_beside(&world.map, wx, wz) } else { None };
+                st.drink += (f32::from(water.is_some()) - st.drink) * (1.0 - (-2.5 * dt).exp());
+                if let Some(face) = water {
+                    let off = wrap_pi(face - st.heading);
+                    st.spin += (11.0 * 11.0 * off - 2.0 * 11.0 * st.spin) * dt.min(0.05);
+                    st.heading += st.spin * dt;
+                }
+                let idle = Pose { heading: st.heading, phase: st.phase, amp: st.amp, id: w.id, stride: st.stride, drink: st.drink, ..Pose::idle(secs) };
                 decal(&mut dynamic, art.shadow_m, wx, wz, WHITE, 0.0);
                 push_wild(&mut dynamic, w.species, wx, wz, idle);
             }
@@ -923,7 +951,7 @@ impl Renderer {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (gh(x + sx, z + sz) - gh(x - sx, z - sz)) / 1.2
                 };
-                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated() };
+                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated(), drink: 0.0 };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;
@@ -1318,5 +1346,25 @@ mod globals_slots {
         let source = crate::quality::scene_source(include_str!("../shader.wgsl"), crate::quality::Quality::default());
         let shader = wgpu::naga::front::wgsl::parse_str(&source).unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
         Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&shader).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod water_tests {
+    use super::*;
+
+    /// The animal turns to the water beside it, and not at all where there is none.
+    #[test]
+    fn water_beside_points_at_the_water() {
+        let seed = alaz_sim::map::tag_seed_new_world(7, 256);
+        let map = alaz_sim::World::with_size(seed, 256, 256).map;
+        let dry = |x: i32, y: i32| map.terrain(x, y).is_some_and(|t| t != alaz_sim::map::Terrain::Water);
+        let wet = |x: i32, y: i32| map.terrain(x, y) == Some(alaz_sim::map::Terrain::Water);
+        let bank = (1..255).flat_map(|y| (1..255).map(move |x| (x, y))).find(|&(x, y)| dry(x, y) && wet(x + 1, y) && !wet(x - 1, y) && !wet(x, y + 1) && !wet(x, y - 1)).expect("a bank with water to its east");
+        let h = water_beside(&map, bank.0 as f32 + 0.5, bank.1 as f32 + 0.5).expect("water beside");
+        // east is +x: heading atan2(dx, dz) = +90 degrees
+        assert!((h - std::f32::consts::FRAC_PI_2).abs() < 0.05, "faces east, got {h}");
+        let inland = (2..254).flat_map(|y| (2..254).map(move |x| (x, y))).find(|&(x, y)| dry(x, y) && (-1..=1).all(|d| !wet(x + d, y) && !wet(x, y + d))).unwrap();
+        assert!(water_beside(&map, inland.0 as f32 + 0.5, inland.1 as f32 + 0.5).is_none());
     }
 }

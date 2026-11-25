@@ -38,9 +38,11 @@ pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     // standing animals put their heads down to graze now and then, and look around in between
     let still = (1.0 - pose.amp * 4.0).clamp(0.0, 1.0);
     let k = pose.id as f32 * 1.7;
-    let graze = ((pose.t * 0.33 + k).dsin() * 1.8 - 0.5).clamp(0.0, 1.0) * still;
+    let graze = (((pose.t * 0.33 + k).dsin() * 1.8 - 0.5).clamp(0.0, 1.0) * still).max(pose.drink);
     let look = (pose.t * 0.7 + k * 0.5).dsin() * 0.25 * still * (1.0 - graze);
-    let hy = top + q.neck * 0.5 + (q.head_r * 1.1 - top - q.neck * 0.5) * graze;
+    // a drinking animal laps: the muzzle dips a little, now and again
+    let lap = pose.drink * ((pose.t * 3.2 + k).dsin().max(0.0) * 0.02);
+    let hy = top + q.neck * 0.5 + (q.head_r * 1.1 - top - q.neck * 0.5) * graze - lap;
     let hf = q.len + q.neck * (0.5 + 0.25 * graze);
     let head_at = at(hf, look * q.neck, hy);
     limb(out, at(q.len * 0.8, 0.0, top), head_at, q.thick * 0.55, q.head_r * 0.9, q.body, 8);
