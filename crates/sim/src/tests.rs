@@ -4988,11 +4988,12 @@ fn every_command_has_a_working_gate() {
     assert_eq!(count(&w, 0, ItemKind::Cart), 0, "hitch");
     // wild animals: tame a dog, hunt a deer
     w.wild.push(crate::wildlife::Wild::new(90_001, WildSpecies::Dog, me(&w).x + 4_000, me(&w).y));
-    w.wild.push(crate::wildlife::Wild::new(90_002, WildSpecies::Deer, me(&w).x - 4_000, me(&w).y));
+    w.wild.push(crate::wildlife::Wild::new(90_002, WildSpecies::Deer, me(&w).x - 2_000, me(&w).y));
     let before = w.agents.len();
     run(&mut w, "give berries 10\ntame dog");
     assert!(w.agents.len() > before || w.wild.iter().any(|x| x.id == 90_001 && x.trust > 0), "tame");
     let meat = count(&w, 0, ItemKind::RawMeat);
+    // within spear range: this checks the command, not a chase (whether a hunter outruns a deer depends on the slope)
     run(&mut w, "give spear 1\nhunt deer");
     assert!(count(&w, 0, ItemKind::RawMeat) > meat || !w.wild.iter().any(|x| x.id == 90_002), "hunt");
     // tools: repair, prospect
@@ -7520,7 +7521,7 @@ fn slope_pace() {
                     let (nx, ny) = (x + (1000.0 * ang.cos()) as i64, y + (1000.0 * ang.sin()) as i64);
                     let rise = (crate::map::elevation_at_mm(w0.seed, nx, ny) - crate::map::elevation_at_mm(w0.seed, x, y)) as i64;
                     let grade = rise;
-                    let slow = (grade * 3).clamp(-300, 1500);
+                    let slow = (grade * 2).clamp(-200, 1000);
                     speed_sum += (1000.0 + slow as f64) / 1000.0;
                     n += 1;
                     x = nx;

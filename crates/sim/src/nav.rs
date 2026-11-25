@@ -298,7 +298,7 @@ fn step_toward(a: &mut Agent, nav: &Nav, tx: i64, ty: i64, swim: bool) -> Step {
             let rise = (crate::map::elevation_at_mm(nav.map.seed, px, py) - crate::map::elevation_at_mm(nav.map.seed, a.x, a.y)) as i64;
             let grade = rise * 1000 / len.min(speed).max(1);
             // good soles keep their grip: less of the climb's slowing
-            let slow = (grade * 3).clamp(-300, 1500);
+            let slow = (grade * 2).clamp(-200, 1000);
             let slow = if slow > 0 { crate::rules::Gear::cut(slow as i32, gear.grip) as i64 } else { slow };
             speed = (speed * 1000 / (1000 + slow)).max(1);
             // a rock face is climbed, up or down, hand over hand: only so much height a tick
