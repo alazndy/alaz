@@ -7296,3 +7296,52 @@ fn load_room_matches_deposit() {
         w.buildings.pop();
     }
 }
+
+/// Not a test of behaviour: prints how long a new world takes at each size. Run it with
+/// `cargo test --release -p alaz-sim -- --ignored world_start_times --nocapture`.
+#[test]
+#[ignore]
+fn world_start_times() {
+    for size in [128, 256, 512, 1024, 2048, 4096, 8192] {
+        let seed = crate::map::tag_seed_new_world(7, size);
+        let t = std::time::Instant::now();
+        let mut w = World::with_size(seed, size, size);
+        let made = t.elapsed();
+        let (sx, sy) = w.spawn_mm;
+        let t = std::time::Instant::now();
+        w.spawn_agent(sx, sy);
+        w.learn_everything();
+        let first = std::time::Instant::now();
+        for _ in 0..60 {
+            w.step(&[]);
+        }
+        eprintln!("size {size:>5}: world {:>8.1?}  spawn {:>8.1?}  60 ticks {:>8.1?}  animals {}", made, first - t, first.elapsed(), w.wild.len());
+    }
+}
+
+/// Not a test of behaviour: where a 4096 world's start goes. `--ignored world_start_phases --nocapture`.
+#[test]
+#[ignore]
+fn world_start_phases() {
+    let size = 4096;
+    let seed = crate::map::tag_seed_new_world(7, size);
+    let t = std::time::Instant::now();
+    let map = crate::map::Map::generate(seed, size, size);
+    eprintln!("map tiles:   {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    let n = crate::map::par_rows(size, size, |y0, y1| {
+        let mut out = 0u32;
+        for ty in y0..y1 {
+            for tx in 0..size {
+                if map.node_for(seed, tx, ty).is_some() {
+                    out += 1;
+                }
+            }
+        }
+        vec![out]
+    });
+    eprintln!("node scan:   {:?} ({} rows)", t.elapsed(), n.len());
+    let t = std::time::Instant::now();
+    let w = crate::wildlife::generate(seed, &map, (size / 2, size / 2), 30);
+    eprintln!("wildlife:    {:?} ({} animals)", t.elapsed(), w.len());
+}
