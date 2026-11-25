@@ -103,7 +103,7 @@ impl Action {
             Action::Load => "Kayıt yükle",
             Action::Mute => "Sesi aç / kapat",
             Action::Grid => "Izgaraya oturt",
-            Action::Drop => "Eşya bırak (en çok olandan 1)",
+            Action::Drop => "Eşya bırak (üstündeki eşyadan 1, Shift ile hepsi; yoksa en çoktan 1)",
             Action::Grip => "Tut (işi diğer elinle sabitle, basılı tut)",
             Action::Creative => "Yaratıcı panel (eşya ver, zaman, hava)",
             Action::Menu => "Menü / iptal",

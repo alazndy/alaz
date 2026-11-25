@@ -7479,3 +7479,18 @@ fn taking_back_needs_you_close_and_room_in_the_pack() {
     assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6, "nothing lost");
     assert_eq!(count(&w, 0, ItemKind::Wood), 0);
 }
+
+#[test]
+fn a_whole_pack_can_be_put_down_in_one_command() {
+    let (mut w, a) = with_agent(5);
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    w.agents[0].inventory.counts[ItemKind::Stone as usize] = 40;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Stone, n: 40 })]);
+    assert_eq!(count(&w, 0, ItemKind::Stone), 0, "all forty left the pack");
+    let lying = w.bodies.iter().filter(|b| b.kind == crate::physics::BodyKind::Piece).count();
+    assert_eq!(lying, 40, "and lie on the ground as forty pieces");
+    // more than the pack holds is only what there is
+    w.agents[0].inventory.counts[ItemKind::Fiber as usize] = 5;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Fiber, n: u16::MAX })]);
+    assert_eq!(count(&w, 0, ItemKind::Fiber), 0);
+}

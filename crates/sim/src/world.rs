@@ -273,6 +273,8 @@ pub enum Task {
 
 /// Felling a standing tree takes this many rounds of chopping; it gives no wood itself. The wood is in the trunk.
 const FELL_CUTS: u16 = 3;
+/// Most pieces one `Drop` puts on the ground: a whole pack (40) goes in one command.
+pub const MAX_DROP: u16 = 100;
 /// A blow that breaks a piece off a lying trunk takes this share (percent) of a chopping round.
 const SPLIT_SHARE: u32 = 45;
 /// Ticks to stoop and pick up a piece, how close you must be, and how far around you look for the next one (mm).
@@ -2759,7 +2761,7 @@ impl World {
             }
             CommandKind::Drop { item, n } => {
                 let have = self.agents[idx].inventory.get(*item);
-                let n = (*n).min(have).min(10);
+                let n = (*n).min(have).min(MAX_DROP);
                 if n == 0 || !kind_of_agent.can_harvest() {
                     return;
                 }
