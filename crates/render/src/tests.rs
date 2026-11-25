@@ -980,3 +980,19 @@ mod feet_on_slopes {
         assert!(moved < 1e-3, "nothing moves on flat ground: {moved}");
     }
 }
+
+#[cfg(test)]
+mod petting {
+    use super::*;
+
+    #[test]
+    fn the_hand_strokes_along_and_comes_back() {
+        let reach: Vec<f32> = (0..=20).map(|i| act(Work::Pet, i as f32 / 20.0).hands[0][0]).collect();
+        let (lo, hi) = (reach.iter().cloned().fold(f32::MAX, f32::min), reach.iter().cloned().fold(f32::MIN, f32::max));
+        assert!(hi - lo > 0.25, "the hand travels a hand's length: {lo}..{hi}");
+        assert!((reach[0] - reach[20]).abs() < 1e-5, "the stroke loops: {} vs {}", reach[0], reach[20]);
+        let (offer, pet) = (act(Work::Offer, 0.5), act(Work::Pet, 0.5));
+        assert_ne!(offer.hands[0], pet.hands[0], "stroking is not holding out a berry");
+        assert!(pet.crouch > 0.2, "crouched beside the animal");
+    }
+}

@@ -217,6 +217,7 @@ pub(crate) fn work_cycle(world: &World, a: &alaz_sim::world::Agent, work: Work, 
         }
         (Work::Drink, _) => secs / 1.3 + off,
         (Work::Offer, _) => secs / 1.6 + off,
+        (Work::Pet, _) => secs / 1.1 + off,
         _ => 0.0,
     }
 }
@@ -347,6 +348,16 @@ pub(crate) fn act(w: Work, u: f32) -> Act {
             ];
             Act { feet: [[0.32, -0.16], [-0.24, 0.16]], ..pick(keys(u, &k)) }
         }
+        Work::Pet => {
+            // crouched beside the animal, the right hand gliding along its back and lifting to start again
+            let k: [(f32, K); 4] = [
+                (0.0, [0.32, 0.4, 0.0, 0.42, 0.74, 0.1, 0.1, 0.72, -0.25, 0.0, 1.0, 0.0, 0.07, -0.05, 0.0]),
+                (0.45, [0.32, 0.44, 0.0, 0.7, 0.68, 0.1, 0.1, 0.72, -0.25, 0.0, 1.0, 0.0, 0.09, -0.06, 0.0]),
+                (0.7, [0.32, 0.42, 0.0, 0.7, 0.76, 0.1, 0.1, 0.72, -0.25, 0.0, 1.0, 0.0, 0.08, -0.05, 0.0]),
+                (1.0, [0.32, 0.4, 0.0, 0.42, 0.74, 0.1, 0.1, 0.72, -0.25, 0.0, 1.0, 0.0, 0.07, -0.05, 0.0]),
+            ];
+            Act { feet: [[0.18, -0.15], [-0.1, 0.15]], ..pick(keys(u, &k)) }
+        }
         Work::Offer => {
             // crouched low and still, the hand held out with the berry, edging it closer and back
             let k: [(f32, K); 3] = [
@@ -412,6 +423,8 @@ pub(crate) enum Work {
     Hammer,
     Throw,
     Offer,
+    /// Stroking a tame animal's back after it has been fed.
+    Pet,
 }
 
 /// What is held while working (the order matches the atlas: hand, stone axe, metal axe, metal pick, spear).
@@ -492,10 +505,12 @@ pub(crate) fn work_of(world: &World, a: &alaz_sim::world::Agent) -> (Work, Tool,
             }
             None => (Work::None, Tool::Hand, me),
         },
-        Task::Tame { wild, .. } => match world.wild.iter().find(|w| w.id == wild) {
+        Task::Tame { wild, progress } => match world.wild.iter().find(|w| w.id == wild) {
             Some(w) => {
                 let p = m(w.x, w.y);
-                if near(p, 3.0) { (Work::Offer, Tool::Hand, p) } else { (Work::None, Tool::Hand, p) }
+                // the berry is held out first; the last third of the wait (progress 80 of 120) is spent stroking the animal
+                let work = if progress >= 80 { Work::Pet } else { Work::Offer };
+                if near(p, 3.0) { (work, Tool::Hand, p) } else { (Work::None, Tool::Hand, p) }
             }
             None => (Work::None, Tool::Hand, me),
         },

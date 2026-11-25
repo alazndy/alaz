@@ -740,6 +740,10 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                         }
                     }
                 }
+                Work::Pet => {
+                    arm(out, 1.0, right);
+                    arm(out, -1.0, hpos(hl));
+                }
                 Work::Offer => {
                     arm(out, 1.0, right);
                     arm(out, -1.0, hpos(hl));
