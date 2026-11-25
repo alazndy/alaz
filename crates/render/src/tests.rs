@@ -88,7 +88,7 @@ mod mesh_hashes {
 
     fn pose(i: u32, work: Work, tool: Tool) -> Pose {
         let f = i as f32;
-        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i.is_multiple_of(3) { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false }
+        Pose { heading: f * 0.7, phase: f * 1.3, amp: 0.2 + 0.1 * f, t: 3.0 + f, work, tool, outfit: ((i * 53) % 256) as u16, id: i * 5 + 1, evo: (i % 10) as f32 * 0.9 + 0.3, slope: 0.1 * f - 0.3, hurt: if i.is_multiple_of(3) { 0.5 } else { 0.0 }, stride: 0.3 + 0.05 * f, cyc: 2.7 + 0.01 * f, air: [0.0, 0.6, -0.4][(i % 3) as usize], lod: false, sit: false, drink: 0.0 }
     }
 
     fn cases() -> Vec<(String, u64)> {
@@ -508,12 +508,12 @@ mod mesh_hashes {
         ("chips 17", 0xd12ff22a885b3e59),
         ("creature Human false", 0x93eb1b4c41b928a5),
         ("creature Human true", 0xaab18dc051750d7a),
-        ("creature Dog false", 0x6fc52b1f7d1ebda1),
-        ("creature Dog true", 0x53e477bd6757afd6),
-        ("creature Ox false", 0xcdf0b26b008a7aff),
-        ("creature Ox true", 0xdf878f802d7a55ad),
-        ("creature Horse false", 0x6a7604b438a1eb53),
-        ("creature Horse true", 0x32226edc8562bd3f),
+        ("creature Dog false", 0x765457eb7960236e),
+        ("creature Dog true", 0x95e3ec7e788b1d64),
+        ("creature Ox false", 0x503396912f509226),
+        ("creature Ox true", 0x45255301a9164685),
+        ("creature Horse false", 0x67738039f583d37b),
+        ("creature Horse true", 0x8ca7ac4de0f5f24d),
         ("creature Bot false", 0x6644cb396f8d278e),
         ("creature Bot true", 0xa7a2bdd7e9f35c72),
         ("tracks false", 0xb831020fc0f2b825),
@@ -784,6 +784,28 @@ mod far_tree_tests {
 }
 
 #[cfg(test)]
+mod drinking {
+    use super::*;
+
+    fn deer(drink: f32) -> Mesh {
+        let mut m = Mesh::new();
+        let pose = Pose { id: 0, drink, ..Pose::idle(0.0) };
+        push_wild(&mut m, alaz_sim::WildSpecies::Deer, 0.0, 0.0, pose);
+        m
+    }
+
+    /// A drinking animal puts its head down to the water, and an ordinary one is not changed by the new field.
+    #[test]
+    fn a_drinking_deer_lowers_its_head() {
+        let top = |m: &Mesh| m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+        let (up, down) = (deer(0.0), deer(1.0));
+        assert!(top(&down) < top(&up) - 0.2, "head and antlers come down: {} -> {}", top(&up), top(&down));
+        let same = deer(0.0);
+        assert!(up.iter().zip(same.iter()).all(|(a, b)| a.pos == b.pos), "drink 0 draws what it always drew");
+    }
+}
+
+#[cfg(test)]
 mod felled_tree_mesh {
     use super::*;
 
@@ -809,6 +831,57 @@ mod felled_tree_mesh {
             let top = m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
             println!("angle {angle:>8} wood {wood:>2}/{full}: {} verts, {bad} bad, highest {top:.2} m, trunk_left {} mm", m.len(), w.bodies[0].trunk_left_mm());
         }
+    }
+}
+
+#[cfg(test)]
+mod quad_gait {
+    use super::*;
+
+    fn pose(phase: f32, amp: f32) -> Pose {
+        Pose { phase, amp, stride: 0.3, id: 3, ..Pose::idle(0.0) }
+    }
+
+    /// The vertices that belong to the drawn horse, as (min, max) of height and side.
+    fn spans(phase: f32, amp: f32) -> ([f32; 2], [f32; 2]) {
+        let mut m = Mesh::new();
+        push_wild(&mut m, alaz_sim::WildSpecies::Horse, 0.0, 0.0, pose(phase, amp));
+        let side = m.iter().map(|v| v.pos[0]);
+        let lo = side.clone().fold(f32::MAX, f32::min);
+        let hi = side.fold(f32::MIN, f32::max);
+        let top = m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+        let bot = m.iter().map(|v| v.pos[1]).fold(f32::MAX, f32::min);
+        ([bot, top], [lo, hi])
+    }
+
+    /// A standing animal looks as it did: the walk terms vanish with the pace.
+    #[test]
+    fn a_standing_animal_does_not_sway() {
+        let a = spans(0.0, 0.0);
+        let b = spans(1.7, 0.0);
+        assert_eq!(a, b, "phase means nothing without a pace");
+    }
+
+    /// A walking animal's body moves with the stride: its outline changes over the cycle, and repeats each turn.
+    #[test]
+    fn the_body_moves_with_the_stride_and_repeats() {
+        let tau = std::f32::consts::TAU;
+        let at = |p: f32| spans(p, 1.0);
+        let all: Vec<_> = (0..16).map(|i| at(i as f32 / 16.0 * tau)).collect();
+        let tops: Vec<f32> = all.iter().map(|s| s.0[1]).collect();
+        let spread = tops.iter().cloned().fold(f32::MIN, f32::max) - tops.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread > 0.02 && spread < 0.25, "the body rises and falls a little: {spread}");
+        let (a, b) = (at(0.4), at(0.4 + tau));
+        let same = |x: [f32; 2], y: [f32; 2]| (x[0] - y[0]).abs() < 1e-4 && (x[1] - y[1]).abs() < 1e-4;
+        assert!(same(a.0, b.0) && same(a.1, b.1), "one stride is one turn of the phase: {a:?} vs {b:?}");
+    }
+
+    /// At a trot diagonal feet lift together; at a walk they do not.
+    #[test]
+    fn the_gait_changes_from_walk_to_trot() {
+        let walk = spans(1.0, 1.0);
+        let trot = spans(1.0, 1.7);
+        assert_ne!(walk, trot);
     }
 }
 
