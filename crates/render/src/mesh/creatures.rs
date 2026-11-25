@@ -20,21 +20,37 @@ pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     let (s, c) = pose.heading.dsin_cos();
     let (fx, fz, rx, rz) = (s, c, c, -s);
     let at = |f: f32, r: f32, h: f32| [x + fx * f + rx * r, h, z + fz * f + rz * r];
-    let bob = pose.phase.dsin().abs() * 0.04 * pose.amp + (pose.t * 1.6).dsin() * 0.006 * (1.0 - pose.amp);
+    // Everything that moves with the walk reads the one foot phase, so the body, head and tail never drift from
+    // the feet. `g` is the gait: 0 a walk (the feet lift one after another, on the same side first), 1 a trot
+    // (diagonal pairs together), eased in between by the pace.
+    let moving = pose.amp.min(1.0);
+    let g = ((pose.amp - 1.15) / 0.5).clamp(0.0, 1.0);
+    let ph = pose.phase;
+    let bob_walk = (2.0 * ph).dsin().abs() * 0.5;
+    let bob = (bob_walk + (ph.dsin().abs() - bob_walk) * g) * 0.04 * pose.amp + (pose.t * 1.6).dsin() * 0.006 * (1.0 - pose.amp);
+    // the body leans toward the planted side, and its front dips and rises with the stride
+    let sway = ph.dsin() * 0.03 * q.thick * moving * (1.0 - 0.5 * g);
+    let pitch = ph.dcos() * 0.05 * q.thick * moving * (0.4 + 0.6 * g);
     let top = q.leg_h + q.thick + bob;
     let dark = [q.body[0] * 0.7, q.body[1] * 0.7, q.body[2] * 0.7];
     for (fi, f) in [q.len * 0.7, -q.len * 0.7].into_iter().enumerate() {
         for (si, side) in [-1.0f32, 1.0].into_iter().enumerate() {
-            let ph = if (fi + si) % 2 == 0 { 1.0 } else { -1.0 };
-            let (cycle, raise) = foot_cycle(pose.phase + if ph > 0.0 { 0.0 } else { std::f32::consts::PI });
+            // foot order in a walk: hind left, fore left, hind right, fore right, a quarter turn apart
+            let (walk, trot) = match (fi, si) {
+                (1, 0) => (0.0, std::f32::consts::PI),
+                (0, 0) => (std::f32::consts::FRAC_PI_2, 0.0),
+                (1, 1) => (std::f32::consts::PI, 0.0),
+                _ => (3.0 * std::f32::consts::FRAC_PI_2, std::f32::consts::PI),
+            };
+            let (cycle, raise) = foot_cycle(ph + walk + (trot - walk) * g);
             let off = cycle * pose.stride * pose.amp.min(1.0);
-            let hip = at(f, side * q.thick * 0.6, q.leg_h + q.thick * 0.6 + bob);
+            let hip = at(f, side * q.thick * 0.6 + sway, q.leg_h + q.thick * 0.6 + bob + if fi == 0 { pitch } else { -pitch });
             // only the swinging foot leaves the ground
             let foot = at(f + off, side * q.thick * 0.6, (raise * pose.amp.min(1.0) * pose.stride * 0.35).min(0.2));
             limb(out, hip, foot, q.thick * 0.28, q.thick * 0.18, dark, 6);
         }
     }
-    limb(out, at(-q.len, 0.0, top - q.thick * 0.2), at(q.len, 0.0, top - q.thick * 0.1), q.thick * 0.95, q.thick * 0.85, q.body, 10);
+    limb(out, at(-q.len, sway, top - q.thick * 0.2 - pitch), at(q.len, sway, top - q.thick * 0.1 + pitch), q.thick * 0.95, q.thick * 0.85, q.body, 10);
     // standing animals put their heads down to graze now and then, and look around in between
     let still = (1.0 - pose.amp * 4.0).clamp(0.0, 1.0);
     let k = pose.id as f32 * 1.7;
@@ -44,20 +60,25 @@ pub(crate) fn push_quad(out: &mut Mesh, x: f32, z: f32, pose: Pose, q: Quad) {
     let lap = pose.drink * ((pose.t * 3.2 + k).dsin().max(0.0) * 0.02);
     let hy = top + q.neck * 0.5 + (q.head_r * 1.1 - top - q.neck * 0.5) * graze - lap;
     let hf = q.len + q.neck * (0.5 + 0.25 * graze);
-    let head_at = at(hf, look * q.neck, hy);
-    limb(out, at(q.len * 0.8, 0.0, top), head_at, q.thick * 0.55, q.head_r * 0.9, q.body, 8);
+    // the head nods once a stride, against the body's rise
+    let nod = (ph + 0.6).dsin() * 0.06 * q.neck * moving * (1.0 - graze);
+    let head_at = at(hf + nod * 0.5, look * q.neck + sway, hy + nod + pitch);
+    limb(out, at(q.len * 0.8, sway, top + pitch * 0.8), head_at, q.thick * 0.55, q.head_r * 0.9, q.body, 8);
     sphere(out, head_at, [q.head_r; 3], q.head, 10, 8, 0.0, 7);
-    let snout = at(hf + q.head_r * 1.3, look * q.neck, hy - q.head_r * (0.4 + 0.5 * graze));
+    let snout = at(hf + nod * 0.5 + q.head_r * 1.3, look * q.neck + sway, hy + nod + pitch - q.head_r * (0.4 + 0.5 * graze));
     sphere(out, snout, [q.head_r * 0.6; 3], q.head, 8, 6, 0.0, 8);
     if q.horns {
         for side in [-1.0f32, 1.0] {
-            limb(out, at(hf, look * q.neck + side * q.head_r * 0.8, hy + q.head_r * 0.6), at(hf - q.head_r * 0.4 * graze, look * q.neck + side * q.head_r * 2.0, hy + q.head_r * 1.8), 0.05, 0.015, [0.9, 0.86, 0.75], 6);
+            let (hx, hs, hz) = (hf + nod * 0.5, look * q.neck + sway, hy + nod + pitch);
+            limb(out, at(hx, hs + side * q.head_r * 0.8, hz + q.head_r * 0.6), at(hx - q.head_r * 0.4 * graze, hs + side * q.head_r * 2.0, hz + q.head_r * 1.8), 0.05, 0.015, [0.9, 0.86, 0.75], 6);
         }
     }
     if q.tail {
         // the tail swishes, quicker while walking
-        let wag = (pose.t * (3.0 + 4.0 * pose.amp) + k).dsin() * (0.06 + 0.06 * pose.amp);
-        limb(out, at(-q.len, 0.0, top), at(-q.len - 0.18 - q.head_r, wag, top - 0.1 - 0.08 * still), 0.05, 0.02, dark, 6);
+        let idle_wag = (pose.t * 3.0 + k).dsin() * 0.06;
+        let walk_wag = ph.dsin() * 0.1;
+        let wag = idle_wag + (walk_wag - idle_wag) * moving;
+        limb(out, at(-q.len, sway, top - pitch), at(-q.len - 0.18 - q.head_r, wag + sway, top - 0.1 - 0.08 * still - pitch), 0.05, 0.02, dark, 6);
     }
 }
 
