@@ -401,6 +401,45 @@ pub(crate) fn shoot_version_screens(dir: &Path) -> std::io::Result<Vec<PathBuf>>
     Ok(paths)
 }
 
+/// The settings screens (sound, screen, keys) as `<dir>/settings-<tab>.png`.
+pub(crate) fn shoot_settings_screens(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for (tab, name) in [(0usize, "sound"), (1, "screen"), (2, "keys")] {
+        let mut menu = crate::menu::Menu::new(false);
+        menu.open_settings_tab(tab);
+        let mut binds = crate::keys::Keybinds::default();
+        let ctx = egui::Context::default();
+        let mut tex = HashMap::new();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SHOT_W as f32, SHOT_H as f32));
+        let mut last = None;
+        for i in 0..8 {
+            let input = egui::RawInput { screen_rect: Some(screen), time: Some(i as f64 * 0.2), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                let _ = menu.draw(ui.ctx(), &mut binds);
+            });
+            apply_textures(&mut tex, &out.textures_delta);
+            out.textures_delta.clear();
+            last = Some(out);
+        }
+        let out = last.expect("frames ran");
+        let ppp = out.pixels_per_point;
+        let prims = ctx.tessellate(out.shapes, ppp);
+        let mut canvas = vec![[58.0f32, 72.0, 60.0, 255.0]; (SHOT_W * SHOT_H) as usize];
+        rasterize(&mut canvas, &prims, &tex, ppp, (SHOT_W, SHOT_H));
+        let mut rgba = Vec::with_capacity(canvas.len() * 4);
+        for c in canvas {
+            for ch in &c[..3] {
+                rgba.push(ch.round().clamp(0.0, 255.0) as u8);
+            }
+            rgba.push(255);
+        }
+        let path = dir.join(format!("settings-{name}.png"));
+        std::fs::write(&path, assets::encode_png(SHOT_W, SHOT_H, &rgba))?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
 /// Runs every era and tab into `dir`, printing what it wrote.
 pub fn run(dir: &Path) {
     if let Err(e) = std::fs::create_dir_all(dir) {
@@ -444,6 +483,18 @@ pub fn run(dir: &Path) {
         }
         Err(e) => {
             eprintln!("version screen: {e}");
+            std::process::exit(1);
+        }
+    }
+    match shoot_settings_screens(dir) {
+        Ok(ps) => {
+            for p in &ps {
+                println!("{}", p.display());
+            }
+            n += ps.len();
+        }
+        Err(e) => {
+            eprintln!("settings screens: {e}");
             std::process::exit(1);
         }
     }
