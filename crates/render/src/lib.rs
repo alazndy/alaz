@@ -22,7 +22,7 @@ pub use export::export_world_assets;
 pub use egui;
 pub use glam;
 pub use quality::{PixelDetail, Quality, ShadowQuality};
-pub use mesh::{evo_pos, evo_stage, smooth, ground_height, look, node_bounds, outfit_bits, Evo, Look, EVO_STAGES, EVO_STARTS};
+pub use mesh::{evo_pos, evo_stage, evolve_bump, smooth, ground_height, look, node_bounds, outfit_bits, Evo, Look, EVOLVE_SECS, EVO_STAGES, EVO_STARTS};
 pub use mesh::{OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_FELT, OUT_HELM, OUT_HOOD, OUT_LEATHER, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
 pub use renderer::{RenderStats, Renderer};
 

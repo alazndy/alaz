@@ -24,6 +24,19 @@ pub fn evo_stage(permille: u32) -> usize {
     EVO_STARTS.iter().rposition(|&t| permille >= t).unwrap_or(0)
 }
 
+/// Seconds the moment of evolving lasts.
+pub const EVOLVE_SECS: f32 = 3.2;
+
+/// How far past its own stage the body looks `age` seconds into the moment of evolving (in stage steps): it rises
+/// toward the next look and settles back, like drawing a breath. 0 before and after.
+pub fn evolve_bump(age: f32) -> f32 {
+    if !(0.0..EVOLVE_SECS).contains(&age) {
+        return 0.0;
+    }
+    let s = (std::f32::consts::PI * age / EVOLVE_SECS).sin();
+    0.8 * s * s
+}
+
 /// Smooth 0..1 ramp between `a` and `b` (flat outside, zero slope at both ends).
 pub fn smooth(a: f32, b: f32, v: f32) -> f32 {
     let t = ((v - a) / (b - a)).clamp(0.0, 1.0);
@@ -92,13 +105,13 @@ impl Evo {
         let win = |a: f32, b: f32, c: f32, d: f32| smooth(a, b, v) * (1.0 - smooth(c, d, v));
         Evo {
             v,
-            stoop: key(v, &[1.0, 0.88, 0.76, 0.65, 0.54, 0.44, 0.34, 0.24, 0.12, 0.0]),
-            fur: key(v, &[1.0, 0.92, 0.78, 0.62, 0.46, 0.32, 0.20, 0.10, 0.04, 0.0]),
-            shag: key(v, &[1.0, 0.90, 0.70, 0.45, 0.25, 0.10, 0.0, 0.0, 0.0, 0.0]),
-            brow: key(v, &[1.0, 0.90, 0.78, 0.64, 0.50, 0.38, 0.26, 0.16, 0.08, 0.0]),
-            muzzle: key(v, &[1.0, 0.84, 0.68, 0.52, 0.38, 0.26, 0.16, 0.08, 0.03, 0.0]),
-            arm: key(v, &[1.0, 0.85, 0.72, 0.60, 0.48, 0.36, 0.26, 0.16, 0.07, 0.0]),
-            leg: key(v, &[0.84, 0.87, 0.90, 0.925, 0.95, 0.97, 0.985, 1.0, 1.0, 1.0]),
+            stoop: key(v, &[1.0, 0.97, 0.93, 0.87, 0.74, 0.55, 0.38, 0.25, 0.12, 0.0]),
+            fur: key(v, &[1.0, 0.98, 0.94, 0.86, 0.70, 0.50, 0.30, 0.14, 0.05, 0.0]),
+            shag: key(v, &[1.0, 0.97, 0.90, 0.75, 0.50, 0.25, 0.05, 0.0, 0.0, 0.0]),
+            brow: key(v, &[1.0, 0.97, 0.92, 0.84, 0.70, 0.52, 0.34, 0.20, 0.09, 0.0]),
+            muzzle: key(v, &[1.0, 0.95, 0.88, 0.78, 0.62, 0.42, 0.24, 0.11, 0.04, 0.0]),
+            arm: key(v, &[1.0, 0.96, 0.90, 0.82, 0.68, 0.50, 0.34, 0.20, 0.08, 0.0]),
+            leg: key(v, &[0.84, 0.85, 0.865, 0.885, 0.915, 0.95, 0.98, 1.0, 1.0, 1.0]),
             gray: smooth(7.6, 9.0, v),
             beard_grow: smooth(2.0, 5.0, v),
             beard_all: smooth(8.0, 9.0, v),
@@ -132,6 +145,43 @@ mod tests {
             let v = evo_pos(p as f32);
             assert!(v >= last && v - last < 0.05, "{p}");
             last = v;
+        }
+    }
+
+    /// The ape lasts longer: through the fourth stage (perception 150) the body is still mostly an ape's, and the
+    /// change that makes a person is spread over the stages after it.
+    #[test]
+    fn the_body_stays_an_ape_longer_and_never_turns_back() {
+        let at3 = Evo::at(3.0);
+        for (name, v) in [("stoop", at3.stoop), ("fur", at3.fur), ("shag", at3.shag), ("brow", at3.brow), ("muzzle", at3.muzzle), ("arm", at3.arm)] {
+            assert!(v >= 0.75, "{name} is still an ape's at stage 3: {v}");
+        }
+        let mut last = Evo::at(0.0);
+        let mut v = 0.0;
+        while v < 9.0 {
+            v += 0.01;
+            let e = Evo::at(v);
+            for (a, b) in [(last.stoop, e.stoop), (last.fur, e.fur), (last.shag, e.shag), (last.brow, e.brow), (last.muzzle, e.muzzle), (last.arm, e.arm)] {
+                assert!(b <= a + 1e-6, "an ape channel only ever falls: {v}: {a} -> {b}");
+            }
+            assert!(e.leg >= last.leg - 1e-6);
+            last = e;
+        }
+    }
+
+    #[test]
+    fn the_moment_of_evolving_rises_and_settles() {
+        assert_eq!(evolve_bump(-1.0), 0.0);
+        assert_eq!(evolve_bump(0.0), 0.0);
+        assert_eq!(evolve_bump(EVOLVE_SECS), 0.0);
+        assert_eq!(evolve_bump(EVOLVE_SECS + 5.0), 0.0);
+        let peak = (0..320).map(|i| evolve_bump(i as f32 / 100.0)).fold(0.0f32, f32::max);
+        assert!((peak - 0.8).abs() < 0.01, "it peaks at 0.8 of a stage: {peak}");
+        let mut last = 0.0;
+        for i in 0..160 {
+            let b = evolve_bump(i as f32 / 100.0);
+            assert!(b >= last - 1e-6, "rising to the middle");
+            last = b;
         }
     }
 

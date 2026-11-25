@@ -1929,6 +1929,9 @@ impl App {
             }
             self.say(line);
             self.fx.evolved(hud::EVO_NAMES[stage as usize]);
+            if let Some(g) = self.gfx.as_mut() {
+                g.renderer.play_evolution();
+            }
         }
         self.last_stage = stage;
         // the body follows the understanding with a lag of a few seconds

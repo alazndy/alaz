@@ -810,6 +810,12 @@ impl Renderer {
             let mm = |v: f32| (v * 1000.0) as i64;
             let now = std::time::Instant::now();
             let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+            if let Some(age) = self.evolve_age.as_mut() {
+                *age += dt;
+                if *age >= crate::EVOLVE_SECS {
+                    self.evolve_age = None;
+                }
+            }
             self.last_frame = now;
             // how far drawing is between the last simulated tick and the next one
             if world.tick != self.tick_seen {
@@ -822,6 +828,10 @@ impl Renderer {
             }
             let alpha = self.sim_alpha.unwrap_or_else(|| ((now - self.tick_at).as_secs_f32() / self.tick_gap.max(1e-3)).clamp(0.0, 1.0));
             push_bodies(&mut dynamic, world, alpha, &inside);
+            if let (Some(age), Some(a)) = (self.evolve_age, world.agents.iter().find(|a| a.id == me)) {
+                let p = world.agent_walk_position(a);
+                push_evolution_motes(&mut dynamic, p.x_mm as f32 / 1000.0, p.y_mm as f32 / 1000.0, age);
+            }
             push_fish(&mut dynamic, world, view_m, (world.tick as f32 + alpha) / 60.0, alpha);
             let tracks_visible = world.perception_level() >= 2;
             for w in world.wild_in(mm(view_m.0), mm(view_m.1), mm(view_m.2), mm(view_m.3)) {
@@ -907,6 +917,8 @@ impl Renderer {
             let lod_humans = human_lod(&cam);
             // how evolved the people look: the caller's smoothed value, or the world's perception as it stands
             let evo = self.evo.unwrap_or_else(|| crate::evo_pos(world.perception_permille() as f32));
+            // the moment of evolving: the player's body leans toward the next look and settles back
+            let evo_bump = self.evolve_age.map_or(0.0, crate::evolve_bump);
             let mut body_jobs: Vec<BodyJob> = Vec::with_capacity(world.agents.len());
             for a in &world.agents {
                 let c = a.cave_view();
@@ -953,7 +965,7 @@ impl Renderer {
                     let (sx, sz) = (w.heading.sin() * 0.6, w.heading.cos() * 0.6);
                     (gh(x + sx, z + sz) - gh(x - sx, z - sz)) / 1.2
                 };
-                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated(), drink: 0.0 };
+                let pose = Pose { heading: w.heading, phase: w.phase, amp: w.amp, t: secs, work: if working { work } else { Work::None }, tool, outfit, id: a.id.0, evo: if a.id == me { (evo + evo_bump).min(9.0) } else { evo }, slope, hurt: w.hurt, stride: w.stride, cyc, air: 0.0, lod: lod_humans && a.id != me, sit: a.is_seated(), drink: 0.0 };
                 // off the ground: the body rides up the flight, tucking its legs on the way up and flailing on the way down
                 let flight = world.airborne(a.id).map(|f| {
                     let q = alaz_sim::physics::Q as f32;

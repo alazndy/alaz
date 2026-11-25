@@ -345,7 +345,7 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     if ev.ochre > 0.03 && !lod && !(tunic || plate || cloak || apron || wrap) {
         let k = ev.ochre;
         for (h, w) in [(1.37, 0.12), (1.29, 0.145)] {
-            upart3(out, ub(0.137, h, 0.0), w * k, 0.014, 0.012, tilt, [0.72, 0.3, 0.14], 6);
+            upart3(out, ub(0.137, h, 0.0), w * k, 0.014 * k, 0.012 * k, tilt, [0.72, 0.3, 0.14], 6);
         }
     }
     if apron {
@@ -739,6 +739,10 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
                             shapes::sphere(out, [mid[0] + a.dcos() * 0.15 * k, 0.04 + 0.2 * k - 0.3 * k * k, mid[2] + a.dsin() * 0.15 * k], [0.025; 3], water, 4, 3, 0.0, i);
                         }
                     }
+                }
+                Work::Pet => {
+                    arm(out, 1.0, right);
+                    arm(out, -1.0, hpos(hl));
                 }
                 Work::Offer => {
                     arm(out, 1.0, right);

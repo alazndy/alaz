@@ -85,7 +85,7 @@ mod terrain;
 mod water;
 
 pub use common::ground_height;
-pub use evo::{evo_pos, evo_stage, smooth, Evo, EVO_STAGES, EVO_STARTS};
+pub use evo::{evo_pos, evo_stage, evolve_bump, smooth, Evo, EVOLVE_SECS, EVO_STAGES, EVO_STARTS};
 pub use nodes::node_bounds;
 pub(crate) use bodies::*;
 pub(crate) use buildings::*;
