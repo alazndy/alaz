@@ -18,6 +18,9 @@ static KNOWN_PRIMARY: std::sync::Mutex<Option<(PathBuf, Vec<u8>)>> = std::sync::
 pub struct LoadedSave {
     pub world: World,
     pub seen: KnownTiles,
+    /// The main file was missing or damaged and the backup (the save before it) was opened instead: the player lost
+    /// what happened since that older save and has to be told.
+    pub recovered: bool,
 }
 
 pub enum SaveOutcome {
@@ -152,7 +155,7 @@ pub fn load_in(dir: &Path, me: AgentId) -> Result<Option<LoadedSave>, String> {
                 let mut known = KNOWN_PRIMARY.lock().unwrap_or_else(|e| e.into_inner());
                 *known = Some((dir.join(MAIN), bytes));
             }
-            LoadedSave { world, seen }
+            LoadedSave { world, seen, recovered }
         })
     })
 }
@@ -240,6 +243,10 @@ mod tests {
         save_in(dir, world, AgentId(0), &KnownTiles::new()).unwrap();
     }
 
+    fn load_recovered(dir: &Path) -> Option<bool> {
+        load_in(dir, AgentId(0)).unwrap().map(|s| s.recovered)
+    }
+
     fn load_world(dir: &Path) -> Result<Option<World>, String> {
         Ok(load_in(dir, AgentId(0))?.map(|save| save.world))
     }
@@ -276,12 +283,14 @@ mod tests {
         save_world(&d, &newer);
         assert_eq!(slot_info_in(&d).unwrap().unwrap().seed, newer.seed);
         assert_eq!(load_world(&d).unwrap().unwrap().hash(), newer.hash());
+        assert_eq!(load_recovered(&d), Some(false), "a good main file is no recovery");
 
         let mut bytes = fs::read(d.join(MAIN)).unwrap();
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF;
         fs::write(d.join(MAIN), &bytes).unwrap();
         assert_eq!(slot_info_in(&d).unwrap().unwrap().seed, older.seed);
+        assert_eq!(load_recovered(&d), Some(true), "the player is told the backup was used");
         let recovered = load_world(&d).unwrap().unwrap();
         assert_eq!(recovered.hash(), older.hash());
 
