@@ -7494,3 +7494,46 @@ fn a_whole_pack_can_be_put_down_in_one_command() {
     w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Fiber, n: u16::MAX })]);
     assert_eq!(count(&w, 0, ItemKind::Fiber), 0);
 }
+
+/// Not a test of behaviour: how much slower than flat ground a person walks over this world's real ground, on
+/// straight 60 m walks in eight directions (`cargo test -p alaz-sim --release -- --ignored slope_pace --nocapture`).
+#[test]
+#[ignore]
+fn slope_pace() {
+    let w0 = World::with_size(crate::map::tag_seed_v2(7), 1024, 1024);
+    let mut by: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for ty in (40..980).step_by(23) {
+        for tx in (40..980).step_by(23) {
+            let Some(t) = w0.map.terrain(tx, ty) else { continue };
+            if t == Terrain::Water || t == Terrain::Rock {
+                continue;
+            }
+            for k in 0..8i64 {
+                let ang = k as f64 * std::f64::consts::FRAC_PI_4;
+                let (sx, sy) = (tx as i64 * 1000 + 500, ty as i64 * 1000 + 500);
+                let (ex, ey) = (sx + (60_000.0 * ang.cos()) as i64, sy + (60_000.0 * ang.sin()) as i64);
+                // the pace is the ratio of the real step to the flat one, read from the same function the walk uses
+                let mut speed_sum = 0.0;
+                let mut n = 0;
+                let (mut x, mut y) = (sx, sy);
+                for _ in 0..60 {
+                    let (nx, ny) = (x + (1000.0 * ang.cos()) as i64, y + (1000.0 * ang.sin()) as i64);
+                    let rise = (crate::map::elevation_at_mm(w0.seed, nx, ny) - crate::map::elevation_at_mm(w0.seed, x, y)) as i64;
+                    let grade = rise;
+                    let slow = (grade * 3).clamp(-300, 1500);
+                    speed_sum += (1000.0 + slow as f64) / 1000.0;
+                    n += 1;
+                    x = nx;
+                    y = ny;
+                }
+                let _ = (ex, ey);
+                by.entry(format!("{t:?}")).or_default().push(n as f64 / speed_sum);
+            }
+        }
+    }
+    for (k, mut v) in by {
+        v.sort_by(f64::total_cmp);
+        let p = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
+        println!("{k:>8}: n={:>6} effective pace {:.3} of flat (p10 {:.3} median {:.3} p90 {:.3})", v.len(), v.iter().sum::<f64>() / v.len() as f64, p(0.1), p(0.5), p(0.9));
+    }
+}

@@ -2262,6 +2262,8 @@ impl App {
             match act {
                 UiAction::Cmd(kind) => self.issue(kind),
                 UiAction::BeginBuild(k) => {
+                    // the window steps aside so the spot to build on is in view
+                    self.tab = None;
                     self.build_mode = Some(k);
                     self.facing = 0;
                     self.moving = None;
@@ -2281,6 +2283,10 @@ impl App {
                 }
                 UiAction::Deselect => self.selected = None,
                 UiAction::ToggleBook => self.knap.journal.toggle_book(),
+                UiAction::ShowRecipes => {
+                    self.knap.journal.section = 2;
+                    self.knap.journal.book_open = true;
+                }
                 UiAction::CloseWindow => {
                     self.tab = None;
                     self.selected = None;

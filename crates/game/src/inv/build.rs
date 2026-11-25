@@ -103,7 +103,7 @@ pub(crate) fn draw_info(ui: &mut Ui, cx: &mut Cx) {
     let on = cx.ui_ctx.build_mode == Some(kind);
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let place = ui.add_enabled_ui(ready(b, &cx.me.inventory), |ui| icon_button(ui, Icon::House, "Yerleştir", on, era)).inner;
+        let place = ui.add_enabled_ui(ready(b, &cx.me.inventory), |ui| icon_button(ui, Icon::Hammer, "Yerleştir", on, era)).inner;
         if place.clicked() {
             cx.acts.push(UiAction::BeginBuild(kind));
         }
