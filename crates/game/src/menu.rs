@@ -58,6 +58,9 @@ pub struct Menu {
     /// Waiting for a key press to bind to (action, slot).
     capturing: Option<(Action, usize)>,
     pub error: Option<String>,
+    /// A world is being made or opened (it can take seconds and the window does not answer meanwhile): what the
+    /// screen says while it works.
+    pub busy: Option<String>,
     /// A join attempt is running in the background.
     pub connecting: bool,
     pub mp_error: Option<String>,
@@ -132,6 +135,7 @@ impl Menu {
             updater: crate::update_ui::UpdateState::live(),
             capturing: None,
             error: None,
+            busy: None,
             connecting: false,
             mp_error: None,
             net_line: None,
@@ -896,6 +900,19 @@ impl Menu {
 
     pub fn draw(&mut self, ctx: &egui::Context, binds: &mut Keybinds) -> Option<MenuAction> {
         crate::hud::apply_style(ctx);
+        if let Some(text) = &self.busy {
+            let screen = ctx.content_rect();
+            let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
+            bg.rect_filled(screen, 0.0, Color32::from_black_alpha(215));
+            egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                card(ui, 430.0, |ui| {
+                    ui.label(egui::RichText::new(text.as_str()).size(26.0).strong().color(GOLD));
+                    ui.label(egui::RichText::new("Büyük dünyalarda bu birkaç saniye sürebilir.").color(Color32::from_rgb(190, 176, 150)));
+                });
+            });
+            ctx.request_repaint();
+            return None;
+        }
         if self.keys_screen {
             self.draw_keys(ctx, binds);
             return None;
@@ -1226,6 +1243,17 @@ mod tests {
         let mut h = harness(Menu::new(true));
         h.run();
         assert!(h.query_by_label("Sürüm").is_none());
+    }
+
+    #[test]
+    fn a_world_being_made_shows_its_own_screen_and_no_buttons() {
+        let mut menu = Menu::new(false);
+        menu.busy = Some("Dünya hazırlanıyor…".to_string());
+        let mut h = harness(menu);
+        h.step();
+        h.step();
+        h.get_by_label("Dünya hazırlanıyor…");
+        assert!(h.query_by_label("Sürüm").is_none(), "no buttons to press while the window is busy");
     }
 
     #[test]
