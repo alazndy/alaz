@@ -693,6 +693,47 @@ pub(crate) struct BodyJob {
     pub(crate) wave: f32,
     pub(crate) secs: f32,
     pub(crate) seed: u32,
+    /// The world's seed when the body stands on the open ground: its feet are then set on the ground under each of
+    /// them. None in a cave, where the floor is flat.
+    pub(crate) ground: Option<u64>,
+}
+
+/// Sets a figure's lower body on the real ground under it. Lifted as one block from a single point it sank into a
+/// slope on the uphill side (on rock, the ground rises over 10 cm within a foot's reach at two places in three).
+/// The ground is read on a 3 x 3 lattice over the figure and blended between; the feet follow it exactly, the head
+/// and shoulders rise by half the climb, and in between the one fades into the other.
+pub(crate) fn conform_to_ground(verts: &mut [Vertex], seed: u64, x: f32, z: f32) {
+    if verts.is_empty() {
+        return;
+    }
+    let (mut lo, mut hi) = ([x - 0.35, z - 0.35], [x + 0.35, z + 0.35]);
+    for v in verts.iter() {
+        lo = [lo[0].min(v.pos[0]), lo[1].min(v.pos[2])];
+        hi = [hi[0].max(v.pos[0]), hi[1].max(v.pos[2])];
+    }
+    let h0 = ground_height(seed, x, z);
+    let step = [(hi[0] - lo[0]) / 2.0, (hi[1] - lo[1]) / 2.0];
+    let mut g = [[0.0f32; 3]; 3];
+    let mut rise = 0.0f32;
+    for (j, row) in g.iter_mut().enumerate() {
+        for (i, cell) in row.iter_mut().enumerate() {
+            *cell = ground_height(seed, lo[0] + step[0] * i as f32, lo[1] + step[1] * j as f32) - h0;
+            rise = rise.max(*cell);
+        }
+    }
+    let lift = (rise * 0.5).min(0.5);
+    for v in verts.iter_mut() {
+        let (u, w) = (((v.pos[0] - lo[0]) / step[0].max(1e-3)).clamp(0.0, 2.0), ((v.pos[2] - lo[1]) / step[1].max(1e-3)).clamp(0.0, 2.0));
+        let (i, j) = ((u as usize).min(1), (w as usize).min(1));
+        let (fu, fw) = (u - i as f32, w - j as f32);
+        let top = g[j][i] + (g[j][i + 1] - g[j][i]) * fu;
+        let bot = g[j + 1][i] + (g[j + 1][i + 1] - g[j + 1][i]) * fu;
+        let under = top + (bot - top) * fw;
+        // 1 at the feet, 0 from the hips up
+        let t = ((0.9 - v.pos[1]) / 0.75).clamp(0.0, 1.0);
+        let feet = t * t * (3.0 - 2.0 * t);
+        v.pos[1] += lift * (1.0 - feet) + under * feet;
+    }
 }
 
 /// Draws one body: its chips, shadow and figure, then bends the figure to the ground it is on.
@@ -707,6 +748,9 @@ fn push_body(out: &mut Mesh, j: &BodyJob, art: &Art) -> Option<std::ops::Range<u
     }
     let body_start = out.len();
     push_creature(out, j.kind, x, z, j.marked, j.pose);
+    if let (Some(seed), true) = (j.ground, j.depth == 0 && j.lift.is_none()) {
+        conform_to_ground(&mut out.verts[body_start..], seed, x, z);
+    }
     let range = if j.is_me { Some(body_start as u32..out.len() as u32) } else { None };
     // off the ground: the body rides up the flight
     if let Some(lift) = j.lift {

@@ -601,6 +601,7 @@ mod mesh_hashes {
                     wave: 0.2,
                     secs: 3.0,
                     seed: i,
+                    ground: None,
                 }
             })
             .collect()
@@ -779,5 +780,129 @@ mod far_tree_tests {
         };
         let (near, far) = (count(TreeDetail::Full), count(TreeDetail::Far));
         assert!(far > 0 && far < near, "far {far} near {near}");
+    }
+}
+
+#[cfg(test)]
+mod felled_tree_mesh {
+    use super::*;
+
+    /// Not a test of behaviour: draws one felled tree at every stage of its fall and break-up and says where the
+    /// mesh goes empty or bad (`cargo test -p alaz-render --release -- --ignored felled_mesh --nocapture`).
+    #[test]
+    #[ignore]
+    fn felled_mesh() {
+        let mut w = World::new(5);
+        let i = w.nodes.iter().position(|n| n.kind == NodeKind::Tree).unwrap();
+        let (tx, ty) = (w.nodes[i].tx, w.nodes[i].ty);
+        let (bx, by) = alaz_sim::map::node_anchor_mm(w.seed, tx, ty);
+        w.set_node_amount(i, 0);
+        w.fell_tree(tx, ty, alaz_sim::AgentId(99), bx - 900, by);
+        let inside = |_: f32, _: f32| true;
+        let full = w.bodies[0].full;
+        for (angle, wood) in [(25_000, full), (400_000, full), (900_000, full), (1_570_796, full), (1_570_796, full * 3 / 4), (1_570_796, full / 2), (1_570_796, full / 4), (1_570_796, 1)] {
+            w.bodies[0].angle = angle;
+            w.bodies[0].wood = wood;
+            let mut m = Mesh::new();
+            push_bodies(&mut m, &w, 0.0, &inside);
+            let bad = m.iter().filter(|v| v.pos.iter().any(|c| !c.is_finite())).count();
+            let top = m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+            println!("angle {angle:>8} wood {wood:>2}/{full}: {} verts, {bad} bad, highest {top:.2} m, trunk_left {} mm", m.len(), w.bodies[0].trunk_left_mm());
+        }
+    }
+}
+
+#[cfg(test)]
+mod ground_under_feet {
+    use super::*;
+
+    /// Not a test of behaviour: how far the ground rises within a foot's reach of where a person stands, by terrain
+    /// (`cargo test -p alaz-render --release -- --ignored feet_reach --nocapture`).
+    #[test]
+    #[ignore]
+    fn feet_reach() {
+        let w = World::with_size(alaz_sim::map::tag_seed_v2(7), 1024, 1024);
+        let mut by: std::collections::BTreeMap<String, Vec<f32>> = Default::default();
+        for ty in (8..1016).step_by(3) {
+            for tx in (8..1016).step_by(3) {
+                let Some(t) = w.map.terrain(tx, ty) else { continue };
+                if t == alaz_sim::map::Terrain::Water {
+                    continue;
+                }
+                let (x, z) = (tx as f32 + 0.5, ty as f32 + 0.5);
+                let h0 = ground_height(w.seed, x, z);
+                let mut up = 0.0f32;
+                for k in 0..8 {
+                    let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                    up = up.max(ground_height(w.seed, x + 0.25 * a.cos(), z + 0.25 * a.sin()) - h0);
+                }
+                by.entry(format!("{t:?}")).or_default().push(up);
+            }
+        }
+        for (k, mut v) in by {
+            v.sort_by(f32::total_cmp);
+            let p = |q: f32| v[((v.len() - 1) as f32 * q) as usize];
+            let over = v.iter().filter(|&&u| u > 0.1).count() as f32 / v.len() as f32;
+            println!("{k:>8}: n={:>6} median {:.3} p90 {:.3} p99 {:.3} max {:.3} m; over 10 cm: {:.1}%", v.len(), p(0.5), p(0.9), p(0.99), v[v.len() - 1], over * 100.0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod feet_on_slopes {
+    use super::*;
+
+    /// How deep the lowest part of a standing person is under the real ground, over the rocky places of a world.
+    /// Returns (worst, mean of the worst-ten-percent, share of places with more than 8 cm buried).
+    fn buried(conform: bool) -> (f32, f32, f32) {
+        let w = World::with_size(alaz_sim::map::tag_seed_v2(7), 1024, 1024);
+        let mut depths = vec![];
+        for ty in (8..1016).step_by(5) {
+            for tx in (8..1016).step_by(5) {
+                if w.map.terrain(tx, ty) != Some(alaz_sim::map::Terrain::Rock) {
+                    continue;
+                }
+                let (x, z) = (tx as f32 + 0.5, ty as f32 + 0.5);
+                let mut m = Mesh::new();
+                push_creature(&mut m, AgentKind::Human, x, z, false, Pose::idle(0.0));
+                if conform {
+                    conform_to_ground(&mut m.verts[..], w.seed, x, z);
+                }
+                let h0 = ground_height(w.seed, x, z);
+                let d = m.iter().filter(|v| v.pos[1] < 0.3).map(|v| (ground_height(w.seed, v.pos[0], v.pos[2]) - h0) - v.pos[1]).fold(0.0f32, f32::max);
+                depths.push(d);
+            }
+        }
+        depths.sort_by(f32::total_cmp);
+        let tail = &depths[depths.len() * 9 / 10..];
+        let over = depths.iter().filter(|&&d| d > 0.08).count() as f32 / depths.len() as f32;
+        (*depths.last().unwrap(), tail.iter().sum::<f32>() / tail.len() as f32, over)
+    }
+
+    #[test]
+    fn feet_follow_the_ground_on_rock() {
+        let (before, after) = (buried(false), buried(true));
+        println!("before: worst {:.2} m, worst tenth {:.2} m, {:.0}% over 8 cm", before.0, before.1, before.2 * 100.0);
+        println!("after:  worst {:.2} m, worst tenth {:.2} m, {:.0}% over 8 cm", after.0, after.1, after.2 * 100.0);
+        assert!(before.2 > 0.3, "the problem is there to be fixed: {before:?}");
+        assert!(after.2 < before.2 * 0.15, "feet are set on the ground: {before:?} -> {after:?}");
+        assert!(after.1 < 0.15, "even the worst tenth is not far under: {after:?}");
+    }
+
+    /// Flat ground changes nothing visible.
+    #[test]
+    fn flat_ground_is_left_alone() {
+        let w = World::with_size(alaz_sim::map::tag_seed_v2(7), 256, 256);
+        let flat = (4..250).flat_map(|y| (4..250).map(move |x| (x, y))).find(|&(x, y)| {
+            let h = ground_height(w.seed, x as f32 + 0.5, y as f32 + 0.5);
+            (-2..=2).all(|dy| (-2..=2).all(|dx| (ground_height(w.seed, (x + dx) as f32 + 0.5, (y + dy) as f32 + 0.5) - h).abs() < 1e-4))
+        });
+        let (x, z) = flat.map(|(x, y)| (x as f32 + 0.5, y as f32 + 0.5)).expect("a flat patch of ground");
+        let mut m = Mesh::new();
+        push_creature(&mut m, AgentKind::Human, x, z, false, Pose::idle(0.0));
+        let before: Vec<f32> = m.iter().map(|v| v.pos[1]).collect();
+        conform_to_ground(&mut m.verts[..], w.seed, x, z);
+        let moved = m.iter().zip(&before).map(|(v, b)| (v.pos[1] - b).abs()).fold(0.0f32, f32::max);
+        assert!(moved < 1e-3, "nothing moves on flat ground: {moved}");
     }
 }

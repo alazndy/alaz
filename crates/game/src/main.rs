@@ -1313,12 +1313,18 @@ impl App {
             // held, not pressed: the minigames read it every frame
             A::Grip => {}
             A::Drop => {
-                // one of whatever there is most of (tools stay in hand)
+                // what the pointer is over in the bag, else one of whatever there is most of (tools stay in hand);
+                // with Shift the whole heap goes
+                let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+                let hovered = inv::hovered_bag_item();
                 let pick = self.me_agent().and_then(|m| {
-                    alaz_sim::ItemKind::ALL.iter().copied().filter(|k| !k.is_tool() && m.inventory.get(*k) > 0).max_by_key(|k| m.inventory.get(*k))
+                    hovered
+                        .filter(|k| m.inventory.get(*k) > 0)
+                        .or_else(|| alaz_sim::ItemKind::ALL.iter().copied().filter(|k| !k.is_tool() && m.inventory.get(*k) > 0).max_by_key(|k| m.inventory.get(*k)))
+                        .map(|k| (k, m.inventory.get(k)))
                 });
                 match pick {
-                    Some(item) => self.issue(CommandKind::Drop { item, n: 1 }),
+                    Some((item, have)) => self.issue(CommandKind::Drop { item, n: if shift && hovered == Some(item) { have } else { 1 } }),
                     None => self.say("Bırakacak bir şey yok.".to_string()),
                 }
             }

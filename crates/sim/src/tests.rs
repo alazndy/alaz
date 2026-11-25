@@ -7409,3 +7409,88 @@ fn world_start_phases() {
     let w = crate::wildlife::generate(seed, &map, (size / 2, size / 2), 30);
     eprintln!("wildlife:    {:?} ({} animals)", t.elapsed(), w.len());
 }
+
+/// Not a test of behaviour: follows one full tree from the first blow to the trunk lying down
+/// (`cargo test -p alaz-sim -- --ignored fell_timeline --nocapture`).
+#[test]
+#[ignore]
+fn fell_timeline() {
+    let mut w = World::new(5);
+    let i = w
+        .nodes
+        .iter()
+        .position(|n| {
+            n.kind == NodeKind::Tree
+                && (-4..=4).all(|d: i32| w.map.terrain(n.tx + d, n.ty).is_some_and(|t| t != Terrain::Water && t != Terrain::Rock))
+        })
+        .expect("a tree");
+    let (tx, ty) = (w.nodes[i].tx, w.nodes[i].ty);
+    let (bx, by) = crate::map::node_anchor_mm(w.seed, tx, ty);
+    let cutter = w.spawn_agent(bx - 900, by);
+    w.agents[cutter.0 as usize].inventory.counts[ItemKind::StoneAxe as usize] = 1;
+    w.step(&[cmd(cutter, CommandKind::Gather { node: NodeId(i as u32) })]);
+    let mut last = String::new();
+    for t in 0..3000 {
+        w.step(&[]);
+        let evs: Vec<String> = w.take_events().into_iter().map(|e| format!("{e:?}").chars().take(40).collect()).collect();
+        let a = &w.agents[cutter.0 as usize];
+        let now = format!("amount={} bodies={} task={:?}", w.nodes[i].amount, w.bodies.len(), std::mem::discriminant(&a.task));
+        if now != last || !evs.is_empty() {
+            println!("t={t:4} {now} {}", evs.join(","));
+            last = now;
+        }
+        if !w.bodies.is_empty() && w.bodies[0].rest > 20 {
+            break;
+        }
+    }
+}
+
+#[test]
+fn what_was_loaded_into_a_station_can_be_taken_back_out() {
+    let (mut w, a) = with_agent(5);
+    let (x, y) = (w.agents[0].x + 1_200, w.agents[0].y);
+    w.buildings.push(Building::new(BuildingKind::CharcoalKiln, x, y));
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    w.agents[0].inventory.counts[ItemKind::Wood as usize] = 6;
+    w.step(&[cmd(a, CommandKind::Load { building: 0, item: ItemKind::Wood, n: u16::MAX })]);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 0, "all of it went in");
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6);
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 6, "and all of it comes back");
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 0);
+}
+
+#[test]
+fn taking_back_needs_you_close_and_room_in_the_pack() {
+    let (mut w, a) = with_agent(5);
+    let (x, y) = (w.agents[0].x + 1_200, w.agents[0].y);
+    w.buildings.push(Building::new(BuildingKind::CharcoalKiln, x, y));
+    w.buildings[0].input[ItemKind::Wood as usize] = 6;
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    // far away: nothing moves
+    w.agents[0].x += 30_000;
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6);
+    // close, but the pack is full of something else: it says so and nothing is lost
+    w.agents[0].x -= 30_000;
+    let cap = w.agents[0].capacity();
+    w.agents[0].inventory.counts[ItemKind::Stone as usize] = cap;
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6, "nothing lost");
+    assert_eq!(count(&w, 0, ItemKind::Wood), 0);
+}
+
+#[test]
+fn a_whole_pack_can_be_put_down_in_one_command() {
+    let (mut w, a) = with_agent(5);
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    w.agents[0].inventory.counts[ItemKind::Stone as usize] = 40;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Stone, n: 40 })]);
+    assert_eq!(count(&w, 0, ItemKind::Stone), 0, "all forty left the pack");
+    let lying = w.bodies.iter().filter(|b| b.kind == crate::physics::BodyKind::Piece).count();
+    assert_eq!(lying, 40, "and lie on the ground as forty pieces");
+    // more than the pack holds is only what there is
+    w.agents[0].inventory.counts[ItemKind::Fiber as usize] = 5;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Fiber, n: u16::MAX })]);
+    assert_eq!(count(&w, 0, ItemKind::Fiber), 0);
+}
