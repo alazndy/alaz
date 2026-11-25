@@ -503,6 +503,27 @@ pub(crate) fn work_of(world: &World, a: &alaz_sim::world::Agent) -> (Work, Tool,
     }
 }
 
+/// Sparks climbing round a body in the moment of evolving: warm lights that rise in a slow spiral, thin out and fade
+/// (they shrink to nothing) as the moment ends.
+pub(crate) fn push_evolution_motes(out: &mut Mesh, x: f32, z: f32, age: f32) {
+    let u = (age / crate::EVOLVE_SECS).clamp(0.0, 1.0);
+    if u >= 1.0 {
+        return;
+    }
+    out.set_anchor(x, z);
+    // in over the first fifth, out over the last third
+    let fade = (u / 0.2).min(1.0) * ((1.0 - u) / 0.35).min(1.0);
+    for i in 0..22u32 {
+        let k = i as f32;
+        let a = k * 2.399 + age * 2.2;
+        let r = 0.5 + 0.12 * (k * 1.7 + age * 3.0).dsin();
+        let y = ((age * 0.8 + k * 0.097) % 1.0) * 2.2;
+        let s = 0.035 * fade * (0.6 + 0.4 * (k * 0.9).dsin().abs());
+        let tint = if i % 3 == 0 { [1.0, 0.95, 0.7] } else { [1.0, 0.78, 0.35] };
+        push_box(out, [x + r * a.dcos(), y, z + r * a.dsin()], [s, s, s], tint, 1.0);
+    }
+}
+
 /// Felled trees and loose rocks. A tree is drawn exactly as it stood, turned over on its stump; once down it settles
 /// along the slope, kicks up dust, and after a while sinks away into the ground. Rocks tumble as they roll.
 pub(crate) fn push_bodies(out: &mut Mesh, world: &World, alpha: f32, inside: &dyn Fn(f32, f32) -> bool) {

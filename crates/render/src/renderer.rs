@@ -240,6 +240,8 @@ pub struct Renderer {
     /// Killed wild animals still being drawn as they fall and sink (the sim has already removed them).
     pub(crate) falls: Vec<Fall>,
     pub(crate) last_frame: std::time::Instant,
+    /// Seconds into the moment the player's body evolves to a new stage, while it plays.
+    pub(crate) evolve_age: Option<f32>,
     pub(crate) tick_seen: u64,
     pub(crate) tick_at: std::time::Instant,
     pub(crate) tick_gap: f32,
@@ -591,6 +593,7 @@ impl Renderer {
             hover_node: None,
             view: std::env::var("ALAZ_DEMO_VIEW").ok().filter(|v| !v.is_empty()).map(crate::assets::View::new),
             last_frame: std::time::Instant::now(),
+            evolve_age: None,
             tick_seen: 0,
             tick_at: std::time::Instant::now(),
             tick_gap: 1.0 / 60.0,
@@ -896,6 +899,12 @@ impl Renderer {
 
     /// A wild animal was killed at (`x_mm`, `y_mm`): draw it falling over there. It keeps the way it was facing and
     /// falls to a side picked from its id.
+    /// The player's body has grown into a new stage: play the moment of it (the body rises toward the next look and
+    /// settles, and sparks climb round it).
+    pub fn play_evolution(&mut self) {
+        self.evolve_age = Some(0.0);
+    }
+
     pub fn wild_killed(&mut self, id: u32, species: alaz_sim::WildSpecies, x_mm: i64, y_mm: i64) {
         let (x, z) = (x_mm as f32 / 1000.0, y_mm as f32 / 1000.0);
         let walk = self.wild_anim.remove(&id);
