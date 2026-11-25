@@ -762,6 +762,9 @@ struct App {
     me: AgentId,
     /// Joined players never write the shared save slot.
     no_save: bool,
+    /// A menu action held back one frame, so the "world is being made" screen is on the display before the window
+    /// stops answering for the seconds a big world takes.
+    deferred: Option<menu::MenuAction>,
     /// A join started from the menu: the normalized address and its background connect.
     connecting: Option<(String, Pending)>,
     /// Looks for LAN hosts while the multiplayer screen is open.
@@ -885,6 +888,7 @@ impl App {
             tab: None,
             mid_drag: None,
             no_save: show_menu || matches!(net, Net::Client(_)),
+            deferred: None,
             perf: Perf::from_env(),
             net,
             me,
@@ -1381,6 +1385,22 @@ impl App {
 
     fn menu_action(&mut self, a: menu::MenuAction) {
         use menu::MenuAction as M;
+        // opening or making a world blocks the window: say so first, and start on the next frame
+        if matches!(a, M::New { .. } | M::Continue(_)) {
+            if let Some(m) = self.menu.as_mut() {
+                m.busy = Some(if matches!(a, M::New { .. }) { "Dünya hazırlanıyor…" } else { "Dünya açılıyor…" }.to_string());
+                self.deferred = Some(a);
+                return;
+            }
+        }
+        self.run_menu_action(a);
+    }
+
+    fn run_menu_action(&mut self, a: menu::MenuAction) {
+        use menu::MenuAction as M;
+        if let Some(m) = self.menu.as_mut() {
+            m.busy = None;
+        }
         match a {
             M::Resume => self.menu = None,
             M::Quit => {
@@ -1505,13 +1525,14 @@ impl App {
         let player = AgentId(0);
         match saveio::load_in(&saveio::slot_dir(n), player) {
             Ok(Some(save)) => {
+                let recovered = save.recovered;
                 saveio::set_slot(n);
                 self.me = player;
                 self.restore_saved_world(save);
                 self.no_save = false;
                 self.menu = None;
                 self.fx.enter_world(&self.world);
-                self.say(format!("Yuva {n} yüklendi."));
+                self.say(if recovered { format!("Yuva {n}: son kayıt bozuktu, bir önceki kayıttan yüklendi.") } else { format!("Yuva {n} yüklendi.") });
                 Ok(())
             }
             Ok(None) => Err(format!("Yuva {n} boş.")),
@@ -1632,7 +1653,11 @@ impl App {
     fn load_game(&mut self) -> bool {
         match saveio::load(self.me) {
             Ok(Some(save)) => {
+                let recovered = save.recovered;
                 self.restore_saved_world(save);
+                if recovered {
+                    self.say("Son kayıt bozuktu, bir önceki kayıttan yüklendi.");
+                }
                 true
             }
             Ok(None) => false,
@@ -2223,6 +2248,9 @@ impl App {
         let stats = g.renderer.stats();
         if let Some(a) = menu_act {
             self.menu_action(a);
+        } else if let Some(a) = self.deferred.take() {
+            // the frame that said "being made" has been drawn: now do the work
+            self.run_menu_action(a);
         }
         for act in acts {
             match act {
