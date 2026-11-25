@@ -2637,6 +2637,20 @@ impl World {
                 }
                 deposit_into(&rules_now, &mut self.agents[idx].inventory, b, Some((*item, *n)));
             }
+            CommandKind::Unload { building, item } => {
+                let cap = self.agents[idx].capacity();
+                let Some(b) = self.buildings.get_mut(*building as usize) else { return };
+                if dist2(ax, ay, b.x, b.y) > USE_RADIUS_MM * USE_RADIUS_MM {
+                    return self.reject(id, Reject::TooFar);
+                }
+                let inv = &mut self.agents[idx].inventory;
+                let take = b.input[*item as usize].min(cap.saturating_sub(inv.load()));
+                if take == 0 && b.input[*item as usize] > 0 {
+                    return self.reject(id, Reject::PackFull);
+                }
+                b.input[*item as usize] -= take;
+                inv.counts[*item as usize] += take;
+            }
             CommandKind::Collect { building, item } => {
                 let cap = self.agents[idx].capacity();
                 let Some(b) = self.buildings.get_mut(*building as usize) else { return };

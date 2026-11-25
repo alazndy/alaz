@@ -225,14 +225,17 @@ fn input_zone(ui: &mut Ui, cx: &mut Cx, i: usize, id: &str, cells: &[(Option<Ite
                 let look = match item {
                     _ if !near => SlotLook::Disabled,
                     _ if wanted => SlotLook::Target,
-                    Some(_) if gives_back => SlotLook::Normal,
-                    // a station's input stays in the station; the slot only shows what is loaded
-                    Some(_) => SlotLook::Empty,
+                    Some(_) => SlotLook::Normal,
                     None => SlotLook::Empty,
                 };
                 let resp = crate::pilot::scoped("machine", || super::slot(ui, cx.w, item, count, look));
-                if let (Some(k), true) = (item, gives_back && near) {
-                    output_slot(cx, i, k, &resp);
+                if let (Some(k), true) = (item, near) {
+                    if gives_back {
+                        output_slot(cx, i, k, &resp);
+                    } else if resp.clicked() {
+                        // what was loaded into a station can be taken back out
+                        cx.acts.push(UiAction::Cmd(CommandKind::Unload { building: i as u32, item: k }));
+                    }
                 }
                 if (n + 1) % cols == 0 {
                     ui.end_row();

@@ -20,7 +20,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 use stream::Stream;
 
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 pub const DEFAULT_PORT: u16 = 7777;
 pub const DEFAULT_RELAY: &str = "relay.alazlab.com:443";
 pub const HASH_EVERY: u64 = 120;
@@ -840,6 +840,7 @@ mod tests {
                 CommandKind::Drop { item: it, n: u16::MAX },
                 CommandKind::Load { building: u32::MAX, item: it, n: u16::MAX },
                 CommandKind::Collect { building: u32::MAX, item: Some(it) },
+                CommandKind::Unload { building: u32::MAX, item: it },
             ]);
         }
         for k in b {

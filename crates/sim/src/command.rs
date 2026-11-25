@@ -109,6 +109,8 @@ pub enum CommandKind {
     Load { building: u32, item: ItemKind, n: u16 },
     /// Walk to the selected floor at this world position.
     MoveToFloor { position: crate::cave_terrain::WorldPoint },
+    /// Take what was loaded into a station back out of its input, as far as the pack has room.
+    Unload { building: u32, item: ItemKind },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

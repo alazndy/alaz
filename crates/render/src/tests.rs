@@ -781,3 +781,32 @@ mod far_tree_tests {
         assert!(far > 0 && far < near, "far {far} near {near}");
     }
 }
+
+#[cfg(test)]
+mod felled_tree_mesh {
+    use super::*;
+
+    /// Not a test of behaviour: draws one felled tree at every stage of its fall and break-up and says where the
+    /// mesh goes empty or bad (`cargo test -p alaz-render --release -- --ignored felled_mesh --nocapture`).
+    #[test]
+    #[ignore]
+    fn felled_mesh() {
+        let mut w = World::new(5);
+        let i = w.nodes.iter().position(|n| n.kind == NodeKind::Tree).unwrap();
+        let (tx, ty) = (w.nodes[i].tx, w.nodes[i].ty);
+        let (bx, by) = alaz_sim::map::node_anchor_mm(w.seed, tx, ty);
+        w.set_node_amount(i, 0);
+        w.fell_tree(tx, ty, alaz_sim::AgentId(99), bx - 900, by);
+        let inside = |_: f32, _: f32| true;
+        let full = w.bodies[0].full;
+        for (angle, wood) in [(25_000, full), (400_000, full), (900_000, full), (1_570_796, full), (1_570_796, full * 3 / 4), (1_570_796, full / 2), (1_570_796, full / 4), (1_570_796, 1)] {
+            w.bodies[0].angle = angle;
+            w.bodies[0].wood = wood;
+            let mut m = Mesh::new();
+            push_bodies(&mut m, &w, 0.0, &inside);
+            let bad = m.iter().filter(|v| v.pos.iter().any(|c| !c.is_finite())).count();
+            let top = m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+            println!("angle {angle:>8} wood {wood:>2}/{full}: {} verts, {bad} bad, highest {top:.2} m, trunk_left {} mm", m.len(), w.bodies[0].trunk_left_mm());
+        }
+    }
+}
