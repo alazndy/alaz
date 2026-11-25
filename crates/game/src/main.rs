@@ -1505,13 +1505,14 @@ impl App {
         let player = AgentId(0);
         match saveio::load_in(&saveio::slot_dir(n), player) {
             Ok(Some(save)) => {
+                let recovered = save.recovered;
                 saveio::set_slot(n);
                 self.me = player;
                 self.restore_saved_world(save);
                 self.no_save = false;
                 self.menu = None;
                 self.fx.enter_world(&self.world);
-                self.say(format!("Yuva {n} yüklendi."));
+                self.say(if recovered { format!("Yuva {n}: son kayıt bozuktu, bir önceki kayıttan yüklendi.") } else { format!("Yuva {n} yüklendi.") });
                 Ok(())
             }
             Ok(None) => Err(format!("Yuva {n} boş.")),
@@ -1632,7 +1633,11 @@ impl App {
     fn load_game(&mut self) -> bool {
         match saveio::load(self.me) {
             Ok(Some(save)) => {
+                let recovered = save.recovered;
                 self.restore_saved_world(save);
+                if recovered {
+                    self.say("Son kayıt bozuktu, bir önceki kayıttan yüklendi.");
+                }
                 true
             }
             Ok(None) => false,
