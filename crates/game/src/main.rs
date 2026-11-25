@@ -1287,8 +1287,36 @@ impl App {
         )
     }
 
+    /// Fill the screen with the window (borderless) or give it back; the choice is kept for next time.
+    fn toggle_fullscreen(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let now = g.window.fullscreen().is_some();
+        let mut p = gfxcfg::prefs();
+        p.fullscreen = !now;
+        gfxcfg::set_prefs(p);
+    }
+
+    /// Apply sound and window settings changed since the last frame (or all of them at start).
+    fn apply_prefs(&mut self, all: bool) {
+        let Some(p) = (if all { Some(gfxcfg::prefs()) } else { gfxcfg::take_prefs_change() }) else { return };
+        if let Some(a) = &self.audio {
+            a.set_volumes(p.volumes);
+        }
+        if let Some(g) = &self.gfx {
+            let want = p.fullscreen.then_some(winit::window::Fullscreen::Borderless(None));
+            if g.window.fullscreen().is_some() != p.fullscreen {
+                g.window.set_fullscreen(want);
+            }
+        }
+    }
+
     fn on_action(&mut self, action: keys::Action) {
         use keys::Action as A;
+        // the window can be filled or given back anywhere, in a menu too
+        if action == A::Fullscreen {
+            self.toggle_fullscreen();
+            return;
+        }
         // while a menu is open only the menu key and saving make sense
         if self.menu.is_some() {
             if action == A::Menu && self.menu.as_ref().is_some_and(|m| m.paused && !m.capturing()) {
@@ -1309,16 +1337,24 @@ impl App {
                     self.menu = Some(menu::Menu::new(true));
                 }
             }
+            // handled above, before the menu check
+            A::Fullscreen => {}
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame
             A::Grip => {}
             A::Drop => {
-                // one of whatever there is most of (tools stay in hand)
+                // what the pointer is over in the bag, else one of whatever there is most of (tools stay in hand);
+                // with Shift the whole heap goes
+                let shift = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
+                let hovered = inv::hovered_bag_item();
                 let pick = self.me_agent().and_then(|m| {
-                    alaz_sim::ItemKind::ALL.iter().copied().filter(|k| !k.is_tool() && m.inventory.get(*k) > 0).max_by_key(|k| m.inventory.get(*k))
+                    hovered
+                        .filter(|k| m.inventory.get(*k) > 0)
+                        .or_else(|| alaz_sim::ItemKind::ALL.iter().copied().filter(|k| !k.is_tool() && m.inventory.get(*k) > 0).max_by_key(|k| m.inventory.get(*k)))
+                        .map(|k| (k, m.inventory.get(k)))
                 });
                 match pick {
-                    Some(item) => self.issue(CommandKind::Drop { item, n: 1 }),
+                    Some((item, have)) => self.issue(CommandKind::Drop { item, n: if shift && hovered == Some(item) { have } else { 1 } }),
                     None => self.say("Bırakacak bir şey yok.".to_string()),
                 }
             }
@@ -1686,6 +1722,7 @@ impl App {
     }
 
     fn frame(&mut self) {
+        self.apply_prefs(false);
         let now = Instant::now();
         let raw_dt = (now - self.last).as_secs_f32();
         let dt = (now - self.last).as_secs_f32().min(0.25);
@@ -2256,6 +2293,8 @@ impl App {
             match act {
                 UiAction::Cmd(kind) => self.issue(kind),
                 UiAction::BeginBuild(k) => {
+                    // the window steps aside so the spot to build on is in view
+                    self.tab = None;
                     self.build_mode = Some(k);
                     self.facing = 0;
                     self.moving = None;
@@ -2275,6 +2314,10 @@ impl App {
                 }
                 UiAction::Deselect => self.selected = None,
                 UiAction::ToggleBook => self.knap.journal.toggle_book(),
+                UiAction::ShowRecipes => {
+                    self.knap.journal.section = 2;
+                    self.knap.journal.book_open = true;
+                }
                 UiAction::CloseWindow => {
                     self.tab = None;
                     self.selected = None;
@@ -2980,6 +3023,7 @@ impl ApplicationHandler for App {
         let renderer = Renderer::with_quality(window.clone(), gfxcfg::current());
         self.gfx = Some(Gfx { window, renderer });
         self.last = Instant::now();
+        self.apply_prefs(true);
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, ev: WindowEvent) {

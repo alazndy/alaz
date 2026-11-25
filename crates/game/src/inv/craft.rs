@@ -114,6 +114,13 @@ pub(crate) fn draw(ui: &mut Ui, cx: &mut Cx) {
             *cx.hands = [EMPTY; 4];
         }
     });
+    // what was learned lives in the book; say so where recipes are tried
+    ui.add_space(8.0);
+    ui.vertical_centered(|ui| {
+        if ui.small_button("Bilinen tarifler").clicked() {
+            cx.acts.push(UiAction::ShowRecipes);
+        }
+    });
 }
 
 /// Painted, because the pixel font has no arrow glyph.
@@ -205,6 +212,15 @@ mod tests {
         let mut hands = [ItemKind::Stone as u8, ItemKind::Stone as u8, 255, 255];
         with_cx(&w, &mut hands, |cx| click(cx, ItemKind::Stone, false));
         assert_eq!(hands, [ItemKind::Stone as u8, ItemKind::Stone as u8, 255, 255]);
+    }
+
+    #[test]
+    fn the_craft_tab_points_to_the_known_recipes() {
+        let w = world_with(&[(ItemKind::Stone, 2)]);
+        let mut h = harness(w, Some(Tab::Craft), None);
+        h.get_by_label("Bilinen tarifler").click();
+        h.run();
+        assert!(h.state().acts.iter().any(|a| matches!(a, UiAction::ShowRecipes)), "the link opens the book at the recipes");
     }
 
     #[test]

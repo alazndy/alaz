@@ -4988,11 +4988,12 @@ fn every_command_has_a_working_gate() {
     assert_eq!(count(&w, 0, ItemKind::Cart), 0, "hitch");
     // wild animals: tame a dog, hunt a deer
     w.wild.push(crate::wildlife::Wild::new(90_001, WildSpecies::Dog, me(&w).x + 4_000, me(&w).y));
-    w.wild.push(crate::wildlife::Wild::new(90_002, WildSpecies::Deer, me(&w).x - 4_000, me(&w).y));
+    w.wild.push(crate::wildlife::Wild::new(90_002, WildSpecies::Deer, me(&w).x - 2_000, me(&w).y));
     let before = w.agents.len();
     run(&mut w, "give berries 10\ntame dog");
     assert!(w.agents.len() > before || w.wild.iter().any(|x| x.id == 90_001 && x.trust > 0), "tame");
     let meat = count(&w, 0, ItemKind::RawMeat);
+    // within spear range: this checks the command, not a chase (whether a hunter outruns a deer depends on the slope)
     run(&mut w, "give spear 1\nhunt deer");
     assert!(count(&w, 0, ItemKind::RawMeat) > meat || !w.wild.iter().any(|x| x.id == 90_002), "hunt");
     // tools: repair, prospect
@@ -7408,4 +7409,132 @@ fn world_start_phases() {
     let t = std::time::Instant::now();
     let w = crate::wildlife::generate(seed, &map, (size / 2, size / 2), 30);
     eprintln!("wildlife:    {:?} ({} animals)", t.elapsed(), w.len());
+}
+
+/// Not a test of behaviour: follows one full tree from the first blow to the trunk lying down
+/// (`cargo test -p alaz-sim -- --ignored fell_timeline --nocapture`).
+#[test]
+#[ignore]
+fn fell_timeline() {
+    let mut w = World::new(5);
+    let i = w
+        .nodes
+        .iter()
+        .position(|n| {
+            n.kind == NodeKind::Tree
+                && (-4..=4).all(|d: i32| w.map.terrain(n.tx + d, n.ty).is_some_and(|t| t != Terrain::Water && t != Terrain::Rock))
+        })
+        .expect("a tree");
+    let (tx, ty) = (w.nodes[i].tx, w.nodes[i].ty);
+    let (bx, by) = crate::map::node_anchor_mm(w.seed, tx, ty);
+    let cutter = w.spawn_agent(bx - 900, by);
+    w.agents[cutter.0 as usize].inventory.counts[ItemKind::StoneAxe as usize] = 1;
+    w.step(&[cmd(cutter, CommandKind::Gather { node: NodeId(i as u32) })]);
+    let mut last = String::new();
+    for t in 0..3000 {
+        w.step(&[]);
+        let evs: Vec<String> = w.take_events().into_iter().map(|e| format!("{e:?}").chars().take(40).collect()).collect();
+        let a = &w.agents[cutter.0 as usize];
+        let now = format!("amount={} bodies={} task={:?}", w.nodes[i].amount, w.bodies.len(), std::mem::discriminant(&a.task));
+        if now != last || !evs.is_empty() {
+            println!("t={t:4} {now} {}", evs.join(","));
+            last = now;
+        }
+        if !w.bodies.is_empty() && w.bodies[0].rest > 20 {
+            break;
+        }
+    }
+}
+
+#[test]
+fn what_was_loaded_into_a_station_can_be_taken_back_out() {
+    let (mut w, a) = with_agent(5);
+    let (x, y) = (w.agents[0].x + 1_200, w.agents[0].y);
+    w.buildings.push(Building::new(BuildingKind::CharcoalKiln, x, y));
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    w.agents[0].inventory.counts[ItemKind::Wood as usize] = 6;
+    w.step(&[cmd(a, CommandKind::Load { building: 0, item: ItemKind::Wood, n: u16::MAX })]);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 0, "all of it went in");
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6);
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(count(&w, 0, ItemKind::Wood), 6, "and all of it comes back");
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 0);
+}
+
+#[test]
+fn taking_back_needs_you_close_and_room_in_the_pack() {
+    let (mut w, a) = with_agent(5);
+    let (x, y) = (w.agents[0].x + 1_200, w.agents[0].y);
+    w.buildings.push(Building::new(BuildingKind::CharcoalKiln, x, y));
+    w.buildings[0].input[ItemKind::Wood as usize] = 6;
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    // far away: nothing moves
+    w.agents[0].x += 30_000;
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6);
+    // close, but the pack is full of something else: it says so and nothing is lost
+    w.agents[0].x -= 30_000;
+    let cap = w.agents[0].capacity();
+    w.agents[0].inventory.counts[ItemKind::Stone as usize] = cap;
+    w.step(&[cmd(a, CommandKind::Unload { building: 0, item: ItemKind::Wood })]);
+    assert_eq!(w.buildings[0].input[ItemKind::Wood as usize], 6, "nothing lost");
+    assert_eq!(count(&w, 0, ItemKind::Wood), 0);
+}
+
+#[test]
+fn a_whole_pack_can_be_put_down_in_one_command() {
+    let (mut w, a) = with_agent(5);
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    w.agents[0].inventory.counts[ItemKind::Stone as usize] = 40;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Stone, n: 40 })]);
+    assert_eq!(count(&w, 0, ItemKind::Stone), 0, "all forty left the pack");
+    let lying = w.bodies.iter().filter(|b| b.kind == crate::physics::BodyKind::Piece).count();
+    assert_eq!(lying, 40, "and lie on the ground as forty pieces");
+    // more than the pack holds is only what there is
+    w.agents[0].inventory.counts[ItemKind::Fiber as usize] = 5;
+    w.step(&[cmd(a, CommandKind::Drop { item: ItemKind::Fiber, n: u16::MAX })]);
+    assert_eq!(count(&w, 0, ItemKind::Fiber), 0);
+}
+
+/// Not a test of behaviour: how much slower than flat ground a person walks over this world's real ground, on
+/// straight 60 m walks in eight directions (`cargo test -p alaz-sim --release -- --ignored slope_pace --nocapture`).
+#[test]
+#[ignore]
+fn slope_pace() {
+    let w0 = World::with_size(crate::map::tag_seed_v2(7), 1024, 1024);
+    let mut by: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
+    for ty in (40..980).step_by(23) {
+        for tx in (40..980).step_by(23) {
+            let Some(t) = w0.map.terrain(tx, ty) else { continue };
+            if t == Terrain::Water || t == Terrain::Rock {
+                continue;
+            }
+            for k in 0..8i64 {
+                let ang = k as f64 * std::f64::consts::FRAC_PI_4;
+                let (sx, sy) = (tx as i64 * 1000 + 500, ty as i64 * 1000 + 500);
+                let (ex, ey) = (sx + (60_000.0 * ang.cos()) as i64, sy + (60_000.0 * ang.sin()) as i64);
+                // the pace is the ratio of the real step to the flat one, read from the same function the walk uses
+                let mut speed_sum = 0.0;
+                let mut n = 0;
+                let (mut x, mut y) = (sx, sy);
+                for _ in 0..60 {
+                    let (nx, ny) = (x + (1000.0 * ang.cos()) as i64, y + (1000.0 * ang.sin()) as i64);
+                    let rise = (crate::map::elevation_at_mm(w0.seed, nx, ny) - crate::map::elevation_at_mm(w0.seed, x, y)) as i64;
+                    let grade = rise;
+                    let slow = (grade * 2).clamp(-200, 1000);
+                    speed_sum += (1000.0 + slow as f64) / 1000.0;
+                    n += 1;
+                    x = nx;
+                    y = ny;
+                }
+                let _ = (ex, ey);
+                by.entry(format!("{t:?}")).or_default().push(n as f64 / speed_sum);
+            }
+        }
+    }
+    for (k, mut v) in by {
+        v.sort_by(f64::total_cmp);
+        let p = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
+        println!("{k:>8}: n={:>6} effective pace {:.3} of flat (p10 {:.3} median {:.3} p90 {:.3})", v.len(), v.iter().sum::<f64>() / v.len() as f64, p(0.1), p(0.5), p(0.9));
+    }
 }

@@ -132,6 +132,30 @@ const WELL_PAD: f32 = 8.0;
 /// The most a single drop puts on the ground, as the old right-click menu did.
 const DROP_MAX: u16 = 10;
 
+/// The bag slot the pointer was last over, and when (milliseconds since the first call): the Drop key drops that
+/// one, so any item can be got rid of, not only the biggest heap.
+static BAG_HOVER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1
+}
+
+fn note_bag_hover(k: ItemKind) {
+    BAG_HOVER.store((now_ms() << 16) | (k as u64 + 1), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The bag item under the pointer a moment ago, if the bag is open.
+pub(crate) fn hovered_bag_item() -> Option<ItemKind> {
+    hover_at(BAG_HOVER.load(std::sync::atomic::Ordering::Relaxed), now_ms())
+}
+
+/// What a stored hover names at time `now` (ms): nothing once a quarter second has passed.
+fn hover_at(stored: u64, now: u64) -> Option<ItemKind> {
+    let (at, idx) = (stored >> 16, (stored & 0xffff) as usize);
+    (idx > 0 && now.saturating_sub(at) < 250).then(|| ItemKind::ALL.get(idx - 1).copied()).flatten()
+}
+
 /// One slot in the era's look; item None = empty. Hover shows item_tip.
 pub(crate) fn slot(ui: &mut Ui, w: &World, item: Option<ItemKind>, n: u16, look: SlotLook) -> Response {
     let live = item.is_some() && look != SlotLook::Disabled && look != SlotLook::Empty;
@@ -473,6 +497,9 @@ fn bag_slots(ui: &mut Ui, cx: &mut Cx, top: Top, items: Vec<(ItemKind, u16)>, co
                 _ => SlotLook::Normal,
             };
             let resp = slot(ui, w, Some(k), count, look);
+            if resp.hovered() {
+                note_bag_hover(real);
+            }
             drag_source(&resp, Carry::Bag(real));
             if resp.clicked() {
                 click(cx, real, shift);
@@ -483,8 +510,12 @@ fn bag_slots(ui: &mut Ui, cx: &mut Cx, top: Top, items: Vec<(ItemKind, u16)>, co
                     ui.close();
                 }
                 let m = cx.me.inventory.get(real);
-                if m > 1 && ui.button(format!("{} tane bırak", m.min(DROP_MAX))).clicked() {
-                    cx.acts.push(UiAction::Cmd(CommandKind::Drop { item: real, n: m.min(DROP_MAX) }));
+                if m > 3 && ui.button(format!("Yarısını bırak ({})", m / 2)).clicked() {
+                    cx.acts.push(UiAction::Cmd(CommandKind::Drop { item: real, n: m / 2 }));
+                    ui.close();
+                }
+                if m > 1 && ui.button(format!("Hepsini bırak ({m})")).clicked() {
+                    cx.acts.push(UiAction::Cmd(CommandKind::Drop { item: real, n: m }));
                     ui.close();
                 }
             });
@@ -646,5 +677,19 @@ mod tests {
         h.get_by_label("Kapat").click();
         h.run();
         assert!(h.state().acts.iter().any(|a| matches!(a, UiAction::CloseWindow)), "Kapat asks to close the window");
+    }
+}
+
+#[cfg(test)]
+mod hover_tests {
+    use super::*;
+
+    /// The Drop key only trusts a hover from the last moments: a bag closed long ago names nothing.
+    #[test]
+    fn the_hovered_item_is_remembered_briefly() {
+        let stored = (1_000 << 16) | (ItemKind::Stone as u64 + 1);
+        assert_eq!(hover_at(stored, 1_100), Some(ItemKind::Stone));
+        assert_eq!(hover_at(stored, 1_300), None, "a stale hover is not used");
+        assert_eq!(hover_at(0, 5), None, "nothing was ever hovered");
     }
 }

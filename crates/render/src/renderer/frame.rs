@@ -851,7 +851,9 @@ impl Renderer {
                 }
                 let idle = Pose { heading: st.heading, phase: st.phase, amp: st.amp, id: w.id, stride: st.stride, drink: st.drink, ..Pose::idle(secs) };
                 decal(&mut dynamic, art.shadow_m, wx, wz, WHITE, 0.0);
+                let from = dynamic.len();
                 push_wild(&mut dynamic, w.species, wx, wz, idle);
+                conform_to_ground(&mut dynamic.verts[from..], world.seed, wx, wz);
             }
             // killed animals fall over where they stood, lie a while and sink away
             self.falls.retain(|f| (now - f.at).as_secs_f32() < DEATH_SECS);
@@ -1007,6 +1009,7 @@ impl Renderer {
                     wave,
                     secs,
                     seed: a.id.0,
+                    ground: floor_height.is_none().then_some(world.seed),
                 });
             }
             if let (Some((outfit, mode)), Some(me_job)) = (self.lineup.as_ref(), body_jobs.iter().find(|j| j.is_me)) {
@@ -1020,7 +1023,7 @@ impl Renderer {
                     let f = i as f32;
                     let walk = mode == "walk";
                     let pose = Pose { heading: yaw, phase: secs * 5.0 + f * 0.7, amp: if walk { 1.0 } else { 0.0 }, t: secs, outfit: *outfit, id: self.lineup_id, evo: f, slope: 0.0, lod: mode == "lod", sit: mode == "sit", ..Pose::idle(secs) };
-                    body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, floor_height: None, cave_exposure: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32 });
+                    body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, floor_height: None, cave_exposure: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32, ground: None });
                 }
             }
             let (body_mesh, me_range) = build_bodies(&body_jobs, art, wind);

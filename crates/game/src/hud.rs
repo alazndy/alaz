@@ -81,6 +81,8 @@ pub enum UiAction {
     CloseWindow,
     /// Open or close the book (J); the inventory window stays as it is.
     ToggleBook,
+    /// Open the book at its recipes.
+    ShowRecipes,
 }
 
 pub fn item_name(k: ItemKind) -> &'static str {

@@ -20,6 +20,7 @@ pub(crate) fn command_needs_surface(k: &CommandKind) -> bool {
             | CommandKind::StartJob { .. }
             | CommandKind::Deposit { .. }
             | CommandKind::Load { .. }
+            | CommandKind::Unload { .. }
             | CommandKind::Collect { .. }
             | CommandKind::SetAuto { .. }
             | CommandKind::Tame { .. }

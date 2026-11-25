@@ -52,6 +52,8 @@ pub struct Menu {
     keys_screen: bool,
     /// The graphics settings screen is open.
     gfx_screen: bool,
+    /// The sound settings screen is open.
+    sound_screen: bool,
     /// The version screen is open.
     update_screen: bool,
     pub updater: crate::update_ui::UpdateState,
@@ -131,6 +133,7 @@ impl Menu {
             confirm_delete: None,
             keys_screen: std::env::var_os("ALAZ_DEMO_KEYS").is_some(),
             gfx_screen: std::env::var_os("ALAZ_DEMO_GFXSCREEN").is_some(),
+            sound_screen: std::env::var_os("ALAZ_DEMO_SOUND").is_some(),
             update_screen: false,
             updater: crate::update_ui::UpdateState::live(),
             capturing: None,
@@ -638,10 +641,12 @@ impl Menu {
         let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
         bg.rect_filled(screen, 0.0, Color32::from_black_alpha(205));
         let e = ease(t / 0.35);
-        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_TOP, [0.0, 56.0 + (1.0 - e) * 24.0]).show(ctx, |ui| {
             ui.set_opacity(e);
             card(ui, 470.0, |ui| {
-                ui.label(egui::RichText::new("Tuş atamaları").size(33.0).strong().color(GOLD));
+                ui.label(egui::RichText::new("Ayarlar").size(33.0).strong().color(GOLD));
+                self.settings_tabs(ui, 2);
+                ui.add_space(6.0);
                 ui.label(egui::RichText::new("Bir kutuya tıkla, sonra yeni tuşa bas. Delete: boşalt, Esc: vazgeç.").small().color(Color32::from_rgb(190, 176, 150)));
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().max_height((screen.height() - 220.0).clamp(160.0, 380.0)).show(ui, |ui| {
@@ -765,6 +770,66 @@ impl Menu {
         act
     }
 
+    /// Open the settings at a tab (0 sound, 1 screen, 2 keys).
+    pub(crate) fn open_settings_tab(&mut self, tab: usize) {
+        self.sound_screen = tab == 0;
+        self.gfx_screen = tab == 1;
+        self.keys_screen = tab == 2;
+    }
+
+    /// The tab row of the settings screens: Ses, Ekran, Tuşlar. Choosing another opens that screen.
+    fn settings_tabs(&mut self, ui: &mut Ui, current: usize) {
+        let mut idx = current;
+        segmented(ui, "settings_tab", &["Ses", "Ekran", "Tuşlar"], &mut idx);
+        if idx != current {
+            self.sound_screen = idx == 0;
+            self.gfx_screen = idx == 1;
+            self.keys_screen = idx == 2;
+            self.capturing = None;
+        }
+    }
+
+    /// How loud each kind of sound is. A change is heard at once.
+    fn draw_sound(&mut self, ctx: &egui::Context) {
+        let t = self.intro(ctx);
+        let screen = ctx.content_rect();
+        let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
+        bg.rect_filled(screen, 0.0, Color32::from_black_alpha(205));
+        let e = ease(t / 0.35);
+        let note = Color32::from_rgb(190, 176, 150);
+        let mut prefs = crate::gfxcfg::prefs();
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_TOP, [0.0, 56.0 + (1.0 - e) * 24.0]).show(ctx, |ui| {
+            ui.set_opacity(e);
+            card(ui, 470.0, |ui| {
+                ui.label(egui::RichText::new("Ayarlar").size(33.0).strong().color(GOLD));
+                self.settings_tabs(ui, 0);
+                ui.add_space(6.0);
+                let v = &mut prefs.volumes;
+                for (label, hint, value) in [
+                    ("Genel", "Hepsinin birden sesi. M tuşu sesi kapatır.", &mut v.master),
+                    ("Efektler", "Vuruşlar, çıngıraklar, havlama.", &mut v.effects),
+                    ("Ortam", "Rüzgâr, yağmur, kuşlar, su, ateş.", &mut v.ambience),
+                    ("Müzik", "Oyunun içinde üretilen yavaş müzik.", &mut v.music),
+                ] {
+                    ui.spacing_mut().slider_width = 250.0;
+                    ui.add(
+                        egui::Slider::new(value, 0.0..=1.0)
+                            .text(egui::RichText::new(label).size(22.0).color(GOLD))
+                            .custom_formatter(|x, _| format!("%{:.0}", x * 100.0))
+                            .custom_parser(|s| s.trim().trim_start_matches('%').parse::<f64>().ok().map(|x| x / 100.0)),
+                    );
+                    ui.label(egui::RichText::new(hint).small().color(note));
+                    ui.add_space(4.0);
+                }
+                ui.add_space(6.0);
+                if button(ui, "Geri", vec2(110.0, 34.0), Look::Primary).clicked() {
+                    self.sound_screen = false;
+                }
+            });
+        });
+        crate::gfxcfg::set_prefs(prefs);
+    }
+
     /// Pixel size, shadows and far decor, applied while the menu is up (the world behind is not drawn at the start screen,
     /// but the pause menu shows the change at once).
     fn draw_graphics(&mut self, ctx: &egui::Context) {
@@ -776,10 +841,20 @@ impl Menu {
         let e = ease(t / 0.35);
         let mut q = crate::gfxcfg::current();
         let note = Color32::from_rgb(190, 176, 150);
-        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_CENTER, [0.0, (1.0 - e) * 24.0]).show(ctx, |ui| {
+        egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_TOP, [0.0, 56.0 + (1.0 - e) * 24.0]).show(ctx, |ui| {
             ui.set_opacity(e);
             card(ui, 470.0, |ui| {
-                ui.label(egui::RichText::new("Grafik").size(33.0).strong().color(GOLD));
+                ui.label(egui::RichText::new("Ayarlar").size(33.0).strong().color(GOLD));
+                self.settings_tabs(ui, 1);
+                ui.add_space(6.0);
+                section(ui, "Pencere");
+                let mut prefs = crate::gfxcfg::prefs();
+                let mut full = usize::from(prefs.fullscreen);
+                segmented(ui, "gfx_full", &["Pencere", "Tam ekran"], &mut full);
+                prefs.fullscreen = full == 1;
+                crate::gfxcfg::set_prefs(prefs);
+                ui.label(egui::RichText::new("Kenarlıksız tam ekran. F11 tuşu da açıp kapatır.").small().color(note));
+                ui.add_space(6.0);
                 ui.label(egui::RichText::new("Zayıf bir ekran kartında oyun takılırsa daha hafif bir ayar seç. Hemen uygulanır.").small().color(note));
                 ui.add_space(8.0);
                 section(ui, "Piksel inceliği");
@@ -919,6 +994,10 @@ impl Menu {
         }
         if self.gfx_screen {
             self.draw_graphics(ctx);
+            return None;
+        }
+        if self.sound_screen {
+            self.draw_sound(ctx);
             return None;
         }
         if self.update_screen {
@@ -1096,16 +1175,13 @@ impl Menu {
                         ui.label(egui::RichText::new(format!("Yeni sürüm var: {v}")).small().color(GOLD));
                     }
                     ui.horizontal(|ui| {
-                        let parts = if self.paused { 2.0 } else { 4.0 };
+                        let parts = if self.paused { 1.0 } else { 3.0 };
                         let w = (ui.available_width() - 12.0 * (parts - 1.0)) / parts;
                         if !self.paused && button(ui, "Çok oyunculu", vec2(w, 34.0), Look::Plain).clicked() {
                             self.mp_screen = true;
                         }
-                        if button(ui, "Tuşlar", vec2(w, 34.0), Look::Plain).clicked() {
-                            self.keys_screen = true;
-                        }
-                        if button(ui, "Grafik", vec2(w, 34.0), Look::Plain).clicked() {
-                            self.gfx_screen = true;
+                        if button(ui, "Ayarlar", vec2(w, 34.0), Look::Plain).clicked() {
+                            self.sound_screen = true;
                         }
                         // updating replaces the program, so it is only offered where no world is running
                         if !self.paused && button(ui, "Sürüm", vec2(w, 34.0), Look::Plain).clicked() {
@@ -1205,6 +1281,50 @@ mod tests {
             crate::update_ui::Phase::Done(_) => "done",
         };
         panic!("the screen never showed {until:?} (the update state is {phase})");
+    }
+
+    #[test]
+    fn one_settings_button_opens_sound_screen_with_tabs_that_lead_to_the_others() {
+        let mut h = harness(Menu::new(false));
+        h.run();
+        assert!(h.query_by_label("Grafik").is_none() && h.query_by_label("Tuşlar").is_none(), "the start screen has one settings button");
+        h.get_by_label("Ayarlar").click();
+        h.run();
+        for volume in ["Genel", "Efektler", "Ortam", "Müzik"] {
+            assert!(h.query_all_by_label_contains(volume).next().is_some(), "a volume for {volume}");
+        }
+        h.get_by_label("Ekran").click();
+        h.run();
+        assert!(h.query_by_label("Kaba").is_some() && h.query_by_label("Düşük").is_some(), "the screen tab holds the graphics");
+        assert!(h.query_by_label("Tam ekran").is_some(), "and the window mode");
+        h.get_by_label("Tuşlar").click();
+        h.run();
+        assert!(h.query_by_label_contains("Karakter ileri").is_some(), "the keys tab lists the actions");
+        h.get_by_label("Ses").click();
+        h.run();
+        assert!(h.query_all_by_label_contains("Müzik").next().is_some());
+        h.get_by_label("Geri").click();
+        h.run();
+        assert!(h.query_by_label("Ayarlar").is_some(), "back at the start screen");
+    }
+
+    #[test]
+    fn the_fullscreen_choice_is_kept_and_handed_to_the_window() {
+        let mut h = harness(Menu::new(false));
+        h.run();
+        h.get_by_label("Ayarlar").click();
+        h.run();
+        h.get_by_label("Ekran").click();
+        h.run();
+        let _ = crate::gfxcfg::take_prefs_change();
+        h.get_by_label("Tam ekran").click();
+        h.run();
+        assert!(crate::gfxcfg::prefs().fullscreen);
+        assert!(crate::gfxcfg::take_prefs_change().is_some_and(|p| p.fullscreen), "the game loop is told once");
+        assert!(crate::gfxcfg::take_prefs_change().is_none());
+        h.get_by_label("Pencere").click();
+        h.run();
+        assert!(!crate::gfxcfg::prefs().fullscreen);
     }
 
     #[test]
