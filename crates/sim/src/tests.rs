@@ -7297,6 +7297,70 @@ fn load_room_matches_deposit() {
     }
 }
 
+/// Not a test of behaviour: how many natural cave mouths a new world has and how far the nearest is from the spawn.
+/// `cargo test --release -p alaz-sim -- --ignored cave_mouths_by_size --nocapture --test-threads=1`.
+#[test]
+#[ignore]
+fn cave_mouths_by_size() {
+    for size in [128, 256, 512, 1024, 2048] {
+        for s in [3u64, 7, 42, 99] {
+            let seed = crate::map::tag_seed_new_world(s, size);
+            let w = World::with_size(seed, size, size);
+            let (sx, sy) = ((w.spawn_mm.0 / 1000) as i32, (w.spawn_mm.1 / 1000) as i32);
+            let (mut count, mut best) = (0u32, i64::MAX);
+            let (from, step) = if size <= 256 { (0, 1) } else { (2, 4) };
+            for ty in (from..size).step_by(step) {
+                for tx in (from..size).step_by(step) {
+                    if w.map.natural_cave_mouth(tx, ty).is_some() {
+                        count += 1;
+                        best = best.min(((tx - sx) as i64).pow(2) + ((ty - sy) as i64).pow(2));
+                    }
+                }
+            }
+            let near = if count == 0 { "none".to_string() } else { format!("{} m", (best as f64).sqrt() as i64) };
+            eprintln!("size {size:>5} seed {s:>3}: {count:>6} mouths, nearest to spawn {near}");
+        }
+    }
+}
+
+/// Early mining needs a cave to walk into: a new world of any small or middle size has a natural cave mouth, and the
+/// nearest one is within a walk of the spawn. The full run (3 sizes, 24 seeds) takes 11 s in release, so it is
+/// ignored: `--ignored every_new_world_has_a_cave_mouth_wide`. The test that always runs is a small slice of it.
+#[test]
+fn every_new_world_has_a_cave_mouth_within_a_walk_of_the_spawn() {
+    cave_mouth_scan(&[128, 256], 1..=6);
+}
+
+#[test]
+#[ignore]
+fn every_new_world_has_a_cave_mouth_wide() {
+    cave_mouth_scan(&[128, 256, 512], 1..=24);
+}
+
+fn cave_mouth_scan(sizes: &[i32], seeds: std::ops::RangeInclusive<u64>) {
+    let mut worst = (0i64, 0u64, 0i32);
+    for &size in sizes {
+        for s in seeds.clone() {
+            let seed = crate::map::tag_seed_new_world(s, size);
+            let w = World::with_size(seed, size, size);
+            let (sx, sy) = ((w.spawn_mm.0 / 1000) as i32, (w.spawn_mm.1 / 1000) as i32);
+            // a small world places its mouths anywhere; the others only on the 4 x 4 lattice
+            let (from, step) = if size <= 256 { (0, 1) } else { (2, 4) };
+            let nearest = (from..size)
+                .step_by(step)
+                .flat_map(|ty| (from..size).step_by(step).map(move |tx| (tx, ty)))
+                .filter(|&(tx, ty)| w.map.natural_cave_mouth(tx, ty).is_some())
+                .map(|(tx, ty)| (((tx - sx) as i64).pow(2) + ((ty - sy) as i64).pow(2)).isqrt())
+                .min();
+            let Some(d) = nearest else { panic!("size {size} seed {s}: no cave mouth in the whole world") };
+            if d > worst.0 {
+                worst = (d, s, size);
+            }
+        }
+    }
+    assert!(worst.0 <= 250, "the nearest cave mouth is {} m from the spawn (size {}, seed {})", worst.0, worst.2, worst.1);
+}
+
 /// Not a test of behaviour: prints how long a new world takes at each size. Run it with
 /// `cargo test --release -p alaz-sim -- --ignored world_start_times --nocapture`.
 #[test]
