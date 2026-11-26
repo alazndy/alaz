@@ -159,6 +159,25 @@ pub(crate) struct OutlinePass {
     pub(crate) group: wgpu::BindGroup,
 }
 
+/// A finished frame: `height` rows of `width` RGB pixels.
+pub struct Capture {
+    pub width: u32,
+    pub height: u32,
+    pub rgb: Vec<u8>,
+}
+
+/// The pixels of a read-back buffer, whose rows are padded to `row` bytes and hold four channels.
+fn rgb_rows(data: &[u8], width: u32, height: u32, row: usize, bgra: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(width as usize * height as usize * 3);
+    for line in data.chunks(row).take(height as usize) {
+        for pixel in line.chunks_exact(4).take(width as usize) {
+            let (r, g, b) = if bgra { (pixel[2], pixel[1], pixel[0]) } else { (pixel[0], pixel[1], pixel[2]) };
+            out.extend_from_slice(&[r, g, b]);
+        }
+    }
+    out
+}
+
 pub struct Renderer {
     pub(crate) window: Arc<Window>,
     pub(crate) surface: wgpu::Surface<'static>,
@@ -278,6 +297,10 @@ pub struct Renderer {
     /// `ALAZ_SHOT`: where to write the picture, and how many frames to wait first
     pub(crate) shot: Option<(String, u32)>,
     pub(crate) shot_once: Option<String>,
+    /// The next finished frame is wanted in memory.
+    pub(crate) capture_wanted: bool,
+    pub(crate) captured: Option<Capture>,
+    adapter_name: String,
 }
 
 impl Renderer {
@@ -299,6 +322,8 @@ impl Renderer {
             ..Default::default()
         }))
         .expect("no adapter");
+        let info = adapter.get_info();
+        let adapter_name = format!("{} ({:?})", info.name, info.backend);
         // ALAZ_GPUPROF=1 times every pass on the GPU (when the adapter can) and prints it every 5 s
         let gpu_prof = std::env::var_os("ALAZ_GPUPROF").is_some() && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
         let features = if gpu_prof { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() };
@@ -309,8 +334,8 @@ impl Renderer {
         // ALAZ_NOVSYNC lifts the 60 fps cap so performance tests measure real frame cost
         config.present_mode =
             if std::env::var_os("ALAZ_NOVSYNC").is_some() { wgpu::PresentMode::AutoNoVsync } else { wgpu::PresentMode::AutoVsync };
-        // ALAZ_SHOT copies the finished frame out of the swapchain
-        if (std::env::var_os("ALAZ_SHOT").is_some() || std::env::var_os("ALAZ_PILOT").is_some()) && surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
+        // screenshots (a player's report, `ALAZ_SHOT`) copy the finished frame out of the swapchain
+        if surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_SRC) {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
         }
         surface.configure(&device, &config);
@@ -589,6 +614,9 @@ impl Renderer {
             cave_light: 0.0,
             prof,
             shot_once: None,
+            capture_wanted: false,
+            captured: None,
+            adapter_name,
             shot: std::env::var("ALAZ_SHOT").ok().map(|p| (p, std::env::var("ALAZ_SHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(240))),
             hover_node: None,
             view: std::env::var("ALAZ_DEMO_VIEW").ok().filter(|v| !v.is_empty()).map(crate::assets::View::new),
@@ -809,6 +837,17 @@ impl Renderer {
     /// Dev aid (`ALAZ_SHOT=file.ppm`, `ALAZ_SHOT_FRAMES=n`): writes the finished frame (weather and interface
     /// included) to a file and quits, so a screenshot never depends on which window the desktop has in front.
     fn write_shot(&self, tex: &wgpu::Texture, path: &str, w: u32, h: u32) {
+        let Some(frame) = self.read_frame(tex, w, h) else { return };
+        let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+        out.extend_from_slice(&frame.rgb);
+        let _ = std::fs::write(path, out);
+    }
+
+    /// Copy a finished frame back from the graphics card; `None` when the surface does not allow it.
+    fn read_frame(&self, tex: &wgpu::Texture, w: u32, h: u32) -> Option<Capture> {
+        if !self.can_capture() {
+            return None;
+        }
         let row = (w * 4).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let mut enc = self.device.create_command_encoder(&Default::default());
@@ -821,17 +860,9 @@ impl Renderer {
         let slice = buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        let Ok(data) = slice.get_mapped_range() else { return };
+        let data = slice.get_mapped_range().ok()?;
         let bgra = matches!(self.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
-        let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * row + x * 4) as usize;
-                let (r, g, b) = if bgra { (data[i + 2], data[i + 1], data[i]) } else { (data[i], data[i + 1], data[i + 2]) };
-                out.extend_from_slice(&[r, g, b]);
-            }
-        }
-        let _ = std::fs::write(path, out);
+        Some(Capture { width: w, height: h, rgb: rgb_rows(&data, w, h, row as usize, bgra) })
     }
 
     fn make_outline_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, scene: &wgpu::TextureView, depth: &wgpu::TextureView) -> wgpu::BindGroup {
@@ -955,6 +986,25 @@ impl Renderer {
         self.shot_once = Some(path);
     }
 
+    /// Whether finished frames can be copied back at all.
+    pub fn can_capture(&self) -> bool {
+        self.config.usage.contains(wgpu::TextureUsages::COPY_SRC)
+    }
+
+    /// Keep the next finished frame in memory; `take_capture` hands it over.
+    pub fn request_capture(&mut self) {
+        self.capture_wanted = true;
+    }
+
+    pub fn take_capture(&mut self) -> Option<Capture> {
+        self.captured.take()
+    }
+
+    /// The graphics adapter and the interface it is driven through.
+    pub fn adapter_name(&self) -> &str {
+        &self.adapter_name
+    }
+
     pub fn egui_context(&self) -> &egui::Context {
         &self.egui_ctx
     }
@@ -964,3 +1014,16 @@ impl Renderer {
     }
 }
 
+
+#[cfg(test)]
+mod capture_tests {
+    use super::rgb_rows;
+
+    #[test]
+    fn rgb_rows_drops_the_padding_and_orders_the_channels() {
+        // two pixels a row, rows padded to 12 bytes
+        let data = [1, 2, 3, 255, 4, 5, 6, 255, 0, 0, 0, 0, 7, 8, 9, 255, 10, 11, 12, 255, 0, 0, 0, 0];
+        assert_eq!(rgb_rows(&data, 2, 2, 12, false), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(rgb_rows(&data, 2, 2, 12, true), [3, 2, 1, 6, 5, 4, 9, 8, 7, 12, 11, 10]);
+    }
+}

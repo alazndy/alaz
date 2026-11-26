@@ -1322,6 +1322,9 @@ impl Renderer {
             if let Some(path) = self.shot_once.take() {
                 self.write_shot(&frame.texture, &path, win_w, win_h);
             }
+            if std::mem::take(&mut self.capture_wanted) {
+                self.captured = self.read_frame(&frame.texture, win_w, win_h);
+            }
             self.window.pre_present_notify();
             self.queue.present(frame);
             // the workers have had the whole frame; what they made shows from the next one
