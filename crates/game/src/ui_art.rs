@@ -20,6 +20,8 @@ pub enum Glyph {
     Skull,
     /// The journal: an open book.
     Book,
+    /// A folded map.
+    Map,
 }
 
 fn p2(c: Pos2, s: f32, x: f32, y: f32) -> Pos2 {
@@ -38,6 +40,13 @@ pub fn glyph(p: &Painter, c: Pos2, s: f32, g: Glyph, col: Color32) {
         p.add(Shape::convex_polygon(pts.iter().map(|&(x, y)| q(x, y)).collect(), fill, Stroke::new(1.0, dark)));
     };
     match g {
+        Glyph::Map => {
+            // three panels, the middle one folded back
+            poly(&[(-0.44, -0.3), (-0.15, -0.4), (-0.15, 0.3), (-0.44, 0.4)], col);
+            poly(&[(-0.15, -0.4), (0.15, -0.3), (0.15, 0.4), (-0.15, 0.3)], col.gamma_multiply(0.7));
+            poly(&[(0.15, -0.3), (0.44, -0.4), (0.44, 0.3), (0.15, 0.4)], col);
+            p.circle_filled(q(0.28, -0.04), 0.07 * s, Color32::from_rgb(200, 70, 50));
+        }
         Glyph::Heart => {
             p.circle_filled(q(-0.17, -0.12), 0.23 * s, col);
             p.circle_filled(q(0.17, -0.12), 0.23 * s, col);

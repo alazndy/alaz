@@ -20,6 +20,7 @@ mod item_book;
 mod journal_ui;
 mod keys;
 mod lang;
+mod map_ui;
 mod menu;
 mod portrait;
 mod pxpanel;
