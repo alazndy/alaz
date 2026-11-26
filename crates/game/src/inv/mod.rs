@@ -562,7 +562,7 @@ mod tests {
             time_scale: 1,
             evo: 9.0,
             yaw: 0.0,
-            cave_tiles: None,
+            cave_tiles: None, surface: None,
         }
     }
 

@@ -220,7 +220,7 @@ pub(crate) fn shoot(dir: &Path, level: u8, tab: ShotTab) -> std::io::Result<Path
         time_scale: 1,
         evo: 9.0,
         yaw: 0.0,
-        cave_tiles: None,
+        cave_tiles: None, surface: None,
     };
     let mut knap = KnapState::default();
     if matches!(tab, ShotTab::Book | ShotTab::Progression) {

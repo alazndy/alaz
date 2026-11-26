@@ -2203,6 +2203,7 @@ impl App {
             evo: self.evo_pos,
             yaw: self.cam.yaw_deg,
             cave_tiles: Some(self.cave_map.known()),
+            surface: None,
         };
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
@@ -2319,6 +2320,8 @@ impl App {
                         self.say("Yeni yeri sol tıkla seç; sağ tık vazgeçer.".to_string());
                     }
                 }
+                // wired with the game loop
+                UiAction::ToggleMap | UiAction::SetCamp(_) => {}
                 UiAction::Deselect => self.selected = None,
                 UiAction::ToggleBook => self.knap.journal.toggle_book(),
                 UiAction::ShowRecipes => {

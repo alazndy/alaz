@@ -59,6 +59,8 @@ pub struct UiCtx<'a> {
     /// The camera's yaw in degrees (the way-out arrow is drawn as the camera sees it).
     pub yaw: f32,
     pub cave_tiles: Option<&'a KnownTiles>,
+    /// What this player has seen of the surface; no maps without it.
+    pub surface: Option<&'a crate::surface_map::SurfaceMap>,
 }
 
 /// What the HUD asks the game loop to do this frame.
@@ -81,6 +83,10 @@ pub enum UiAction {
     CloseWindow,
     /// Open or close the book (J); the inventory window stays as it is.
     ToggleBook,
+    /// Open or close the large map.
+    ToggleMap,
+    /// Put the camp mark on a tile, or take it off.
+    SetCamp(Option<crate::surface_map::Tile>),
     /// Open the book at its recipes.
     ShowRecipes,
 }
@@ -1212,7 +1218,7 @@ fn draw_hints(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, tab_open: bool) {
 }
 
 /// Bottom bar: panel tabs on the left, things you do right now on the right.
-fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, book_open: bool, acts: &mut Vec<UiAction>) {
+fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, ui_ctx: &UiCtx, book_open: bool, map_open: bool, acts: &mut Vec<UiAction>) {
     use crate::ui_art::{icon_button, Glyph};
     let defs = rules();
     let inv = &me.inventory;
@@ -1237,6 +1243,10 @@ fn draw_action_bar(ctx: &egui::Context, w: &World, me: &alaz_sim::world::Agent, 
             let key = ui_ctx.binds.short(Action::Journal);
             if crate::ui_art::icon_only(ui, Glyph::Book, "Günlük", Some(key.as_str()), book_open, true, gold).clicked() {
                 acts.push(UiAction::ToggleBook);
+            }
+            let key = ui_ctx.binds.short(Action::Map);
+            if crate::ui_art::icon_only(ui, Glyph::Map, "Harita", Some(key.as_str()), map_open, true, gold).clicked() {
+                acts.push(UiAction::ToggleMap);
             }
             if has_routes {
                 tab_btn(ui, acts, Glyph::Route, crate::lang::tab_word(w, "Rotalar"), Tab::Routes, Action::Routes, true);
@@ -1619,9 +1629,14 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         draw_goal_banner(ctx, w, me);
         draw_hints(ctx, w, ui_ctx, ui_ctx.tab.is_some());
     }
-    draw_action_bar(ctx, w, me, ui_ctx, knap.journal.book_open, acts);
+    draw_action_bar(ctx, w, me, ui_ctx, knap.journal.book_open, knap.map.open, acts);
     crate::book::set_open(ctx, knap.journal.book_open);
     let inv_open = crate::inv::draw_window(ctx, &mut crate::inv::Cx { w, me, ui_ctx, hands: &mut knap.hands, acts });
+    // the large map gives way to anything else that wants the screen
+    let busy = w.craft_view(ui_ctx.me).is_some() || ui_ctx.tab.is_some() || knap.journal.book_open || inv_open.is_some();
+    if busy {
+        knap.map.open = false;
+    }
     // like the window, the book steps aside while a workpiece is on the bench
     if w.craft_view(ui_ctx.me).is_none() {
         let machine = crate::inv::open_machine_of(w, me, ui_ctx.selection);
@@ -1683,7 +1698,9 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
         let p = egui::pos2(r.left() + (n[0] + 1.0) * 0.5 * r.width(), r.top() + (1.0 - n[1]) * 0.5 * r.height());
         ctx.data_mut(|d| d.insert_temp(egui::Id::NULL.with("craft_anchor"), p));
     }
-    draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.cave_tiles, acts);
+    if !knap.map.open {
+        draw_cave(ctx, w, ui_ctx.me, ui_ctx.yaw, ui_ctx.cave_tiles, acts);
+    }
     match w.craft_view(ui_ctx.me) {
         Some(v) => match v.kind {
             alaz_sim::MinigameKind::Knap => draw_knapping(ctx, &v, ui_ctx.last_strike, knap, ui_ctx.grip, ui_ctx.binds, acts),
@@ -1699,21 +1716,45 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
 
     // the workpiece needs the screen: side panels wait until the job is done
     let in_cave = w.agents.iter().any(|a| a.id == ui_ctx.me && a.cave_view().is_some());
-    let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave { None } else { ui_ctx.selection };
+    // where the panels on the right may start: under the small map when it is there
+    let mut panel_top = 12.0;
+    if let Some(surface) = ui_ctx.surface {
+        if knap.map.open {
+            for act in crate::map_ui::draw_large(ctx, w, me, surface, &mut knap.map, &ui_ctx.binds.short(Action::Map)) {
+                match act {
+                    crate::map_ui::MapAct::Close => knap.map.open = false,
+                    crate::map_ui::MapAct::SetCamp(camp) => acts.push(UiAction::SetCamp(camp)),
+                }
+            }
+        } else if !busy && !in_cave {
+            let rect = crate::map_ui::draw_small(ctx, w, me, surface, &mut knap.map, ui_ctx.yaw);
+            panel_top = rect.bottom() - ctx.content_rect().top() + 8.0;
+        }
+    }
+    let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave || knap.map.open { None } else { ui_ctx.selection };
     match selection {
         Some(Selection::Building(i)) => {
             // machines show in the inventory window instead
             if let Some(b) = w.buildings.get(i).filter(|b| !crate::inv::machine::opens_window(w, b.kind)) {
-                draw_building(ctx, w, i, b, acts);
+                draw_building(ctx, w, i, b, panel_top, acts);
             }
         }
         Some(Selection::Agent(i)) => {
             if let Some(a) = w.agents.get(i) {
-                draw_worker(ctx, w, i, a, me, ui_ctx, acts);
+                draw_worker(ctx, w, i, a, me, ui_ctx, panel_top, acts);
             }
         }
         None => {}
     }
+}
+
+/// Open or close the large map; true when it is now open (the caller then puts its own windows away).
+pub fn toggle_map(knap: &mut KnapState) -> bool {
+    knap.map.toggle();
+    if knap.map.open {
+        knap.journal.book_open = false;
+    }
+    knap.map.open
 }
 
 /// A minigame sits just above the worker's head, in the world, clamped to the screen.
@@ -1746,6 +1787,8 @@ fn craft_area(ctx: &egui::Context, name: &str) -> egui::Area {
 
 /// Local state of the knapping minigame UI (input only; the sim decides what a strike is worth).
 pub struct KnapState {
+    /// How the maps are being looked at; kept between crafts like the journal.
+    pub map: crate::map_ui::MapView,
     holding: bool,
     /// 0..=1 swing force while the button is held; it rises and falls so it has to be timed.
     charge: f32,
@@ -1772,7 +1815,7 @@ struct RubPass {
 
 impl Default for KnapState {
     fn default() -> Self {
-        Self { holding: false, charge: 0.0, rising: false, notches: Vec::new(), seen_done: 0, hands: [255; 4], rub: None, creative_search: String::new(), journal: Default::default() }
+        Self { map: Default::default(), holding: false, charge: 0.0, rising: false, notches: Vec::new(), seen_done: 0, hands: [255; 4], rub: None, creative_search: String::new(), journal: Default::default() }
     }
 }
 
@@ -2443,48 +2486,53 @@ fn draw_building(
     w: &World,
     i: usize,
     b: &alaz_sim::Building,
+    top: f32,
     acts: &mut Vec<UiAction>,
 ) {
     let defs = rules();
     let def = defs.building(b.kind);
-    egui::Area::new(egui::Id::NULL.with("building")).anchor(Align2::RIGHT_TOP, [-12.0, 12.0]).show(ctx, |ui| {
+    let room = (ctx.content_rect().height() - top - 24.0).max(120.0);
+    egui::Area::new(egui::Id::NULL.with("building")).anchor(Align2::RIGHT_TOP, [-12.0, top]).show(ctx, |ui| {
         panel(ui, 6.0, |ui| {
             ui.set_min_width(280.0);
             // a right-aligned button would otherwise stretch the panel across half the screen
             ui.set_max_width(330.0);
-            let g = match b.kind {
-                k if k.burns() => crate::ui_art::Glyph::Flame,
-                BuildingKind::Shelter => crate::ui_art::Glyph::House,
-                BuildingKind::Depot => crate::ui_art::Glyph::Bag,
-                _ => crate::ui_art::Glyph::Hammer,
-            };
-            let title = format!("{} #{}", def.name, i + 1);
-            let buttons = |ui: &mut egui::Ui, acts: &mut Vec<UiAction>| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Kapat").clicked() {
-                        acts.push(UiAction::Deselect);
-                    }
-                    if ui.small_button("Döndür").on_hover_text("Çeyrek tur çevir").clicked() {
-                        acts.push(UiAction::Cmd(CommandKind::Turn { building: i as u32 }));
-                    }
-                    if ui.small_button("Taşı").on_hover_text("Binayı içindekilerle başka bir yere koy").clicked() {
-                        acts.push(UiAction::MoveBuilding(i));
-                    }
-                });
-            };
-            if title.chars().count() > 14 {
-                // a long name would run under the buttons: it gets a line of its own
-                crate::ui_art::heading(ui, g, &title, Color32::from_rgb(232, 150, 70));
-                ui.horizontal(|ui| buttons(ui, acts));
-            } else {
-                ui.horizontal(|ui| {
+            // a short window scrolls the panel instead of letting it run off the bottom
+            egui::ScrollArea::vertical().id_salt("building_scroll").max_height(room).show(ui, |ui| {
+                let g = match b.kind {
+                    k if k.burns() => crate::ui_art::Glyph::Flame,
+                    BuildingKind::Shelter => crate::ui_art::Glyph::House,
+                    BuildingKind::Depot => crate::ui_art::Glyph::Bag,
+                    _ => crate::ui_art::Glyph::Hammer,
+                };
+                let title = format!("{} #{}", def.name, i + 1);
+                let buttons = |ui: &mut egui::Ui, acts: &mut Vec<UiAction>| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Kapat").clicked() {
+                            acts.push(UiAction::Deselect);
+                        }
+                        if ui.small_button("Döndür").on_hover_text("Çeyrek tur çevir").clicked() {
+                            acts.push(UiAction::Cmd(CommandKind::Turn { building: i as u32 }));
+                        }
+                        if ui.small_button("Taşı").on_hover_text("Binayı içindekilerle başka bir yere koy").clicked() {
+                            acts.push(UiAction::MoveBuilding(i));
+                        }
+                    });
+                };
+                if title.chars().count() > 14 {
+                    // a long name would run under the buttons: it gets a line of its own
                     crate::ui_art::heading(ui, g, &title, Color32::from_rgb(232, 150, 70));
-                    buttons(ui, acts);
-                });
-            }
-            ui.separator();
-            building_notes(ui, w, i, b, acts);
-            ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
+                    ui.horizontal(|ui| buttons(ui, acts));
+                } else {
+                    ui.horizontal(|ui| {
+                        crate::ui_art::heading(ui, g, &title, Color32::from_rgb(232, 150, 70));
+                        buttons(ui, acts);
+                    });
+                }
+                ui.separator();
+                building_notes(ui, w, i, b, acts);
+                ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
+            });
         });
     });
 }
@@ -2823,110 +2871,115 @@ fn draw_worker(
     a: &alaz_sim::world::Agent,
     me: &alaz_sim::world::Agent,
     ui_ctx: &UiCtx,
+    top: f32,
     acts: &mut Vec<UiAction>,
 ) {
-    egui::Area::new(egui::Id::NULL.with("worker")).anchor(Align2::RIGHT_TOP, [-12.0, 12.0]).show(ctx, |ui| {
+    let room = (ctx.content_rect().height() - top - 24.0).max(120.0);
+    egui::Area::new(egui::Id::NULL.with("worker")).anchor(Align2::RIGHT_TOP, [-12.0, top]).show(ctx, |ui| {
         panel(ui, 6.0, |ui| {
             ui.set_min_width(280.0);
             // a right-aligned button would otherwise stretch the panel across half the screen
             ui.set_max_width(330.0);
-            ui.horizontal(|ui| {
-                crate::ui_art::heading(ui, crate::ui_art::Glyph::Route, &format!("{} #{}", kind_name(a.kind), i), Color32::from_rgb(130, 200, 150));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Kapat").clicked() {
-                        acts.push(UiAction::Deselect);
-                    }
+            // a short window scrolls the panel instead of letting it run off the bottom
+            egui::ScrollArea::vertical().id_salt("worker_scroll").max_height(room).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    crate::ui_art::heading(ui, crate::ui_art::Glyph::Route, &format!("{} #{}", kind_name(a.kind), i), Color32::from_rgb(130, 200, 150));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Kapat").clicked() {
+                            acts.push(UiAction::Deselect);
+                        }
+                    });
                 });
-            });
-            ui.separator();
-            if let Some(item) = a.kind.upkeep_item() {
-                let label = if a.hunger == 0 { format!("{} bitti — hareketsiz", item_name(item)) } else { item_name(item).to_string() };
-                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Food, &label, a.hunger as f32 / MAX_STAT as f32, Color32::from_rgb(214, 156, 56), 270.0);
-                if ui
-                    .add_enabled(me.inventory.get(item) > 0, egui::Button::new(format!("Besle (1 {})", item_name(item))))
-                    .clicked()
-                {
-                    acts.push(UiAction::Cmd(CommandKind::Feed { target: a.id }));
-                }
-            }
-            crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Bag, &format!("Taşıdığı {}/{}", a.inventory.load(), a.capacity()), a.inventory.load() as f32 / a.capacity().max(1) as f32, Color32::from_rgb(150, 120, 70), 270.0);
-            if a.inventory.total() > 0 {
-                ui.label(RichText::new(fmt_counts(&a.inventory.counts)).small());
-            }
-            if a.route.is_empty() {
-                ui.label("Rotası yok (beklemede).");
-            } else {
-                ui.label(RichText::new(format!("Rota: {} adım", a.route.len())).strong());
-                for (k, s) in a.route.iter().enumerate() {
-                    let cur = k as u32 == a.route_i;
-                    let text = format!("{} {}", if cur { ">" } else { "-" }, step_text(s, w));
-                    if cur {
-                        ui.label(RichText::new(text).color(Color32::from_rgb(140, 220, 140)));
-                    } else {
-                        ui.label(RichText::new(text).small());
+                ui.separator();
+                if let Some(item) = a.kind.upkeep_item() {
+                    let label = if a.hunger == 0 { format!("{} bitti — hareketsiz", item_name(item)) } else { item_name(item).to_string() };
+                    crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Food, &label, a.hunger as f32 / MAX_STAT as f32, Color32::from_rgb(214, 156, 56), 270.0);
+                    if ui
+                        .add_enabled(me.inventory.get(item) > 0, egui::Button::new(format!("Besle (1 {})", item_name(item))))
+                        .clicked()
+                    {
+                        acts.push(UiAction::Cmd(CommandKind::Feed { target: a.id }));
                     }
                 }
-            }
-            let can = !ui_ctx.recorded.is_empty() && !ui_ctx.recording;
-            let btn = format!("Kayıtlı rotayı ata ({} adım)", ui_ctx.recorded.len());
-            if ui.add_enabled(can, egui::Button::new(btn)).clicked() {
-                acts.push(UiAction::AssignRecorded(a.id));
-            }
-            let pen = w
-                .buildings
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| b.kind == BuildingKind::Pen)
-                .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
-                .map(|(pi, _)| pi as u32);
-            if matches!(a.kind, AgentKind::Ox | AgentKind::Horse) {
-                for (item, label) in [(ItemKind::Cart, "Arabayı koş"), (ItemKind::Plow, "Sabanı koş")] {
-                    if me.inventory.get(item) > 0 && a.inventory.get(item) == 0 {
-                        let near = (me.x - a.x).pow(2) + (me.y - a.y).pow(2) <= alaz_sim::world::USE_RADIUS_MM.pow(2);
-                        let resp = ui.add_enabled(near, egui::Button::new(label));
-                        if resp.on_disabled_hover_text("Hayvanın yanına git (3 m).").clicked() {
-                            acts.push(UiAction::Cmd(CommandKind::Hitch { worker: a.id, item }));
+                crate::ui_art::stat_bar(ui, crate::ui_art::Glyph::Bag, &format!("Taşıdığı {}/{}", a.inventory.load(), a.capacity()), a.inventory.load() as f32 / a.capacity().max(1) as f32, Color32::from_rgb(150, 120, 70), 270.0);
+                if a.inventory.total() > 0 {
+                    ui.label(RichText::new(fmt_counts(&a.inventory.counts)).small());
+                }
+                if a.route.is_empty() {
+                    ui.label("Rotası yok (beklemede).");
+                } else {
+                    ui.label(RichText::new(format!("Rota: {} adım", a.route.len())).strong());
+                    for (k, s) in a.route.iter().enumerate() {
+                        let cur = k as u32 == a.route_i;
+                        let text = format!("{} {}", if cur { ">" } else { "-" }, step_text(s, w));
+                        if cur {
+                            ui.label(RichText::new(text).color(Color32::from_rgb(140, 220, 140)));
+                        } else {
+                            ui.label(RichText::new(text).small());
                         }
                     }
                 }
-                let field = w
-                    .buildings
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, b)| b.kind == BuildingKind::Field)
-                    .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
-                    .map(|(fi, _)| fi as u32);
-                let gin = w
-                    .buildings
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, b)| b.kind == BuildingKind::AnimalGin)
-                    .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
-                    .map(|(gi, _)| gi as u32);
-                if let Some(gin) = gin
-                    && ui.button("Maneje götür").on_hover_text("Manejin çevresinde döner: 6 m içindeki değirmeni çevirir.").clicked() {
-                        let route = vec![RouteStep::Deposit { building: gin }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
-                        acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
-                    }
-                if let Some(field) = field.filter(|_| a.inventory.get(ItemKind::Plow) > 0)
-                    && ui.button("Tarlaya götür").on_hover_text("Sabanla tarlanın yanında durur: ekin iki kat hızlı büyür.").clicked() {
-                        let route = vec![RouteStep::Deposit { building: field }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
-                        acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
-                    }
-            }
-            if let Some(pen) = pen.filter(|_| a.kind != AgentKind::Bot) {
-                // walk in, drop any fodder carried, then stay put a long while (the route loops)
-                if ui.button("Ağıla götür").on_hover_text("Ağılda kalır; taşıdığı yemi yemliğe koyar.").clicked() {
-                    let route = vec![RouteStep::Deposit { building: pen }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
-                    acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
+                let can = !ui_ctx.recorded.is_empty() && !ui_ctx.recording;
+                let btn = format!("Kayıtlı rotayı ata ({} adım)", ui_ctx.recorded.len());
+                if ui.add_enabled(can, egui::Button::new(btn)).clicked() {
+                    acts.push(UiAction::AssignRecorded(a.id));
                 }
-            }
-            if ui.add_enabled(!a.route.is_empty(), egui::Button::new("Rotayı durdur")).clicked() {
-                acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route: Vec::new() }));
-            }
-            if !a.kind.can_harvest() {
-                ui.label(RichText::new("Hayvanlar toplayamaz, sadece taşır.").small().weak());
-            }
+                let pen = w
+                    .buildings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| b.kind == BuildingKind::Pen)
+                    .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
+                    .map(|(pi, _)| pi as u32);
+                if matches!(a.kind, AgentKind::Ox | AgentKind::Horse) {
+                    for (item, label) in [(ItemKind::Cart, "Arabayı koş"), (ItemKind::Plow, "Sabanı koş")] {
+                        if me.inventory.get(item) > 0 && a.inventory.get(item) == 0 {
+                            let near = (me.x - a.x).pow(2) + (me.y - a.y).pow(2) <= alaz_sim::world::USE_RADIUS_MM.pow(2);
+                            let resp = ui.add_enabled(near, egui::Button::new(label));
+                            if resp.on_disabled_hover_text("Hayvanın yanına git (3 m).").clicked() {
+                                acts.push(UiAction::Cmd(CommandKind::Hitch { worker: a.id, item }));
+                            }
+                        }
+                    }
+                    let field = w
+                        .buildings
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, b)| b.kind == BuildingKind::Field)
+                        .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
+                        .map(|(fi, _)| fi as u32);
+                    let gin = w
+                        .buildings
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, b)| b.kind == BuildingKind::AnimalGin)
+                        .min_by_key(|(_, b)| (a.x - b.x).pow(2) + (a.y - b.y).pow(2))
+                        .map(|(gi, _)| gi as u32);
+                    if let Some(gin) = gin
+                        && ui.button("Maneje götür").on_hover_text("Manejin çevresinde döner: 6 m içindeki değirmeni çevirir.").clicked() {
+                            let route = vec![RouteStep::Deposit { building: gin }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
+                            acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
+                        }
+                    if let Some(field) = field.filter(|_| a.inventory.get(ItemKind::Plow) > 0)
+                        && ui.button("Tarlaya götür").on_hover_text("Sabanla tarlanın yanında durur: ekin iki kat hızlı büyür.").clicked() {
+                            let route = vec![RouteStep::Deposit { building: field }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
+                            acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
+                        }
+                }
+                if let Some(pen) = pen.filter(|_| a.kind != AgentKind::Bot) {
+                    // walk in, drop any fodder carried, then stay put a long while (the route loops)
+                    if ui.button("Ağıla götür").on_hover_text("Ağılda kalır; taşıdığı yemi yemliğe koyar.").clicked() {
+                        let route = vec![RouteStep::Deposit { building: pen }, RouteStep::Wait { ticks: 10 * 60 * TICKS_PER_SECOND as u32 }];
+                        acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route }));
+                    }
+                }
+                if ui.add_enabled(!a.route.is_empty(), egui::Button::new("Rotayı durdur")).clicked() {
+                    acts.push(UiAction::Cmd(CommandKind::SetRoute { worker: a.id, route: Vec::new() }));
+                }
+                if !a.kind.can_harvest() {
+                    ui.label(RichText::new("Hayvanlar toplayamaz, sadece taşır.").small().weak());
+                }
+            });
         });
     });
 }
@@ -2961,7 +3014,7 @@ mod ui_tests {
             anchor: Some([0.0, 0.0]),
             grip: true,
             time_scale: 1,
-            evo: 9.0, yaw: 0.0, cave_tiles: None,
+            evo: 9.0, yaw: 0.0, cave_tiles: None, surface: None,
         };
         draw(ctx, &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
     }
@@ -2979,6 +3032,120 @@ mod ui_tests {
             }
         }
         h.run();
+    }
+
+    struct Mapped {
+        w: World,
+        knap: KnapState,
+        acts: Vec<UiAction>,
+        tab: Option<Tab>,
+        selection: Option<Selection>,
+        binds: Keybinds,
+        surface: crate::surface_map::SurfaceMap,
+    }
+
+    fn mapped_harness(mut w: World, selection: Option<Selection>, size: egui::Vec2) -> egui_kittest::Harness<'static, Mapped> {
+        w.mark_seen(ItemKind::Stone);
+        let mut surface = crate::surface_map::SurfaceMap::default();
+        surface.observe(&w, AgentId(0));
+        let state = Mapped { w, knap: KnapState::default(), acts: Vec::new(), tab: None, selection, binds: Keybinds::default(), surface };
+        let mut h = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+            |ui, s: &mut Mapped| {
+                let ui_ctx = UiCtx {
+                    hints: &[], build_mode: None, grid_snap: false, selection: s.selection, recording: false, recorded: &[], me: AgentId(0),
+                    net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 45.0,
+                    cave_tiles: None, surface: Some(&s.surface),
+                };
+                draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
+            },
+            state,
+        );
+        h.run_steps(3);
+        h
+    }
+
+    fn surface_world() -> World {
+        let mut w = World::new(5);
+        let (sx, sy) = w.spawn_mm;
+        w.spawn_agent(sx, sy);
+        w
+    }
+
+    #[test]
+    fn the_small_map_leaves_the_building_panel_clear() {
+        for zoom in [1.0f32, 1.5] {
+            let mut w = surface_world();
+            w.learn_everything();
+            let kind = *BuildingKind::ALL.iter().find(|&&k| !crate::inv::machine::opens_window(&w, k)).expect("a plain building");
+            let (x, y) = w.spawn_mm;
+            w.buildings.push(alaz_sim::Building::new(kind, x + 2000, y));
+            let mut h = mapped_harness(w, Some(Selection::Building(0)), egui::vec2(800.0, 600.0));
+            let base = h.ctx.zoom_factor();
+            h.ctx.set_zoom_factor(base * zoom);
+            h.run_steps(4);
+            let window = h.ctx.content_rect();
+            let map = h.get_by_label("Küçük harita").rect();
+            assert!(window.contains_rect(map), "zoom {zoom}: {map:?}");
+            for label in ["Kapat", "Taşı", "Döndür"] {
+                let r = h.get_by_label(label).rect();
+                assert!(window.contains_rect(r), "zoom {zoom}: {label} {r:?} outside {window:?}");
+                assert!(!r.intersects(map), "zoom {zoom}: {label} {r:?} under the map {map:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_map_button_opens_the_large_map_and_it_closes_again() {
+        let mut h = mapped_harness(surface_world(), None, egui::vec2(1000.0, 720.0));
+        h.get_by_label_contains("Harita [").click();
+        h.run_steps(2);
+        assert!(h.state().acts.iter().any(|a| matches!(a, UiAction::ToggleMap)), "the button asks for the map");
+        let s = h.state_mut();
+        s.acts.clear();
+        assert!(toggle_map(&mut s.knap));
+        h.run_steps(3);
+        assert!(h.query_by_label("Harita alanı").is_some());
+        assert!(h.query_by_label("Küçük harita").is_none(), "one map at a time");
+        h.get_by_label("Kampımı buraya koy").click();
+        h.run_steps(2);
+        assert!(h.state().acts.iter().any(|a| matches!(a, UiAction::SetCamp(Some(_)))));
+        h.get_by_label("Kapat [M]").click();
+        h.run_steps(3);
+        assert!(!h.state().knap.map.open);
+        assert!(h.query_by_label("Küçük harita").is_some());
+    }
+
+    #[test]
+    fn the_small_map_steps_aside() {
+        let mut h = mapped_harness(surface_world(), None, egui::vec2(1000.0, 720.0));
+        assert!(h.query_by_label("Küçük harita").is_some());
+        h.state_mut().tab = Some(Tab::Craft);
+        h.run_steps(3);
+        assert!(h.query_by_label("Küçük harita").is_none(), "the bag window has the screen");
+        h.state_mut().tab = None;
+        h.state_mut().knap.journal.book_open = true;
+        h.run_steps(3);
+        assert!(h.query_by_label("Küçük harita").is_none(), "so has the book");
+        h.state_mut().knap.journal.book_open = false;
+        toggle_map(&mut h.state_mut().knap);
+        h.state_mut().tab = Some(Tab::Goals);
+        h.run_steps(3);
+        assert!(!h.state().knap.map.open, "opening a tab puts the map away");
+
+        let mut w = World::with_size(alaz_sim::map::tag_seed_natural(42, 256), 256, 256);
+        let node = w.node_at(222, 150).unwrap();
+        let (x, y) = w.nodes[node.0 as usize].center_mm();
+        w.spawn_agent(x, y);
+        w.agents[0].inventory.counts[ItemKind::Torch as usize] = 1;
+        let position = w.cave_entrance_destination(node).unwrap();
+        w.step(&[Command { agent: AgentId(0), kind: CommandKind::MoveToFloor { position } }]);
+        for _ in 0..100 {
+            if w.agents[0].cave_view().is_some() { break; }
+            w.step(&[]);
+        }
+        assert!(w.agents[0].cave_view().is_some());
+        let h = mapped_harness(w, None, egui::vec2(1000.0, 720.0));
+        assert!(h.query_by_label("Küçük harita").is_none(), "underground the cave map stands there");
     }
 
     #[test]
@@ -3295,7 +3462,7 @@ mod ui_tests {
                     move |ui, s| {
                         let ui_ctx = UiCtx {
                             hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, cave_tiles: None,
+                            net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: None, grip: false, time_scale: 1, evo: 9.0, yaw: 30.0, cave_tiles: None, surface: None,
                         };
                         draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                     },
@@ -3387,7 +3554,7 @@ mod ui_tests {
                     let ui_ctx_anchor: [f32; 2] = anchor;
                     let ui_ctx = UiCtx {
                         hints: &[], build_mode: None, grid_snap: false, selection: None, recording: false, recorded: &[], me: AgentId(0),
-                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, cave_tiles: None,
+                        net_status: "", last_strike: None, tab: s.tab, binds: &s.binds, anchor: Some(ui_ctx_anchor), grip: true, time_scale: 1, evo: 9.0, yaw: 0.0, cave_tiles: None, surface: None,
                     };
                     draw(ui.ctx(), &s.w, &ui_ctx, &mut s.knap, &mut s.acts);
                 },
