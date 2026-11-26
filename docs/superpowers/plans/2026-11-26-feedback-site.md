@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Pin the versions above exactly (no `^`). Each is at least one week old.
-- Sizes in bytes: screenshot 2_500_000; log 300_000; save 1_000_000; fields 16_000; whole request 4_000_000.
+- Sizes in bytes: screenshot 2_500_000; log 300_000; save 1_000_000; fields 20_000; whole request 4_000_000.
 - Limits: 5 reports per hour and 20 per day per network address; 100 per day and 500 per 30 days for all senders; 800_000_000 stored bytes.
 - Upload answers: 201 stored, 200 already stored, 400 not valid, 413 too large, 429 with `Retry-After`, 503 full or unavailable.
 - The server keeps a keyed hash (HMAC-SHA-256) of the address for two days, never the address.
@@ -59,7 +59,7 @@ test.each([
 ])('rejects %j', (over) => { expect(parse(over)).toBeNull(); });
 test('counts characters, not UTF-16 units', () => { expect(parse({ text: '🪨'.repeat(4000) })).not.toBeNull(); });
 test('removes control characters but keeps lines', () => { expect(parse({ text: 'a\u0000b\u001b\nc' })!.text).toBe('ab\nc'); });
-test('rejects text that is not JSON or too long', () => { expect(parseFields('{')).toBeNull(); expect(parseFields(' '.repeat(16_001))).toBeNull(); });
+test('rejects text that is not JSON or too long', () => { expect(parseFields('{')).toBeNull(); expect(parseFields(' '.repeat(20_001))).toBeNull(); });
 test('screenshot needs a PNG header and a width up to 1920', () => {
   expect(checkFile('screenshot', png(1920, 1080))).toBe(true);
   expect(checkFile('screenshot', png(1921, 1080))).toBe(false);

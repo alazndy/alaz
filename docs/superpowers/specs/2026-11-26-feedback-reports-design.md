@@ -81,7 +81,7 @@ The other way is our own sign-in code plus a mail service. It adds security code
 
 | Part | Content | Largest size |
 |---|---|---|
-| Fields | report id (random), kind, text, name, game version, operating system, graphics adapter, window size, interface zoom, seed, world size, day, mode (solo, host, guest), crash flag | 16 KB |
+| Fields | report id (random), kind, text, name, game version, operating system, graphics adapter, window size, interface zoom, seed, world size, day, mode (solo, host, guest), crash flag | 20 KB |
 | `screenshot.png` | game window only, at most 1920 wide, made smaller until it fits | 2.5 MB |
 | `log.txt` | end of the new game log, then the last 200 lines of `playlog.txt` | 300 KB |
 | `save.alz` | the world as it is now, encoded in memory | 1 MB |
