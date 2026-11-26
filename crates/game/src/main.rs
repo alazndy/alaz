@@ -31,6 +31,7 @@ mod gfxcfg;
 mod saveio;
 mod story;
 mod style;
+mod surface_map;
 mod ui_art;
 mod uishot;
 mod update_ui;
