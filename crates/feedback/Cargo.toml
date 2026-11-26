@@ -1,0 +1,12 @@
+[package]
+name = "alaz-feedback"
+version.workspace = true
+edition.workspace = true
+
+# Everything of a feedback report that needs no window. All of these are already used by other crates here.
+[dependencies]
+getrandom = "0.3"
+png = "0.18.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
