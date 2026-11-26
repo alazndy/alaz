@@ -92,3 +92,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-25] [Claude Kaira]: Added the settings menu (sound, screen, keys), four volume groups, generated music and borderless fullscreen with F11.
 - [2026-11-25] [Claude Kaira]: Longer ape stages, evolving moment (bump and sparks), petting pose while taming.
 - [2026-11-26] [Claude Kaira]: Added leather and frame back packs (capacity, recipes, icons, worn look, tests).
+- [2026-11-26] [Claude Kaira]: Merged back packs (PR #15). Wrote the surface map design (`docs/superpowers/specs/2026-11-26-surface-map-design.md`, branch `feat/map`); it waits for approval.
