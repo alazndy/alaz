@@ -1,3 +1,6 @@
+import { PGlite } from '@electric-sql/pglite';
+import { ensureSchema, type Db } from '@/lib/db';
+
 /** The first bytes of a PNG: signature, then the IHDR chunk with the size. */
 export function png(width: number, height: number, length = 33): Uint8Array {
   const out = new Uint8Array(Math.max(length, 33));
@@ -24,3 +27,12 @@ export const fields = {
   mode: 'solo',
   crash: false,
 } as const;
+
+/** A real Postgres inside the test process. */
+export async function testDb(): Promise<Db> {
+  const pg = new PGlite();
+  const db: Db = { query: async <T,>(sql: string, params?: unknown[]) => (await pg.query<T>(sql, params)).rows };
+  await ensureSchema(db);
+  await ensureSchema(db);
+  return db;
+}
