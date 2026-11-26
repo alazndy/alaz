@@ -586,6 +586,33 @@ mod tests {
     }
 
     #[test]
+    fn the_large_map_fits_a_small_window_at_a_large_interface_size() {
+        let mut h = large(egui::vec2(800.0, 600.0));
+        h.ctx.set_zoom_factor(1.5);
+        h.run_steps(4);
+        let window = h.ctx.content_rect();
+        for label in ["Kapat [M]", "Beni ortala", "Kampımı buraya koy", "Kamp işaretini kaldır", "Harita alanı"] {
+            let r = h.get_by_label(label).rect();
+            assert!(window.contains_rect(r), "{label}: {r:?} outside {window:?}");
+        }
+    }
+
+    #[test]
+    fn a_right_click_puts_the_camp_where_it_lands() {
+        let mut h = large(egui::vec2(1200.0, 900.0));
+        let me = tile_of(h.state().0.agents[0].x, h.state().0.agents[0].y);
+        // the middle of the map is the player: six tiles east of it, at the starting zoom
+        let spot = h.get_by_label("Harita alanı").rect().center() + egui::vec2(6.0 * ZOOM_START, 0.0);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerMoved(spot));
+            h.event(egui::Event::PointerButton { pos: spot, button: egui::PointerButton::Secondary, pressed, modifiers: Default::default() });
+            h.step();
+        }
+        h.step();
+        assert!(h.state().3.contains(&MapAct::SetCamp(Some((me.0 + 6, me.1)))), "{me:?}: {:?}", h.state().3);
+    }
+
+    #[test]
     fn zoom_keeps_the_spot_under_the_pointer() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 200.0));
         let pointer = egui::pos2(300.0, 50.0);
