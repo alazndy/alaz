@@ -1624,8 +1624,8 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
     draw_status(ctx, w, me, ui_ctx);
     draw_body(ctx, w, me);
     draw_needs(ctx, w, me);
-    // while the hands are busy with a workpiece, nothing else may talk over it
-    if w.craft_view(ui_ctx.me).is_none() {
+    // while the hands are busy with a workpiece, nothing else may talk over it; nor through the large map
+    if w.craft_view(ui_ctx.me).is_none() && !knap.map.open {
         draw_goal_banner(ctx, w, me);
         draw_hints(ctx, w, ui_ctx, ui_ctx.tab.is_some());
     }
@@ -1716,6 +1716,7 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
 
     // the workpiece needs the screen: side panels wait until the job is done
     let in_cave = w.agents.iter().any(|a| a.id == ui_ctx.me && a.cave_view().is_some());
+    let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave || knap.map.open { None } else { ui_ctx.selection };
     // where the panels on the right may start: under the small map when it is there
     let mut panel_top = 12.0;
     if let Some(surface) = ui_ctx.surface {
@@ -1726,27 +1727,32 @@ pub fn draw(ctx: &egui::Context, w: &World, ui_ctx: &UiCtx, knap: &mut KnapState
                     crate::map_ui::MapAct::SetCamp(camp) => acts.push(UiAction::SetCamp(camp)),
                 }
             }
-        } else if !busy && !in_cave {
+        } else if !busy && !in_cave
+            // in a short window an open panel needs the corner more than the map does
+            && (selection.is_none() || crate::map_ui::SMALL + 48.0 + knap.panel_h <= ctx.content_rect().height() - BELOW_PANEL)
+        {
             let rect = crate::map_ui::draw_small(ctx, w, me, surface, &mut knap.map, ui_ctx.yaw);
             panel_top = rect.bottom() - ctx.content_rect().top() + 8.0;
         }
     }
-    let selection = if w.craft_view(ui_ctx.me).is_some() || in_cave || knap.map.open { None } else { ui_ctx.selection };
     match selection {
         Some(Selection::Building(i)) => {
             // machines show in the inventory window instead
             if let Some(b) = w.buildings.get(i).filter(|b| !crate::inv::machine::opens_window(w, b.kind)) {
-                draw_building(ctx, w, i, b, panel_top, acts);
+                knap.panel_h = draw_building(ctx, w, i, b, panel_top, acts);
             }
         }
         Some(Selection::Agent(i)) => {
             if let Some(a) = w.agents.get(i) {
-                draw_worker(ctx, w, i, a, me, ui_ctx, panel_top, acts);
+                knap.panel_h = draw_worker(ctx, w, i, a, me, ui_ctx, panel_top, acts);
             }
         }
         None => {}
     }
 }
+
+/// Height kept free at the bottom right for the needs panel and the compass.
+const BELOW_PANEL: f32 = 190.0;
 
 /// Open or close the large map; true when it is now open (the caller then puts its own windows away).
 pub fn toggle_map(knap: &mut KnapState) -> bool {
@@ -1789,6 +1795,8 @@ fn craft_area(ctx: &egui::Context, name: &str) -> egui::Area {
 pub struct KnapState {
     /// How the maps are being looked at; kept between crafts like the journal.
     pub map: crate::map_ui::MapView,
+    /// How tall the panel on the right was in the last frame.
+    panel_h: f32,
     holding: bool,
     /// 0..=1 swing force while the button is held; it rises and falls so it has to be timed.
     charge: f32,
@@ -1815,7 +1823,7 @@ struct RubPass {
 
 impl Default for KnapState {
     fn default() -> Self {
-        Self { map: Default::default(), holding: false, charge: 0.0, rising: false, notches: Vec::new(), seen_done: 0, hands: [255; 4], rub: None, creative_search: String::new(), journal: Default::default() }
+        Self { map: Default::default(), panel_h: 0.0, holding: false, charge: 0.0, rising: false, notches: Vec::new(), seen_done: 0, hands: [255; 4], rub: None, creative_search: String::new(), journal: Default::default() }
     }
 }
 
@@ -2488,7 +2496,7 @@ fn draw_building(
     b: &alaz_sim::Building,
     top: f32,
     acts: &mut Vec<UiAction>,
-) {
+) -> f32 {
     let defs = rules();
     let def = defs.building(b.kind);
     let room = (ctx.content_rect().height() - top - 24.0).max(120.0);
@@ -2534,7 +2542,10 @@ fn draw_building(
                 ui.label(RichText::new("Kullanmak için yanına git (3 m).").small().weak());
             });
         });
-    });
+    })
+    .response
+    .rect
+    .height()
 }
 
 /// What is said about one building besides its slots: heat, notes, warnings, requirement lines. The building panel
@@ -2873,7 +2884,7 @@ fn draw_worker(
     ui_ctx: &UiCtx,
     top: f32,
     acts: &mut Vec<UiAction>,
-) {
+) -> f32 {
     let room = (ctx.content_rect().height() - top - 24.0).max(120.0);
     egui::Area::new(egui::Id::NULL.with("worker")).anchor(Align2::RIGHT_TOP, [-12.0, top]).show(ctx, |ui| {
         panel(ui, 6.0, |ui| {
@@ -2981,7 +2992,10 @@ fn draw_worker(
                 }
             });
         });
-    });
+    })
+    .response
+    .rect
+    .height()
 }
 
 #[cfg(test)]
@@ -3071,27 +3085,56 @@ mod ui_tests {
         w
     }
 
+    fn beside_a_building(size: egui::Vec2) -> egui_kittest::Harness<'static, Mapped> {
+        let mut w = surface_world();
+        w.learn_everything();
+        let kind = *BuildingKind::ALL.iter().find(|&&k| !crate::inv::machine::opens_window(&w, k)).expect("a plain building");
+        let (x, y) = w.spawn_mm;
+        w.buildings.push(alaz_sim::Building::new(kind, x + 2000, y));
+        mapped_harness(w, Some(Selection::Building(0)), size)
+    }
+
     #[test]
     fn the_small_map_leaves_the_building_panel_clear() {
-        for zoom in [1.0f32, 1.5] {
-            let mut w = surface_world();
-            w.learn_everything();
-            let kind = *BuildingKind::ALL.iter().find(|&&k| !crate::inv::machine::opens_window(&w, k)).expect("a plain building");
-            let (x, y) = w.spawn_mm;
-            w.buildings.push(alaz_sim::Building::new(kind, x + 2000, y));
-            let mut h = mapped_harness(w, Some(Selection::Building(0)), egui::vec2(800.0, 600.0));
-            let base = h.ctx.zoom_factor();
-            h.ctx.set_zoom_factor(base * zoom);
-            h.run_steps(4);
-            let window = h.ctx.content_rect();
-            let map = h.get_by_label("Küçük harita").rect();
-            assert!(window.contains_rect(map), "zoom {zoom}: {map:?}");
-            for label in ["Kapat", "Taşı", "Döndür"] {
-                let r = h.get_by_label(label).rect();
-                assert!(window.contains_rect(r), "zoom {zoom}: {label} {r:?} outside {window:?}");
-                assert!(!r.intersects(map), "zoom {zoom}: {label} {r:?} under the map {map:?}");
-            }
+        let h = beside_a_building(egui::vec2(1280.0, 900.0));
+        let window = h.ctx.content_rect();
+        let map = h.get_by_label("Küçük harita").rect();
+        assert!(window.contains_rect(map), "{map:?}");
+        for label in ["Kapat", "Taşı", "Döndür"] {
+            let r = h.get_by_label(label).rect();
+            assert!(window.contains_rect(r), "{label} {r:?} outside {window:?}");
+            assert!(r.top() > map.bottom(), "{label} {r:?} is not under the map {map:?}");
         }
+    }
+
+    #[test]
+    fn a_short_window_gives_the_panel_its_place_back() {
+        let mut h = beside_a_building(egui::vec2(800.0, 600.0));
+        let base = h.ctx.zoom_factor();
+        h.ctx.set_zoom_factor(base * 1.5);
+        h.run_steps(5);
+        let window = h.ctx.content_rect();
+        assert!(h.query_by_label("Küçük harita").is_none(), "no room for both in {window:?}");
+        for label in ["Kapat", "Taşı", "Döndür"] {
+            let r = h.get_by_label(label).rect();
+            assert!(window.contains_rect(r), "{label} {r:?} outside {window:?}");
+            assert!(r.top() < window.top() + 110.0, "{label} {r:?} is back at the top");
+        }
+        // closing the panel brings the map back
+        h.state_mut().selection = None;
+        h.run_steps(3);
+        assert!(h.query_by_label("Küçük harita").is_some());
+    }
+
+    #[test]
+    fn the_large_map_has_the_screen_to_itself() {
+        let w = surface_world();
+        let guide: String = guide_text(&w, &w.agents[0]).chars().take(16).collect();
+        let mut h = mapped_harness(w, None, egui::vec2(1000.0, 720.0));
+        assert!(h.query_by_label_contains(&guide).is_some(), "the banner says {guide:?}");
+        toggle_map(&mut h.state_mut().knap);
+        h.run_steps(3);
+        assert!(h.query_by_label_contains(&guide).is_none(), "no banner shining through the map");
     }
 
     #[test]

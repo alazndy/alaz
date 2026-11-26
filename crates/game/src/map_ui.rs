@@ -13,6 +13,8 @@ use std::collections::{BTreeSet, HashMap};
 /// Side of the small map, in points, and how many tiles it shows across.
 pub(crate) const SMALL: f32 = 180.0;
 const SMALL_TILES: f32 = 90.0;
+/// How far inside the small map's edge a far camp's mark sits, leaving room for its arrow.
+const CAMP_INSET: f32 = 18.0;
 /// Points per tile on the large map.
 const ZOOM_MIN: f32 = 0.25;
 const ZOOM_MAX: f32 = 12.0;
@@ -110,6 +112,13 @@ pub(crate) fn edge_point(offset: Vec2, half: f32) -> Option<Vec2> {
     (most > half).then(|| offset * (half / most))
 }
 
+/// The arrow beside the mark of a camp that is off the small map, as offsets from the map's middle.
+fn camp_arrow(edge: Vec2) -> [Vec2; 3] {
+    let out = edge.normalized();
+    let side = egui::vec2(-out.y, out.x);
+    [edge + out * 14.0, edge + out * 7.0 + side * 5.0, edge + out * 7.0 - side * 5.0]
+}
+
 /// The new middle and zoom when the map is zoomed by `factor` about `pointer`: the ground under it stays put.
 fn zoom_about(rect: Rect, pointer: Pos2, centre: (f32, f32), zoom: f32, factor: f32) -> ((f32, f32), f32) {
     let new = (zoom * factor).clamp(ZOOM_MIN, ZOOM_MAX);
@@ -176,6 +185,11 @@ fn resource_color(name: &str) -> Color32 {
         "Lif otu" | "Ot" => Color32::from_rgb(238, 224, 130),
         _ => Color32::from_rgb(24, 16, 30),
     }
+}
+
+/// How big a resource's dot is: small enough that the ground shows between them.
+fn mark_radius(ppt: f32) -> f32 {
+    (ppt * 0.6).clamp(1.0, 3.5)
 }
 
 fn building_mark(painter: &egui::Painter, at: Pos2, size: f32, kind: BuildingKind) {
@@ -264,7 +278,7 @@ fn paint(painter: &egui::Painter, win: &Window, world: &World, me: &Agent, map: 
             painter.rect_filled(Rect::from_center_size(p, Vec2::splat(2.0)), 0.0, resource_color(name));
         } else {
             let edge = if kind == NodeKind::CaveMouth { Color32::WHITE } else { Color32::from_black_alpha(190) };
-            painter.circle(p, 3.0, resource_color(name), Stroke::new(1.0, edge));
+            painter.circle(p, mark_radius(win.ppt), resource_color(name), Stroke::new(0.5, edge));
         }
     }
     for (&tile, &kind) in records.buildings.range(left..=right) {
@@ -306,13 +320,11 @@ pub(crate) fn draw_small(ctx: &egui::Context, world: &World, me: &Agent, map: &S
             if let Some(camp) = map.records().camp {
                 let to = egui::vec2(camp.0 as f32 + 0.5, camp.1 as f32 + 0.5) - win.centre;
                 let on_map = project(to, yaw_deg) * win.ppt;
-                if let Some(edge) = edge_point(on_map, SMALL * 0.5 - 10.0) {
-                    let at = resp.rect.center() + edge;
-                    camp_mark(&painter, at);
-                    let out = edge.normalized();
-                    let side = egui::vec2(-out.y, out.x);
+                if let Some(edge) = edge_point(on_map, SMALL * 0.5 - CAMP_INSET) {
+                    let middle = resp.rect.center();
+                    camp_mark(&painter, middle + edge);
                     painter.add(Shape::convex_polygon(
-                        vec![at + out * 14.0, at + out * 7.0 + side * 5.0, at + out * 7.0 - side * 5.0],
+                        camp_arrow(edge).map(|p| middle + p).to_vec(),
                         Color32::from_rgb(250, 204, 80),
                         Stroke::new(1.0, Color32::BLACK),
                     ));
@@ -463,6 +475,16 @@ mod tests {
     }
 
     #[test]
+    fn the_whole_camp_arrow_is_on_the_small_map() {
+        for to in [egui::vec2(0.0, -500.0), egui::vec2(500.0, 500.0), egui::vec2(-500.0, 90.0)] {
+            let edge = edge_point(to, SMALL * 0.5 - CAMP_INSET).expect("far away");
+            for p in camp_arrow(edge) {
+                assert!(p.x.abs() <= SMALL * 0.5 && p.y.abs() <= SMALL * 0.5, "{to:?}: {p:?}");
+            }
+        }
+    }
+
+    #[test]
     fn unexplored_pixels_stay_fog() {
         let (w, _) = world();
         let mut records = Records::default();
@@ -574,6 +596,14 @@ mod tests {
         assert!((a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3);
         assert_eq!(zoom_about(rect, pointer, (0.0, 0.0), 3.0, 100.0).1, ZOOM_MAX);
         assert_eq!(zoom_about(rect, pointer, (0.0, 0.0), 3.0, 0.001).1, ZOOM_MIN);
+    }
+
+    #[test]
+    fn resource_marks_grow_with_the_zoom_and_stay_small_on_the_small_map() {
+        assert!(mark_radius(SMALL / SMALL_TILES) <= 1.5, "the ground must show between them");
+        assert!(mark_radius(ZOOM_START) < 2.0);
+        assert_eq!(mark_radius(ZOOM_MIN), 1.0);
+        assert_eq!(mark_radius(ZOOM_MAX), 3.5);
     }
 
     #[test]
