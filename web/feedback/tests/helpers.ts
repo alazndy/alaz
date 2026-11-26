@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { ensureSchema, type Db } from '@/lib/db';
+import type { FileStore } from '@/lib/files';
 
 /** The first bytes of a PNG: signature, then the IHDR chunk with the size. */
 export function png(width: number, height: number, length = 33): Uint8Array {
@@ -28,11 +29,37 @@ export const fields = {
   crash: false,
 } as const;
 
-/** A real Postgres inside the test process. */
-export async function testDb(): Promise<Db> {
+// starting Postgres takes seconds, so each test file starts one and empties it between tests
+let shared: Promise<Db> | undefined;
+
+async function start(): Promise<Db> {
   const pg = new PGlite();
   const db: Db = { query: async <T,>(sql: string, params?: unknown[]) => (await pg.query<T>(sql, params)).rows };
   await ensureSchema(db);
   await ensureSchema(db);
   return db;
+}
+
+/** A real Postgres inside the test process, with empty tables. */
+export async function testDb(): Promise<Db> {
+  const db = await (shared ??= start());
+  await db.query('TRUNCATE reports, members, uploads');
+  return db;
+}
+
+export function memoryStore() {
+  const held = new Map<string, Uint8Array>();
+  let n = 0;
+  const store: FileStore = {
+    put: async (path, bytes) => {
+      const stored = `${path}-${++n}`;
+      held.set(stored, bytes);
+      return stored;
+    },
+    get: async (path) => held.get(path) ?? null,
+    del: async (paths) => {
+      for (const path of paths) held.delete(path);
+    },
+  };
+  return { store, held };
 }
