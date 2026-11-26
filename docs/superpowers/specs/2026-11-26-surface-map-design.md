@@ -1,6 +1,6 @@
 # Surface map: design
 
-Date: 2026-11-26. Status: waiting for the user's approval. Size: project.
+Date: 2026-11-26. Status: approved by the user on 2026-11-26. Size: project.
 
 ## Intent
 The user wants a map to return to camp and to remember where resources are.
