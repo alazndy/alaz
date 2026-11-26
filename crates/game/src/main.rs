@@ -722,6 +722,7 @@ struct App {
     /// The stage coordinate drawn this frame (`alaz_render::Evo`), for the bodies and the portrait.
     evo_pos: f32,
     cave_map: cave_map::CaveMap,
+    surface_map: surface_map::SurfaceMap,
     /// Dev aid: `ALAZ_DEMO_EVO=0..9` draws everyone at this stage coordinate, whatever the world says.
     evo_force: Option<f32>,
     knap: hud::KnapState,
@@ -808,13 +809,17 @@ impl App {
                 }
             }
         }
-        let (world, seen) = match loaded {
-            _ if joined.is_some() => (joined.take().unwrap(), Default::default()),
+        let (world, seen, land) = match loaded {
+            _ if joined.is_some() => {
+                let world = joined.take().unwrap();
+                let land = saveio::guest_load(&world);
+                (world, Default::default(), land)
+            }
             Some(save) => {
                 hints.push((format!("Kayıt yüklendi (gün {}).", save.world.day() + 1), hud::HINT_SECONDS));
-                (save.world, save.seen)
+                (save.world, save.seen, save.surface)
             }
-            None if show_menu => (new_world(1, false, 64), Default::default()),
+            None if show_menu => (new_world(1, false, 64), Default::default(), Default::default()),
             None => {
                 hints.push(("Sol tık: yürü. Sağ tık: topla. Taş, odun, yemiş, dal ve lif topla.".into(), hud::HINT_SECONDS));
                 hints.push(("Yap sekmesinde eline iki şey alıp Dene dersen ne olacağını öğrenirsin.".into(), hud::HINT_SECONDS));
@@ -823,7 +828,7 @@ impl App {
                     args.hardcore,
                     args.size,
                     alaz_sim::world::WorldSettings { difficulty: if args.creative { alaz_sim::world::Difficulty::Creative } else { Default::default() }, ..Default::default() },
-                ), Default::default())
+                ), Default::default(), Default::default())
             }
         };
         let mut app = Self {
@@ -861,6 +866,7 @@ impl App {
             evo_view: None,
             evo_pos: 9.0,
             cave_map: cave_map::CaveMap::from_known(seen),
+            surface_map: surface_map::SurfaceMap::from_records(land),
             evo_force: std::env::var("ALAZ_DEMO_EVO").ok().and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 9.0)),
             knap: hud::KnapState::default(),
             story: story::Story::default(),
@@ -921,6 +927,7 @@ impl App {
             Ok("creative") => Some(hud::Tab::Creative),
             _ => None,
         };
+        app.knap.map.open = std::env::var("ALAZ_DEMO_TAB").as_deref() == Ok("map");
         // ALAZ_DEMO_JOURNAL=days|finds|recipes opens that page of the journal
         match std::env::var("ALAZ_DEMO_JOURNAL").as_deref() {
             Ok("finds") => app.knap.journal.section = 1,
@@ -1037,6 +1044,7 @@ impl App {
         }
         self.world = w;
         self.cave_map = cave_map::CaveMap::default();
+        self.surface_map = Default::default();
         self.pending.clear();
         self.build_mode = None;
         self.selected = None;
@@ -1068,6 +1076,43 @@ impl App {
     fn restore_saved_world(&mut self, save: saveio::LoadedSave) {
         self.replace_world(save.world);
         self.cave_map = cave_map::CaveMap::from_known(save.seen);
+        self.surface_map = surface_map::SurfaceMap::from_records(save.surface);
+    }
+
+    /// Take up a server's world as a joined player, with the map kept from an earlier visit to it.
+    fn enter_server_world(&mut self, world: World) {
+        self.replace_world(world);
+        self.surface_map = surface_map::SurfaceMap::from_records(saveio::guest_load(&self.world));
+    }
+
+    /// A joined player saves no world: their map of it is the one thing of theirs to write. `None` when this is not
+    /// a joined game.
+    fn keep_guest_map(&mut self) -> Option<std::io::Result<()>> {
+        if !(matches!(self.net, Net::Client(_)) && self.no_save) {
+            return None;
+        }
+        self.surface_map.observe(&self.world, self.me);
+        let kept = saveio::guest_save(&self.world, self.surface_map.records());
+        if let Err(e) = &kept {
+            eprintln!("harita kaydedilemedi ({e})");
+            self.say("Harita kaydedilemedi.");
+        }
+        Some(kept)
+    }
+
+    fn leave_server(&mut self) {
+        // an error has already been told to the player
+        let _ = self.keep_guest_map();
+        self.net = Net::Solo;
+    }
+
+    /// Open or close the large map; the other windows make room for it.
+    fn toggle_map(&mut self) {
+        if hud::toggle_map(&mut self.knap) {
+            self.tab = None;
+            self.selected = None;
+            self.build_mode = None;
+        }
     }
 
     fn toggle_tab(&mut self, t: hud::Tab) {
@@ -1115,9 +1160,9 @@ impl App {
 
     fn input_button(&mut self, button: MouseButton, pressed: bool, ui_consumed: bool) {
         match button {
-            MouseButton::Middle => self.mid_drag = pressed.then_some(self.cursor),
+            MouseButton::Middle => self.mid_drag = (pressed && !self.knap.map.open).then_some(self.cursor),
             MouseButton::Left | MouseButton::Right if pressed => {
-                let over_ui = self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
+                let over_ui = self.knap.map.open || self.gfx.as_ref().is_some_and(|g| g.renderer.pointer_over_ui());
                 if !ui_consumed && !over_ui {
                     self.click(button == MouseButton::Left);
                 }
@@ -1127,7 +1172,7 @@ impl App {
     }
 
     fn input_wheel(&mut self, lines: f32) {
-        if self.menu.is_none() {
+        if self.menu.is_none() && !self.knap.map.open {
             self.cam.zoom = (self.cam.zoom * 1.1f32.powf(lines)).clamp(0.2, 8.0);
         }
     }
@@ -1328,7 +1373,9 @@ impl App {
         }
         match action {
             A::Menu => {
-                if self.build_mode.is_some() || self.selected.is_some() {
+                if self.knap.map.open {
+                    self.knap.map.open = false;
+                } else if self.build_mode.is_some() || self.selected.is_some() {
                     self.build_mode = None;
                     self.selected = None;
                 } else if self.tab.is_some() {
@@ -1341,8 +1388,7 @@ impl App {
             }
             // handled above, before the menu check
             A::Fullscreen => {}
-            // opened by the screen it belongs to (wired with the maps)
-            A::Map => {}
+            A::Map => self.toggle_map(),
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame
             A::Grip => {}
@@ -1444,6 +1490,7 @@ impl App {
         match a {
             M::Resume => self.menu = None,
             M::Quit => {
+                let _ = self.keep_guest_map();
                 self.quit = true;
             }
             M::SaveQuit => {
@@ -1620,9 +1667,11 @@ impl App {
                 m.connecting = false;
                 match done {
                     Ok((client, world)) => {
+                        // joining again from a joined game: keep what was seen there first
+                        let _ = self.keep_guest_map();
                         self.me = client.agent;
                         self.net = Net::Client(client);
-                        self.replace_world(world);
+                        self.enter_server_world(world);
                         self.no_save = true;
                         self.menu = None;
                         self.finder = None;
@@ -1670,11 +1719,19 @@ impl App {
     }
 
     fn save_game(&mut self, announce: bool) {
+        if let Some(kept) = self.keep_guest_map() {
+            self.last_save_tick = self.world.tick;
+            if announce && kept.is_ok() {
+                self.say("Haritan kaydedildi.");
+            }
+            return;
+        }
         if self.no_save {
             return;
         }
         self.cave_map.observe(&self.world, self.me);
-        match saveio::save(&self.world, self.me, self.cave_map.known(), &Default::default()) {
+        self.surface_map.observe(&self.world, self.me);
+        match saveio::save(&self.world, self.me, self.cave_map.known(), self.surface_map.records()) {
             Ok(outcome) => {
                 self.last_save_tick = self.world.tick;
                 match outcome {
@@ -1846,6 +1903,11 @@ impl App {
                 if client.world_generation() != previous_generation {
                     self.pending.clear();
                     self.cave_map = cave_map::CaveMap::default();
+                    // the old world's map goes to disk and the new world's comes back
+                    if let Err(e) = saveio::guest_save(&self.world, self.surface_map.records()) {
+                        eprintln!("harita kaydedilemedi ({e})");
+                    }
+                    self.surface_map = surface_map::SurfaceMap::from_records(saveio::guest_load(&w));
                 }
                 self.world = w;
                 self.recording = false;
@@ -1869,7 +1931,7 @@ impl App {
             }
             client.send(std::mem::take(&mut self.pending));
             if !client.is_connected() {
-                self.net = Net::Solo;
+                self.leave_server();
                 self.say("Sunucu bağlantısı koptu. Bu kopya yerel kalır, kaydedilmez.");
             }
         } else if self.menu.is_some() && matches!(self.net, Net::Solo) {
@@ -2174,6 +2236,7 @@ impl App {
         g.renderer.hover_node = hover;
         let (world, hints) = (&self.world, &self.hints);
         self.cave_map.observe(world, self.me);
+        self.surface_map.observe(world, self.me);
         let net_status = match &self.net {
             Net::Solo => String::new(),
             Net::Host(h) => format!("Coop: sunucu, {} oyuncu", h.players()),
@@ -2203,7 +2266,7 @@ impl App {
             evo: self.evo_pos,
             yaw: self.cam.yaw_deg,
             cave_tiles: Some(self.cave_map.known()),
-            surface: None,
+            surface: Some(&self.surface_map),
         };
         let mut acts = Vec::new();
         let mut knap = std::mem::take(&mut self.knap);
@@ -2320,8 +2383,8 @@ impl App {
                         self.say("Yeni yeri sol tıkla seç; sağ tık vazgeçer.".to_string());
                     }
                 }
-                // wired with the game loop
-                UiAction::ToggleMap | UiAction::SetCamp(_) => {}
+                UiAction::ToggleMap => self.toggle_map(),
+                UiAction::SetCamp(camp) => self.surface_map.set_camp(camp),
                 UiAction::Deselect => self.selected = None,
                 UiAction::ToggleBook => self.knap.journal.toggle_book(),
                 UiAction::ShowRecipes => {
@@ -3416,5 +3479,123 @@ mod net_tests {
             assert!(t0.elapsed() < Duration::from_secs(5), "no join within 5 s");
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+}
+
+#[cfg(test)]
+mod map_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn solo(seed: u64) -> App {
+        App::new(Args { new_game: true, seed: Some(seed), hardcore: false, demo: false, creative: false, host: false, size: 256, port: 0, join: None })
+    }
+
+    /// An app that has joined a server running the world of `seed`.
+    fn joined(seed: u64) -> (App, Host) {
+        let mut host = Host::bind("127.0.0.1:0").unwrap();
+        let mut w = World::with_size(seed, 256, 256);
+        let (sx, sy) = w.spawn_mm;
+        w.spawn_agent(sx, sy);
+        let rx = connect_in_background(host.local_addr().unwrap().to_string());
+        let t0 = Instant::now();
+        loop {
+            host.poll(&w);
+            let c = host.turn(&w, vec![]);
+            w.step(&c);
+            if let Ok(done) = rx.try_recv() {
+                let (client, world) = done.expect("join");
+                let mut app = solo(1);
+                app.me = client.agent;
+                app.net = Net::Client(client);
+                app.enter_server_world(world);
+                app.no_save = true;
+                return (app, host);
+            }
+            assert!(t0.elapsed() < Duration::from_secs(5), "no join within 5 s");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn marked(app: &mut App) -> surface_map::Records {
+        app.surface_map.observe(&app.world, app.me);
+        app.surface_map.set_camp(Some((7, 9)));
+        app.surface_map.records().clone()
+    }
+
+    #[test]
+    fn the_map_does_not_follow_to_another_world() {
+        let mut app = solo(11);
+        assert!(!marked(&mut app).is_empty());
+        app.replace_world(World::with_size(12, 256, 256));
+        assert!(app.surface_map.records().is_empty());
+    }
+
+    #[test]
+    fn a_save_takes_the_map_along_and_brings_it_back() {
+        let mut app = solo(13);
+        app.no_save = false;
+        app.surface_map.set_camp(Some((7, 9)));
+        app.save_game(false);
+        let save = saveio::load(app.me).unwrap().expect("a save");
+        assert_eq!(save.surface.camp, Some((7, 9)));
+        assert!(!save.surface.explored.is_empty(), "saving looks around first");
+        let kept = save.surface.clone();
+        app.surface_map = Default::default();
+        app.restore_saved_world(save);
+        assert_eq!(app.surface_map.records(), &kept);
+    }
+
+    #[test]
+    fn the_map_key_opens_the_map_and_escape_closes_it_first() {
+        let mut app = solo(14);
+        app.on_action(keys::Action::Craft);
+        app.on_action(keys::Action::Map);
+        assert!(app.knap.map.open);
+        assert_eq!(app.tab, None);
+        let zoom = app.cam.zoom;
+        app.input_wheel(3.0);
+        assert_eq!(app.cam.zoom, zoom, "the wheel belongs to the map");
+        app.on_action(keys::Action::Menu);
+        assert!(!app.knap.map.open);
+        assert!(app.menu.is_none(), "escape only closed the map");
+        app.input_wheel(3.0);
+        assert_ne!(app.cam.zoom, zoom);
+    }
+
+    #[test]
+    fn a_joined_player_keeps_a_map_of_the_server_world() {
+        let (mut app, _host) = joined(0x5EED_0001);
+        let records = marked(&mut app);
+        app.save_game(false);
+        assert_eq!(saveio::guest_load(&app.world), records);
+        assert_eq!(app.last_save_tick, app.world.tick);
+
+        // coming back, the map is there again
+        let world = World::with_size(0x5EED_0001, 256, 256);
+        app.surface_map = Default::default();
+        app.enter_server_world(world);
+        assert_eq!(app.surface_map.records(), &records);
+    }
+
+    #[test]
+    fn leaving_the_server_writes_the_map_first() {
+        let (mut app, _host) = joined(0x5EED_0002);
+        let records = marked(&mut app);
+        app.leave_server();
+        assert!(matches!(app.net, Net::Solo));
+        assert_eq!(saveio::guest_load(&app.world), records);
+        app.surface_map.set_camp(None);
+        app.save_game(false);
+        assert_eq!(saveio::guest_load(&app.world), records, "the local copy writes nothing more");
+    }
+
+    #[test]
+    fn quitting_from_the_menu_writes_the_guest_map() {
+        let (mut app, _host) = joined(0x5EED_0003);
+        let records = marked(&mut app);
+        app.menu_action(menu::MenuAction::Quit);
+        assert!(app.quit);
+        assert_eq!(saveio::guest_load(&app.world), records);
     }
 }
