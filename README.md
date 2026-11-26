@@ -117,6 +117,13 @@ Fare ile:
 
 ## Oynanış
 
+**Harita:**
+- Sağ üstteki küçük harita çevrende gezdiğin yeri gösterir ve kamerayla döner.
+- `M` (ya da soldaki harita düğmesi) büyük haritayı açar: tekerlekle yakınlaştır, sürükleyip kaydır, kaynak türlerini kapatıp aç. `Esc` kapatır.
+- Yalnızca keşfettiğin yerler görünür (çevrende 40 m). Kaynaklar ve binalar son gördüğün haliyle kalır.
+- **Kamp:** "Kampımı buraya koy" ya da büyük haritada sağ tık. Küçük harita kampın yönünü okla, uzaklığını metreyle yazar.
+- Dar pencerede bir bina ya da işçi paneli açıkken küçük harita yerini panele bırakır.
+
 **Sıfırdan ilk gece:** Ekrandaki "İlk adımlar" listesi ve üstteki sarı hedef şeridi yolu gösterir:
 1. İki taş topla, birbirine vur: keskin taş.
 2. Kuru dal ve lif otu topla. Keskin taş, dal ve iki lifle taş balta yap.
@@ -221,7 +228,7 @@ Kayıtlar tarifleri indeksle anar; bu yüzden **yeni tarifler dosyanın sonuna e
 
 ## Kayıtlar
 
-Kayıtlar postcard ikili biçiminin 33. sürümünü kullanır ve eski sürümlerden yüklenebilir. Çok oyunculu bağlantı protokolü 4. sürümdür. Kayıt başlıca şu bilgileri tutar.
+Kayıtlar postcard ikili biçiminin 33. sürümünü kullanır ve eski sürümlerden yüklenebilir. Çok oyunculu bağlantı protokolü 5. sürümdür. Kayıt başlıca şu bilgileri tutar.
 - değişen kaynaklar
 - binalar ve ajanların üç boyutlu konumları
 - chunk sırası
@@ -232,7 +239,7 @@ Gerisi tohumdan yeniden üretilir. Sürüm 33 yüklenirken dünyanın durum öze
 
 Ana dosya eksik veya bozuk olduğunda oyun sağlam yedeğe döner. Kayıt menüsü bu yuvadan devam etmeye izin verir. Sonraki kayıt sağlam yedeği korur.
 
-Doğal mağaralarda keşfettiğin yerler kayıt yuvasındaki `cave-map.alz` dosyasında saklanır. Yedeği açarsan o kayıt alınırken bildiğin yerleri görürsün. Keşif haritası çok oyunculu dünya verisine eklenmez.
+Doğal mağaralarda keşfettiğin yerler kayıt yuvasındaki `cave-map.alz`, yüzey haritan `surface-map.alz` dosyasında saklanır. Yedeği açarsan o kayıt alınırken bildiğin yerleri görürsün. Keşif haritaları çok oyunculu dünya verisine eklenmez. Başkasının dünyasına katıldığında yüzey haritan kendi bilgisayarında `guest-maps/<tohum>.alz` dosyasında kalır.
 
 ## Çok oyunculu
 
@@ -332,6 +339,7 @@ ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
 | `ALAZ_DEMO_AT=coast\|swim\|forest\|peak\|…` | Gösteri sahnesinde yeri seçer |
 | `ALAZ_DEMO_WALK=dx,dy` | Yürüme tuşunu basılı tutar |
 | `ALAZ_DEMO_IDLE` | Gösteride el işi başlatmaz |
+| `ALAZ_DEMO_TAB=map\|bag\|craft\|build\|help\|creative` | Gösteriyi bu pencere açık başlatır |
 | `ALAZ_DEMO_HOUR`, `ALAZ_DEMO_WEATHER` | Saati ve havayı seçer |
 | `ALAZ_DEMO_EVO=0..9` | Beden ve portreyi bu evrim koordinatında çizer (kesirli olabilir: 4.5 iki aşamanın arası); `ALAZ_DEMO_EVO_CARD=<aşama>` yeni aşama kartını gösterir |
 | `ALAZ_DEMO_LINEUP=<kıyafet maskesi>[,lod\|walk\|sit\|back]` | Oyuncunun önüne on evrim aşamasını yan yana dizer (aynı kişi: `ALAZ_DEMO_LINEUP_ID`, varsayılan 12) |
