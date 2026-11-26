@@ -1,6 +1,7 @@
 // On Windows the game is a window, not a console program (no empty terminal behind it).
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use alaz_feedback::log;
 use alaz_render::glam::{Vec2, Vec3};
 use alaz_render::{Camera, Ghost, Renderer};
 use alaz_sim::time::TICKS_PER_SECOND;
@@ -13,6 +14,7 @@ mod audio;
 mod book;
 mod cave_map;
 mod export;
+mod feedback;
 mod hud;
 mod icons;
 mod inv;
@@ -740,6 +742,8 @@ struct App {
     /// Dev aid: the pilot froze the simulation.
     paused: bool,
     audio: Option<audio::Audio>,
+    /// Bug reports and requests written in the game.
+    feedback: feedback::Feedback,
     /// Health last frame, to notice a blow.
     prev_hp: Option<i32>,
     /// 1 right after a blow, fading to 0: red edge on the screen and a shake.
@@ -790,11 +794,12 @@ impl App {
                 Ok((client, world)) => {
                     me = client.agent;
                     hints.push((format!("{addr} sunucusuna katıldın."), hud::HINT_SECONDS));
+                    log::line(&format!("{addr} sunucusuna katıldın"));
                     net = Net::Client(client);
                     joined = Some(world);
                 }
                 Err(e) => {
-                    eprintln!("katılınamadı ({addr}): {e}");
+                    log::line(&format!("katılınamadı ({addr}): {e}"));
                     std::process::exit(1);
                 }
             }
@@ -805,7 +810,7 @@ impl App {
             match saveio::load(me) {
                 Ok(w) => loaded = w,
                 Err(e) => {
-                    eprintln!("kayıt yüklenemedi: {e}");
+                    log::line(&format!("kayıt yüklenemedi: {e}"));
                     hints.push((format!("Kayıt yüklenemedi ({e}). Yeni oyun başlıyor."), hud::HINT_SECONDS));
                 }
             }
@@ -881,6 +886,7 @@ impl App {
             paused: false,
             script: std::env::var("ALAZ_SCRIPT").ok().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| alaz_sim::debug::Script::new(&t)),
             audio: audio::Audio::new(),
+            feedback: feedback::Feedback::new(saveio::base_dir(), if cfg!(test) { feedback::offline() } else { feedback::network() }),
             prev_hp: None,
             hurt_flash: 0.0,
             scene_t: 0.0,
@@ -929,6 +935,9 @@ impl App {
             _ => None,
         };
         app.knap.map.open = std::env::var("ALAZ_DEMO_TAB").as_deref() == Ok("map");
+        if std::env::var("ALAZ_DEMO_TAB").as_deref() == Ok("report") {
+            app.open_report();
+        }
         // ALAZ_DEMO_JOURNAL=days|finds|recipes opens that page of the journal
         match std::env::var("ALAZ_DEMO_JOURNAL").as_deref() {
             Ok("finds") => app.knap.journal.section = 1,
@@ -960,7 +969,7 @@ impl App {
                     app.say(format!("Coop sunucusu açık: port {}. Arkadaşların --join <senin-ip> ile katılabilir.", args.port));
                 }
                 Err(e) => {
-                    eprintln!("sunucu açılamadı (port {}): {e}", args.port);
+                    log::line(&format!("sunucu açılamadı (port {}): {e}", args.port));
                     std::process::exit(1);
                 }
             }
@@ -1095,7 +1104,7 @@ impl App {
         self.surface_map.observe(&self.world, self.me);
         let kept = saveio::guest_save(&self.world, self.surface_map.records());
         if let Err(e) = &kept {
-            eprintln!("harita kaydedilemedi ({e})");
+            log::line(&format!("harita kaydedilemedi ({e})"));
             self.say("Harita kaydedilemedi.");
         }
         Some(kept)
@@ -1122,6 +1131,15 @@ impl App {
 
     // The window's input, one method per kind, so the pilot's made-up events take the same path as real ones.
     fn input_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        // the report form takes the typing (egui gets the keys on its own); only Esc is the game's
+        if self.feedback.blocking() {
+            if !pressed {
+                self.keys.remove(&code);
+            } else if code == KeyCode::Escape && !repeat {
+                self.feedback.close();
+            }
+            return;
+        }
         if pressed {
             let used = self.menu.as_mut().is_some_and(|m| if m.capturing() { m.on_key(code, &mut self.binds) } else { false });
             if !repeat && !used {
@@ -1160,6 +1178,9 @@ impl App {
     }
 
     fn input_button(&mut self, button: MouseButton, pressed: bool, ui_consumed: bool) {
+        if self.feedback.blocking() {
+            return;
+        }
         match button {
             MouseButton::Middle => self.mid_drag = (pressed && !self.knap.map.open).then_some(self.cursor),
             MouseButton::Left | MouseButton::Right if pressed => {
@@ -1173,7 +1194,7 @@ impl App {
     }
 
     fn input_wheel(&mut self, lines: f32) {
-        if self.menu.is_none() && !self.knap.map.open {
+        if self.menu.is_none() && !self.knap.map.open && !self.feedback.blocking() {
             self.cam.zoom = (self.cam.zoom * 1.1f32.powf(lines)).clamp(0.2, 8.0);
         }
     }
@@ -1365,6 +1386,11 @@ impl App {
             self.toggle_fullscreen();
             return;
         }
+        // a report can be written from anywhere
+        if action == A::Report {
+            self.open_report();
+            return;
+        }
         // while a menu is open only the menu key and saving make sense
         if self.menu.is_some() {
             if action == A::Menu && self.menu.as_ref().is_some_and(|m| m.paused && !m.capturing()) {
@@ -1388,9 +1414,7 @@ impl App {
                 }
             }
             // handled above, before the menu check
-            A::Fullscreen => {}
-            // connected with the form
-            A::Report => {}
+            A::Fullscreen | A::Report => {}
             A::Map => self.toggle_map(),
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame
@@ -1472,6 +1496,65 @@ impl App {
         }
     }
 
+    /// Whether there is a world under whatever is on the screen: not on the start screen.
+    fn in_play(&self) -> bool {
+        self.menu.as_ref().is_none_or(|m| m.paused)
+    }
+
+    fn open_report(&mut self) {
+        self.feedback.request();
+        // the release of a key held now may never arrive here
+        self.keys.clear();
+        self.mid_drag = None;
+    }
+
+    fn report_facts(&self) -> feedback::Facts {
+        use alaz_feedback::report::Mode;
+        let in_play = self.in_play();
+        let renderer = self.gfx.as_ref().map(|g| &g.renderer);
+        feedback::Facts {
+            gpu: renderer.map(|r| r.adapter_name().to_string()),
+            window: renderer.map(|r| format!("{}x{}", r.size().0, r.size().1)),
+            zoom: renderer.map(|r| hud::ui_zoom(r.egui_context())),
+            seed: in_play.then_some(self.world.seed),
+            world_size: in_play.then_some(self.world.map.w as u32),
+            day: in_play.then_some(self.world.day() as u32 + 1),
+            mode: match self.net {
+                _ if !in_play => Mode::Menu,
+                Net::Solo => Mode::Solo,
+                Net::Host(_) => Mode::Host,
+                Net::Client(_) => Mode::Guest,
+            },
+            save: None,
+            playlog: saveio::dir().join("playlog.txt"),
+        }
+    }
+
+    fn send_report(&mut self) {
+        let mut facts = self.report_facts();
+        facts.save = self.in_play().then(|| self.world.to_bytes());
+        self.feedback.send(facts);
+    }
+
+    fn answer_crash(&mut self, send: bool) {
+        let Some(crash) = self.feedback.screen.crash.take() else { return };
+        if !send {
+            return;
+        }
+        // the world of the crash is the one on disk, not the one on the screen
+        let slot = saveio::slot_dir(crash.slot);
+        let facts = feedback::Facts {
+            seed: None,
+            world_size: None,
+            day: None,
+            mode: alaz_feedback::report::Mode::Menu,
+            save: saveio::main_save_in(&slot),
+            playlog: slot.join("playlog.txt"),
+            ..self.report_facts()
+        };
+        self.feedback.send_crash(&crash, facts);
+    }
+
     fn menu_action(&mut self, a: menu::MenuAction) {
         use menu::MenuAction as M;
         // opening or making a world blocks the window: say so first, and start on the next frame
@@ -1492,6 +1575,7 @@ impl App {
         }
         match a {
             M::Resume => self.menu = None,
+            M::Report => self.open_report(),
             M::Quit => {
                 let _ = self.keep_guest_map();
                 self.quit = true;
@@ -1536,6 +1620,7 @@ impl App {
                     self.say(hint);
                 }
                 self.net = Net::Host(host);
+                log::line("sunucu açıldı");
                 self.say(format!("Sunucu açık: {}:{port}", lan_ip_text()));
             }
             M::HostOnline { slot, port: _, new } => {
@@ -1602,6 +1687,7 @@ impl App {
     }
 
     fn mp_error(&mut self, e: String) {
+        log::line(&e);
         if let Some(m) = self.menu.as_mut() {
             m.mp_error = Some(e);
         }
@@ -1619,6 +1705,7 @@ impl App {
                 saveio::set_slot(n);
                 self.me = player;
                 self.restore_saved_world(save);
+                log::line(&format!("yuva {n} açıldı (gün {}, yedekten: {recovered})", self.world.day() + 1));
                 self.no_save = false;
                 self.menu = None;
                 self.fx.enter_world(&self.world);
@@ -1626,7 +1713,10 @@ impl App {
                 Ok(())
             }
             Ok(None) => Err(format!("Yuva {n} boş.")),
-            Err(e) => Err(format!("Yuva {n} yüklenemedi: {e}")),
+            Err(e) => {
+                log::line(&format!("yuva {n} yüklenemedi: {e}"));
+                Err(format!("Yuva {n} yüklenemedi: {e}"))
+            }
         }
     }
 
@@ -1638,6 +1728,7 @@ impl App {
         let w = new_world_with(nw.seed.unwrap_or_else(random_seed), nw.hardcore, nw.size, nw.settings);
         self.me = AgentId(0);
         self.replace_world(w);
+        log::line(&format!("yeni dünya (yuva {}, boyut {}, tohum {})", nw.slot, self.world.map.w, self.world.seed));
         self.story.begin(&self.world);
         self.no_save = false;
         self.menu = None;
@@ -1680,10 +1771,14 @@ impl App {
                         self.finder = None;
                         self.finder_off = false;
                         self.fx.enter_world(&self.world);
+                        log::line(&format!("{addr} sunucusuna katıldın"));
                         self.say(format!("{addr} sunucusuna katıldın."));
                         return;
                     }
-                    Err(e) => m.mp_error = Some(e),
+                    Err(e) => {
+                        log::line(&e);
+                        m.mp_error = Some(e);
+                    }
                 }
             }
         }
@@ -1737,16 +1832,20 @@ impl App {
         match saveio::save(&self.world, self.me, self.cave_map.known(), self.surface_map.records()) {
             Ok(outcome) => {
                 self.last_save_tick = self.world.tick;
+                log::line(&format!("kaydedildi (gün {})", self.world.day() + 1));
                 match outcome {
                     saveio::SaveOutcome::WorldOnly(e) => {
-                        eprintln!("harita kaydedilemedi ({e})");
+                        log::line(&format!("harita kaydedilemedi ({e})"));
                         self.say("Dünya kaydedildi. Harita kaydedilemedi.");
                     }
                     saveio::SaveOutcome::Complete if announce => self.say("Kaydedildi."),
                     saveio::SaveOutcome::Complete => {}
                 }
             }
-            Err(e) => self.say(format!("Kaydedilemedi: {e}")),
+            Err(e) => {
+                log::line(&format!("kaydedilemedi: {e}"));
+                self.say(format!("Kaydedilemedi: {e}"));
+            }
         }
     }
 
@@ -1755,6 +1854,7 @@ impl App {
             Ok(Some(save)) => {
                 let recovered = save.recovered;
                 self.restore_saved_world(save);
+                log::line(&format!("kayıt yüklendi (gün {}, yedekten: {recovered})", self.world.day() + 1));
                 if recovered {
                     self.say("Son kayıt bozuktu, bir önceki kayıttan yüklendi.");
                 }
@@ -1762,6 +1862,7 @@ impl App {
             }
             Ok(None) => false,
             Err(e) => {
+                log::line(&format!("kayıt yüklenemedi: {e}"));
                 self.say(format!("Kayıt yüklenemedi: {e}"));
                 false
             }
@@ -1791,6 +1892,7 @@ impl App {
         let raw_dt = (now - self.last).as_secs_f32();
         let dt = (now - self.last).as_secs_f32().min(0.25);
         self.fx.update(dt);
+        self.feedback.update(dt);
         // a building ordered turned: once it stands, turn it
         if let Some((x, y, q)) = self.turn_after
             && let Some(i) = self.world.buildings.iter().position(|b| b.x == x && b.y == y) {
@@ -1908,7 +2010,7 @@ impl App {
                     self.cave_map = cave_map::CaveMap::default();
                     // the old world's map goes to disk and the new world's comes back
                     if let Err(e) = saveio::guest_save(&self.world, self.surface_map.records()) {
-                        eprintln!("harita kaydedilemedi ({e})");
+                        log::line(&format!("harita kaydedilemedi ({e})"));
                     }
                     self.surface_map = surface_map::SurfaceMap::from_records(saveio::guest_load(&w));
                 }
@@ -1934,10 +2036,11 @@ impl App {
             }
             client.send(std::mem::take(&mut self.pending));
             if !client.is_connected() {
+                log::line("sunucu bağlantısı koptu");
                 self.leave_server();
                 self.say("Sunucu bağlantısı koptu. Bu kopya yerel kalır, kaydedilmez.");
             }
-        } else if self.menu.is_some() && matches!(self.net, Net::Solo) {
+        } else if (self.menu.is_some() || self.feedback.blocking()) && matches!(self.net, Net::Solo) {
             self.accum = 0.0;
             self.pending.clear();
         } else {
@@ -2283,6 +2386,12 @@ impl App {
         if let Some(Selection::Agent(i)) = self.selected {
             route_of.push(i);
         }
+        // a report's picture shows the game, not the pause menu its button sits in
+        let capturing = self.feedback.capturing();
+        let hide_menu = capturing && menu.as_ref().is_some_and(|m| m.paused);
+        let in_play = menu.as_ref().is_none_or(|m| m.paused);
+        let mut screen = std::mem::take(&mut self.feedback.screen);
+        let mut report_act = None;
         let render_t0 = Instant::now();
         // a blow shakes the view for a moment and reddens the edges of the screen
         let flash = self.hurt_flash;
@@ -2316,6 +2425,9 @@ impl App {
                 g.renderer.set_quality(q);
             }
         }
+        if capturing {
+            g.renderer.request_capture();
+        }
         g.renderer.render(world, &cam, ghost, self.me, &route_of, |ctx| {
             if flash > 0.0 {
                 hud::hurt_vignette(ctx, flash);
@@ -2331,7 +2443,7 @@ impl App {
                 let (sun, k) = alaz_render::sun_of(world.tick, 0.0, world.settings.season_days as u64);
                 hud::compass(ctx, cam.yaw_deg, cam.pitch_deg, sun, k > 0.3);
             }
-            match menu.as_mut() {
+            match menu.as_mut().filter(|_| !hide_menu) {
                 Some(m) => menu_act = m.draw(ctx, &mut binds),
                 None => {
                     hud::draw(ctx, world, &ui_ctx, &mut knap, &mut acts);
@@ -2345,10 +2457,19 @@ impl App {
                 }
             }
             fx.draw(ctx);
+            // nothing of the report itself belongs in its picture
+            if !capturing {
+                report_act = screen.draw(ctx);
+            }
         });
         // a click on the title screen only skips it
         if fx.splash_up() {
             menu_act = None;
+        }
+        self.feedback.screen = screen;
+        if capturing {
+            let (shot, can) = (g.renderer.take_capture(), g.renderer.can_capture());
+            self.feedback.after_frame(shot, can, in_play);
         }
         self.fx = fx;
         self.menu = menu;
@@ -2362,6 +2483,12 @@ impl App {
         } else if let Some(a) = self.deferred.take() {
             // the frame that said "being made" has been drawn: now do the work
             self.run_menu_action(a);
+        }
+        match report_act {
+            Some(feedback::Act::Send) => self.send_report(),
+            Some(feedback::Act::Cancel) => self.feedback.close(),
+            Some(feedback::Act::Crash(send)) => self.answer_crash(send),
+            None => {}
         }
         for act in acts {
             match act {
@@ -3097,6 +3224,7 @@ impl ApplicationHandler for App {
         };
         let window = Arc::new(el.create_window(attrs).expect("window"));
         let renderer = Renderer::with_quality(window.clone(), gfxcfg::current());
+        log::line(&format!("ekran kartı: {}", renderer.adapter_name()));
         self.gfx = Some(Gfx { window, renderer });
         self.last = Instant::now();
         self.apply_prefs(true);
@@ -3356,21 +3484,7 @@ mod pointer_tests {
     }
 }
 
-/// The Windows build has no console, so a panic would vanish with the window. The message goes to a file the player can send.
-#[cfg(windows)]
-fn install_crash_log() {
-    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("alaz")) else { return };
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join("crash.txt"), format!("{info}\n\n{}", std::backtrace::Backtrace::force_capture()));
-        previous(info);
-    }));
-}
-
 fn main() {
-    #[cfg(windows)]
-    install_crash_log();
     // `--export-assets <folder>`: write the code-made models, tiles and icons out as files, then leave (no window)
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--export-assets") {
@@ -3386,7 +3500,19 @@ fn main() {
     }
     let el = EventLoop::new().expect("event loop");
     el.set_control_flow(ControlFlow::Poll);
-    el.run_app(&mut App::new(parse_args())).expect("run");
+    // the Windows build has no console: what the game prints, and a panic, go to files a report can carry
+    let data = saveio::base_dir();
+    log::start(&data);
+    alaz_feedback::crash::install(data.clone(), saveio::slot);
+    log::line(&format!("A.L.A.Z {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
+    let mut app = App::new(parse_args());
+    // a measured or scripted run must not stop at a question
+    if app.pilot.is_none() && app.perf.is_none() {
+        app.feedback.at_start();
+    }
+    el.run_app(&mut app).expect("run");
+    // closing as it should: a panic the game survived is not a crash to report
+    alaz_feedback::crash::forget_own(&data);
 }
 
 /// How long the drawn body takes to cover most of the way (seconds, as an exponential time constant): 90% in about

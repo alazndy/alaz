@@ -1499,6 +1499,11 @@ pub fn ui_zoom_controls(ui: &mut egui::Ui) {
     });
 }
 
+/// The player's interface size, 1.0 = "%100".
+pub(crate) fn ui_zoom(ctx: &egui::Context) -> f32 {
+    ctx.zoom_factor() / UI_BASE
+}
+
 /// Sets the interface size (the player's number, 1.0 = "%100") and keeps it in ui.cfg.
 fn set_ui_zoom(ctx: &egui::Context, z: f32) {
     let z = ((z * 10.0).round() / 10.0).clamp(0.6, 2.0);

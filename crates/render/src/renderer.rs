@@ -170,7 +170,7 @@ pub struct Capture {
 fn rgb_rows(data: &[u8], width: u32, height: u32, row: usize, bgra: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(width as usize * height as usize * 3);
     for line in data.chunks(row).take(height as usize) {
-        for pixel in line.chunks_exact(4).take(width as usize) {
+        for pixel in line.as_chunks::<4>().0.iter().take(width as usize) {
             let (r, g, b) = if bgra { (pixel[2], pixel[1], pixel[0]) } else { (pixel[0], pixel[1], pixel[2]) };
             out.extend_from_slice(&[r, g, b]);
         }
@@ -993,6 +993,8 @@ impl Renderer {
 
     /// Keep the next finished frame in memory; `take_capture` hands it over.
     pub fn request_capture(&mut self) {
+        // a picture nobody fetched must not pass for this one
+        self.captured = None;
         self.capture_wanted = true;
     }
 

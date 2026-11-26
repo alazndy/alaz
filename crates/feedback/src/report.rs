@@ -261,7 +261,7 @@ pub(crate) mod tests {
         let r = Draft { screenshot: Some(vec![0; SCREENSHOT_MAX + 1]), log: Some(b"ok".to_vec()), save: Some(vec![0; SAVE_MAX + 1]), ..draft() }.build(id()).unwrap();
         assert_eq!(r.fields.omitted, vec![Part::Screenshot, Part::Save]);
         assert_eq!(r.files, vec![(Part::Log, b"ok".to_vec())]);
-        assert!(SCREENSHOT_MAX + LOG_MAX + SAVE_MAX + FIELDS_MAX < BODY_MAX);
+        const { assert!(SCREENSHOT_MAX + LOG_MAX + SAVE_MAX + FIELDS_MAX < BODY_MAX) };
         assert_eq!([Part::Screenshot, Part::Log, Part::Save].map(Part::name), ["screenshot", "log", "save"]);
     }
 

@@ -17,6 +17,8 @@ pub struct NewWorld {
 pub use alaz_net::discovery::Found;
 
 pub enum MenuAction {
+    /// Open the feedback form.
+    Report,
     Continue(u8),
     New { slot: u8, seed: Option<u64>, size: i32, hardcore: bool, settings: alaz_sim::world::WorldSettings },
     /// `new` is None when the slot already holds a save to load.
@@ -1192,6 +1194,10 @@ impl Menu {
                             self.update_screen = true;
                         }
                     });
+                    ui.add_space(2.0);
+                    if button(ui, "Geri bildirim", vec2(ui.available_width(), 34.0), Look::Plain).clicked() {
+                        act = Some(MenuAction::Report);
+                    }
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         let w = if self.paused { (ui.available_width() - 12.0) / 2.0 } else { ui.available_width() };

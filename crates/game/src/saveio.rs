@@ -153,7 +153,7 @@ pub fn load_in(dir: &Path, me: AgentId) -> Result<Option<LoadedSave>, String> {
         Ok((world, bytes))
     });
     if recovered {
-        eprintln!("{}: yedekten yüklendi", dir.display());
+        alaz_feedback::log::line(&format!("{}: yedekten yüklendi", dir.display()));
     }
     result.map(|save| {
         save.map(|(world, bytes)| {
@@ -243,6 +243,11 @@ pub fn log_play(line: &str) {
 
 pub fn dir() -> PathBuf {
     slot_dir(slot())
+}
+
+/// The save file of a slot folder as it is on disk, for a crash report.
+pub fn main_save_in(dir: &Path) -> Option<Vec<u8>> {
+    fs::read(dir.join(MAIN)).ok()
 }
 
 /// Summary of a slot: `None` when empty, `Some(Err)` when unreadable.

@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(install_into(&preview, &target).unwrap(), Next::Restart);
         let bytes = std::fs::read(&target).unwrap();
         assert!(bytes.starts_with(b"\x7fELF"), "the installed file is a real program");
-        eprintln!("installed {} bytes at {}", bytes.len(), target.display());
+        alaz_feedback::log::line(&format!("installed {} bytes at {}", bytes.len(), target.display()));
     }
 
     #[test]
