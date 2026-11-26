@@ -1,6 +1,6 @@
 # In-game feedback reports: design
 
-Status: draft, waiting for the owner's approval. Date: 2026-11-26.
+Status: approved by the owner on 2026-11-26.
 
 ## Intent
 
