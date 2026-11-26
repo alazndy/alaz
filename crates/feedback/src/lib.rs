@@ -2,9 +2,11 @@
 
 pub mod crash;
 pub mod log;
+pub mod outbox;
 pub mod report;
 pub mod scrub;
 pub mod shot;
+pub mod upload;
 
 #[cfg(test)]
 fn temp(name: &str) -> std::path::PathBuf {
