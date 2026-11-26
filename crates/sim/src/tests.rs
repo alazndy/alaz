@@ -2467,6 +2467,46 @@ fn clothing_recipes_exist_and_can_be_made() {
     assert_eq!(count(&w, 0, ItemKind::FiberWrap), 1);
 }
 
+/// Three packs, one after the other: only the best one carried counts, and animals gain nothing from them.
+#[test]
+fn only_the_best_pack_counts_and_only_for_people() {
+    use crate::world::{BAG_EXTRA, FRAME_PACK_EXTRA, LEATHER_PACK_EXTRA};
+    let (mut w, _) = with_agent(1);
+    let bare = w.agents[0].capacity();
+    for (item, extra) in [(ItemKind::Bag, BAG_EXTRA), (ItemKind::LeatherPack, LEATHER_PACK_EXTRA), (ItemKind::FramePack, FRAME_PACK_EXTRA)] {
+        give(&mut w, item, 1);
+        assert_eq!(w.agents[0].capacity(), bare + extra, "{item:?} is the best so far");
+        assert!(item.is_tool(), "{item:?} stays with its owner and takes no room");
+    }
+    give(&mut w, ItemKind::FramePack, 1);
+    assert_eq!(w.agents[0].capacity(), bare + FRAME_PACK_EXTRA, "two of them are no better than one");
+    assert!(BAG_EXTRA < LEATHER_PACK_EXTRA && LEATHER_PACK_EXTRA < FRAME_PACK_EXTRA);
+    w.agents[0].kind = AgentKind::Dog;
+    let dog = w.agents[0].capacity();
+    w.agents[0].inventory.counts = [0; ItemKind::COUNT];
+    assert_eq!(w.agents[0].capacity(), dog, "a dog carries the same with or without them");
+}
+
+#[test]
+fn the_two_back_packs_can_be_sewn_by_hand() {
+    for (id, item, stock) in [
+        ("leather_pack", ItemKind::LeatherPack, vec![(ItemKind::Leather, 3), (ItemKind::Fiber, 2)]),
+        ("frame_pack", ItemKind::FramePack, vec![(ItemKind::Plank, 3), (ItemKind::Leather, 3), (ItemKind::Fiber, 2)]),
+    ] {
+        let (mut w, a) = with_agent(1);
+        learn_all(&mut w);
+        for &(k, n) in &stock {
+            give(&mut w, k, n);
+        }
+        w.step(&[cmd(a, CommandKind::Craft { recipe: recipe(id) })]);
+        play_craft_perfectly(&mut w, a);
+        assert_eq!(count(&w, 0, item), 1, "{id}");
+        for &(k, _) in &stock {
+            assert_eq!(count(&w, 0, k), 0, "{id} uses up its {k:?}");
+        }
+    }
+}
+
 #[test]
 fn an_abandoned_craft_is_announced_and_waits_a_full_minute() {
     let (mut w, a) = with_agent(1);

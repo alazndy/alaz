@@ -1034,6 +1034,8 @@ impl Renderer {
                     let (x, z) = (cx + rx * o, cz + rz * o);
                     let f = i as f32;
                     let walk = mode == "walk";
+                    // `back` turns the row away, to look at what is worn behind
+                    let yaw = if mode == "back" { yaw + std::f32::consts::PI } else { yaw };
                     let pose = Pose { heading: yaw, phase: secs * 5.0 + f * 0.7, amp: if walk { 1.0 } else { 0.0 }, t: secs, outfit: *outfit, id: self.lineup_id, evo: f, slope: 0.0, lod: mode == "lod", sit: mode == "sit", ..Pose::idle(secs) };
                     body_jobs.push(BodyJob { kind: AgentKind::Human, x, z, marked: false, is_me: false, pose, chips: None, lift: None, floor_height: None, cave_exposure: None, lean: None, heading: yaw, depth: 0, wave: 0.0, secs, seed: i as u32, ground: None });
                 }

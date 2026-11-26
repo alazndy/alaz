@@ -996,3 +996,46 @@ mod petting {
         assert!(pet.crouch > 0.2, "crouched beside the animal");
     }
 }
+
+#[cfg(test)]
+mod back_packs {
+    use super::*;
+    use alaz_sim::ItemKind as I;
+
+    fn worn(items: &[I]) -> u16 {
+        let mut inv = alaz_sim::world::Inventory::default();
+        for &k in items {
+            inv.counts[k as usize] = 1;
+        }
+        outfit_bits(&inv)
+    }
+
+    /// A person standing still, facing +z (heading 0).
+    fn built(outfit: u16, evo: f32) -> Mesh {
+        let mut o = Mesh::new();
+        let p = Pose { heading: 0.0, phase: 0.0, amp: 0.0, t: 1.0, work: Work::None, tool: Tool::Hand, outfit, id: 6, evo, slope: 0.0, hurt: 0.0, stride: 0.3, cyc: 0.0, air: 0.0, lod: false, sit: false, drink: 0.0 };
+        push_human(&mut o, 5.0, 5.0, p);
+        o
+    }
+
+    #[test]
+    fn one_pack_is_worn_and_it_is_the_better_one() {
+        assert_eq!(worn(&[I::LeatherPack]), crate::mesh::OUT_PACK);
+        assert_eq!(worn(&[I::FramePack]), crate::mesh::OUT_FRAME_PACK);
+        assert_eq!(worn(&[I::LeatherPack, I::FramePack]), crate::mesh::OUT_FRAME_PACK);
+    }
+
+    #[test]
+    fn a_pack_shows_behind_the_back() {
+        // facing +z, so behind the person is -z
+        let behind = |m: &Mesh| m.iter().map(|v| 5.0 - v.pos[2]).fold(f32::MIN, f32::max);
+        let top = |m: &Mesh| m.iter().map(|v| v.pos[1]).fold(f32::MIN, f32::max);
+        let bare = built(0, 9.0);
+        let leather = built(worn(&[I::LeatherPack]), 9.0);
+        let frame = built(worn(&[I::FramePack]), 9.0);
+        assert!(behind(&leather) > behind(&bare) + 0.1, "{} against {}", behind(&leather), behind(&bare));
+        assert!(behind(&frame) > behind(&leather), "the frame pack is the bigger one");
+        assert!(frame.len() > leather.len(), "poles, bedroll and belt");
+        assert!(top(&frame) >= top(&leather));
+    }
+}

@@ -257,7 +257,7 @@ pub struct Renderer {
     /// The stage coordinate (0..=9, see `Evo`) the people are drawn at, when the caller smooths it over time;
     /// otherwise it follows the world's perception directly.
     pub evo: Option<f32>,
-    /// Dev aid, `ALAZ_DEMO_LINEUP=<outfit mask>[,lod|walk|sit]`: a row of the ten stages of the body in front of the
+    /// Dev aid, `ALAZ_DEMO_LINEUP=<outfit mask>[,lod|walk|sit|back]`: a row of the ten stages of the body in front of the
     /// player, all the same person (`ALAZ_DEMO_LINEUP_ID`, 12 by default), to compare them side by side.
     pub(crate) lineup: Option<(u16, String)>,
     pub(crate) lineup_id: u32,

@@ -95,7 +95,7 @@ pub(crate) use creatures::*;
 pub(crate) use decor::*;
 pub(crate) use human::*;
 pub(crate) use machines::*;
-pub use human::{look, outfit_bits, Look, OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_FELT, OUT_HELM, OUT_HOOD, OUT_LEATHER, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
+pub use human::{look, outfit_bits, Look, OUT_APRON, OUT_BOOTS, OUT_CLOAK, OUT_FELT, OUT_FRAME_PACK, OUT_HELM, OUT_HOOD, OUT_LEATHER, OUT_PACK, OUT_PLATE, OUT_TUNIC, OUT_WRAP};
 pub(crate) use nodes::*;
 pub(crate) use terrain::*;
 pub(crate) use water::*;

@@ -1176,6 +1176,32 @@ steps = [
   { label = "Ağzını büzen ipi geçir", kind = "timing", strikes = 2, window = 12, period = 120, tools = [] },
 ]
 
+[[recipe]]
+id = "leather_pack"
+name = "Deri sırt çantası"
+inputs = [{ item = "leather", n = 3 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "leather_pack", n = 1 }]
+ticks = 0
+discovery = "tanning"
+fine_bonus = 0
+steps = [
+  { label = "Derileri çantaya göre kes", kind = "fit", strikes = 2, window = 22, period = 0, tools = [{ item = "sharp_stone", bonus = 5 }] },
+  { label = "Omuz kayışlarını dik", kind = "tension", strikes = 2, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
+[[recipe]]
+id = "frame_pack"
+name = "Çerçeveli sırt çantası"
+inputs = [{ item = "plank", n = 3 }, { item = "leather", n = 3 }, { item = "fiber", n = 2 }]
+outputs = [{ item = "frame_pack", n = 1 }]
+ticks = 0
+discovery = "bronzework"
+fine_bonus = 0
+steps = [
+  { label = "Tahta çerçeveyi birleştir", kind = "fit", strikes = 2, window = 20, period = 0, tools = [{ item = "sharp_stone", bonus = 5 }] },
+  { label = "Deri kayışları ve bel kemerini bağla", kind = "tension", strikes = 3, window = 12, period = 120, tools = [{ item = "clamp", bonus = 6 }] },
+]
+
 # --- Metal and engine age clothes: worn while carried. ---
 [[recipe]]
 id = "bronze_plate"
