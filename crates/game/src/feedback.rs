@@ -19,6 +19,8 @@ const OUTBOX: &str = "reports";
 const NAME_FILE: &str = "reports-name.txt";
 /// How long the form waits for a picture of the game before it opens without one.
 const CAPTURE_FRAMES: u32 = 5;
+/// Frames the game's panels take to fade back in once the pause menu stops covering them.
+const SETTLE_FRAMES: u32 = 15;
 const SHOT_WIDTH: u32 = 1920;
 const PREVIEW_WIDTH: u32 = 320;
 const TOAST_SECONDS: f32 = 4.0;
@@ -95,6 +97,8 @@ pub(crate) struct Feedback {
     transport: Transport,
     /// Frames spent waiting for the picture; `None` when no form is on its way.
     waiting: Option<u32>,
+    /// How many of them pass before the picture is taken.
+    settle: u32,
     shot: Option<Capture>,
     pub screen: Screen,
     news: (mpsc::Sender<Outcome>, mpsc::Receiver<Outcome>),
@@ -113,7 +117,7 @@ fn log_of(game: &str, playlog: &Path) -> Vec<u8> {
 impl Feedback {
     /// `dir` is the game's data folder.
     pub fn new(dir: PathBuf, transport: Transport) -> Self {
-        Self { dir, transport, waiting: None, shot: None, screen: Screen::default(), news: mpsc::channel() }
+        Self { dir, transport, waiting: None, settle: 0, shot: None, screen: Screen::default(), news: mpsc::channel() }
     }
 
     /// Whether keys, clicks and a world played alone have to wait.
@@ -121,14 +125,21 @@ impl Feedback {
         self.waiting.is_some() || self.screen.form.is_some() || self.screen.crash.is_some()
     }
 
-    /// A picture of the next frame is wanted.
+    /// The form waits for its picture: nothing that is not part of the game is drawn.
     pub fn capturing(&self) -> bool {
         self.waiting.is_some()
     }
 
-    /// Ask for the form; it opens once there is a picture of the game as it is now.
-    pub fn request(&mut self) {
+    /// The frame drawn now is the one to take.
+    pub fn wants_picture(&self) -> bool {
+        self.waiting.is_some_and(|frames| frames >= self.settle)
+    }
+
+    /// Ask for the form; it opens once there is a picture of the game as it is now. `covered`: the pause menu lies
+    /// over the game and has to get out of the picture first.
+    pub fn request(&mut self, covered: bool) {
         if !self.blocking() {
+            self.settle = if covered { SETTLE_FRAMES } else { 0 };
             self.waiting = Some(0);
             self.shot = None;
         }
@@ -137,7 +148,7 @@ impl Feedback {
     /// Called after each drawn frame while `capturing`. `in_play` says whether there is a world to send.
     pub fn after_frame(&mut self, shot: Option<Capture>, can_capture: bool, in_play: bool) {
         let Some(frames) = self.waiting else { return };
-        if shot.is_none() && can_capture && frames + 1 < CAPTURE_FRAMES {
+        if shot.is_none() && can_capture && frames + 1 < self.settle + CAPTURE_FRAMES {
             self.waiting = Some(frames + 1);
             return;
         }
@@ -466,6 +477,27 @@ mod tests {
     }
 
     #[test]
+    fn from_the_pause_menu_the_picture_waits_until_the_game_shows() {
+        let (mut app, _) = app("settle", 987_013);
+        app.menu = Some(menu::Menu::new(true));
+        app.open_report();
+        for _ in 0..SETTLE_FRAMES {
+            assert!(app.feedback.capturing() && !app.feedback.wants_picture());
+            app.feedback.after_frame(None, true, true);
+        }
+        assert!(app.feedback.wants_picture());
+        app.feedback.after_frame(Some(Capture { width: 640, height: 360, rgb: vec![7; 640 * 360 * 3] }), true, true);
+        assert!(app.feedback.screen.form.as_ref().is_some_and(|f| f.send_shot));
+        // in play, and on the start screen, what is on the screen is what is wanted
+        for menu in [None, Some(menu::Menu::new(false))] {
+            app.feedback.close();
+            app.menu = menu;
+            app.open_report();
+            assert!(app.feedback.wants_picture());
+        }
+    }
+
+    #[test]
     fn the_menu_opens_it_and_sends_no_world() {
         let (mut app, dir) = app("menu", 987_007);
         app.menu = Some(menu::Menu::new(false));
@@ -549,6 +581,64 @@ mod tests {
             app.feedback.update(TOAST_SECONDS + 1.0);
             assert!(app.feedback.screen.toast.is_none());
         }
+    }
+
+    /// By hand, against the site's local mode: `ALAZ_FEEDBACK_URL=http://localhost:3000 cargo test -p alaz sends_to -- --ignored`
+    #[test]
+    #[ignore = "needs a feedback site on this machine"]
+    fn sends_to_a_local_site() {
+        let address = std::env::var("ALAZ_FEEDBACK_URL").expect("ALAZ_FEEDBACK_URL");
+        assert!(address.starts_with("http://localhost") || address.starts_with("http://127.0.0.1"), "a test sends to this machine only");
+        let (mut app, dir) = app("site", 987_012);
+        let seen: Arc<std::sync::Mutex<Vec<(Report, Outcome)>>> = Default::default();
+        let (record, real) = (seen.clone(), network());
+        app.feedback = Feedback::new(dir.clone(), Arc::new(move |r| {
+            let outcome = real(r);
+            record.lock().unwrap().push((r.clone(), outcome));
+            outcome
+        }));
+        fs::write(dir.join(alaz_feedback::log::NAME), "[+1.0s] deneme\n").unwrap();
+        app.open_report();
+        let rgb = (0..1920 * 1080).flat_map(|n: u32| [(n % 251) as u8, (n / 1920 % 241) as u8, 90]).collect();
+        app.feedback.after_frame(Some(Capture { width: 1920, height: 1080, rgb }), true, true);
+        write(&mut app, "yerel deneme: ağaç yok oldu 🌲");
+        app.send_report();
+        let t0 = std::time::Instant::now();
+        while app.feedback.screen.toast.is_none() {
+            app.feedback.update(0.0);
+            assert!(t0.elapsed() < Duration::from_secs(90), "no answer");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (made, outcome) = seen.lock().unwrap()[0].clone();
+        assert_eq!(outcome, Outcome::Sent, "{:?}", made.fields);
+        assert_eq!(app.feedback.screen.toast.as_ref().unwrap().0, "Gönderildi");
+        assert_eq!(made.files.len(), 3, "{:?}", made.fields.omitted);
+        for (part, bytes) in &made.files {
+            println!("{}: {} bytes", part.name(), bytes.len());
+        }
+        // the same report again is taken as already there
+        assert_eq!(network()(&made), Outcome::Sent);
+    }
+
+    #[test]
+    fn a_join_is_logged_without_the_address() {
+        let (mut app, dir) = app("joinlog", 987_014);
+        // the game logs to one file per run; no other test starts it
+        alaz_feedback::log::start(&dir);
+        app.menu = Some(menu::Menu::new(false));
+        // a host name would pass the scrubbing of addresses, so the address never enters the log
+        app.menu_action(menu::MenuAction::Join("localhost:1".into()));
+        let t0 = std::time::Instant::now();
+        while app.menu.as_ref().is_some_and(|m| m.mp_error.is_none()) {
+            app.menu_net();
+            assert!(t0.elapsed() < Duration::from_secs(15), "no answer");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let log = fs::read_to_string(dir.join(alaz_feedback::log::NAME)).unwrap();
+        assert!(log.contains("katılınamadı: "), "{log}");
+        assert!(!log.contains("localhost"), "{log}");
+        // the player still sees which address failed
+        assert!(app.menu.as_ref().unwrap().mp_error.as_ref().unwrap().contains("localhost:1"));
     }
 
     #[test]

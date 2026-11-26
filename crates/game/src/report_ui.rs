@@ -49,8 +49,13 @@ pub(crate) enum FormAct {
 /// A window above everything else; nothing under it can be clicked.
 fn window<R>(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut egui::Ui, egui::Rect) -> R) -> R {
     let screen = ctx.content_rect();
-    egui::Modal::new(egui::Id::NULL.with(id))
+    let id = egui::Id::NULL.with(id);
+    egui::Modal::new(id)
+        // above the game's own windows, also one that appears after this
+        .area(egui::Modal::default_area(id).order(egui::Order::Tooltip))
         .frame(egui::Frame::NONE)
+        // the story and the hints behind would show through the panel
+        .backdrop_color(Color32::from_black_alpha(150))
         .show(ctx, |ui| panel(ui, 10.0, |ui| add(ui, screen)).inner)
         .inner
 }
@@ -133,7 +138,7 @@ pub(crate) fn draw_crash_prompt(ctx: &egui::Context) -> Option<bool> {
 pub(crate) fn draw_toast(ctx: &egui::Context, text: &str) {
     egui::Area::new(egui::Id::NULL.with("feedback_toast"))
         .anchor(Align2::CENTER_BOTTOM, [0.0, -64.0])
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Tooltip)
         .interactable(false)
         .show(ctx, |ui| {
             panel(ui, 8.0, |ui| ui.add(egui::Label::new(text).extend()));
@@ -235,6 +240,33 @@ mod tests {
             let r = h.get_by_label(label).rect();
             assert!(window.contains_rect(r), "{label}: {r:?} outside {window:?}");
         }
+    }
+
+    #[test]
+    fn a_panel_that_appears_later_does_not_lie_over_the_form() {
+        type Late = (Form, Vec<FormAct>, bool);
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 800.0)).build_ui_state(
+            |ui, (form, acts, late): &mut Late| {
+                acts.extend(draw_form(ui.ctx(), form));
+                if *late {
+                    egui::Area::new(egui::Id::NULL.with("late")).order(egui::Order::Foreground).fixed_pos([0.0, 0.0]).show(ui.ctx(), |ui| {
+                        let _ = ui.allocate_exact_size(egui::vec2(1000.0, 800.0), egui::Sense::click());
+                    });
+                }
+            },
+            (Form::new(String::new(), None, false), Vec::new(), false),
+        );
+        h.run_steps(3);
+        h.state_mut().2 = true;
+        h.run_steps(3);
+        let at = h.get_by_label("Vazgeç").rect().center();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerMoved(at));
+            h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() });
+            h.step();
+        }
+        h.step();
+        assert_eq!(h.state().1, vec![FormAct::Cancel]);
     }
 
     #[test]

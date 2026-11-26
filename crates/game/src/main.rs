@@ -794,12 +794,12 @@ impl App {
                 Ok((client, world)) => {
                     me = client.agent;
                     hints.push((format!("{addr} sunucusuna katıldın."), hud::HINT_SECONDS));
-                    log::line(&format!("{addr} sunucusuna katıldın"));
+                    log::line("sunucuya katıldın");
                     net = Net::Client(client);
                     joined = Some(world);
                 }
                 Err(e) => {
-                    log::line(&format!("katılınamadı ({addr}): {e}"));
+                    log::line(&format!("katılınamadı: {e}"));
                     std::process::exit(1);
                 }
             }
@@ -1502,7 +1502,7 @@ impl App {
     }
 
     fn open_report(&mut self) {
-        self.feedback.request();
+        self.feedback.request(self.menu.as_ref().is_some_and(|m| m.paused));
         // the release of a key held now may never arrive here
         self.keys.clear();
         self.mid_drag = None;
@@ -1749,7 +1749,11 @@ impl App {
             return;
         };
         if let Some((addr, rx)) = &self.connecting {
-            let fail = |why: String| format!("Katılınamadı ({addr}): {why}");
+            let fail = |why: String| {
+                // without the address: a host name would travel with a report
+                log::line(&format!("katılınamadı: {why}"));
+                format!("Katılınamadı ({addr}): {why}")
+            };
             let done = match rx.try_recv() {
                 Ok(Ok(joined)) => Some(Ok(joined)),
                 Ok(Err(e)) => Some(Err(fail(e.to_string()))),
@@ -1771,14 +1775,11 @@ impl App {
                         self.finder = None;
                         self.finder_off = false;
                         self.fx.enter_world(&self.world);
-                        log::line(&format!("{addr} sunucusuna katıldın"));
+                        log::line("sunucuya katıldın");
                         self.say(format!("{addr} sunucusuna katıldın."));
                         return;
                     }
-                    Err(e) => {
-                        log::line(&e);
-                        m.mp_error = Some(e);
-                    }
+                    Err(e) => m.mp_error = Some(e),
                 }
             }
         }
@@ -2425,7 +2426,8 @@ impl App {
                 g.renderer.set_quality(q);
             }
         }
-        if capturing {
+        let picture = self.feedback.wants_picture();
+        if picture {
             g.renderer.request_capture();
         }
         g.renderer.render(world, &cam, ghost, self.me, &route_of, |ctx| {
@@ -2439,7 +2441,7 @@ impl App {
                     icons::draw_slot(ui.painter(), rect, k, true);
                 });
             }
-            if menu.is_none() {
+            if menu.is_none() || hide_menu {
                 let (sun, k) = alaz_render::sun_of(world.tick, 0.0, world.settings.season_days as u64);
                 hud::compass(ctx, cam.yaw_deg, cam.pitch_deg, sun, k > 0.3);
             }
@@ -2468,7 +2470,7 @@ impl App {
         }
         self.feedback.screen = screen;
         if capturing {
-            let (shot, can) = (g.renderer.take_capture(), g.renderer.can_capture());
+            let (shot, can) = (g.renderer.take_capture().filter(|_| picture), g.renderer.can_capture());
             self.feedback.after_frame(shot, can, in_play);
         }
         self.fx = fx;

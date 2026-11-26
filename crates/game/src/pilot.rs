@@ -258,6 +258,7 @@ fn key_named(n: &str) -> Option<KeyCode> {
         "right" => ArrowRight,
         "f1" => F1,
         "f5" => F5,
+        "f8" => F8,
         "f9" => F9,
         _ => return None,
     })

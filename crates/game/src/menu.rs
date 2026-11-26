@@ -1181,7 +1181,7 @@ impl Menu {
                         ui.label(egui::RichText::new(format!("Yeni sürüm var: {v}")).small().color(GOLD));
                     }
                     ui.horizontal(|ui| {
-                        let parts = if self.paused { 1.0 } else { 3.0 };
+                        let parts = if self.paused { 2.0 } else { 3.0 };
                         let w = (ui.available_width() - 12.0 * (parts - 1.0)) / parts;
                         if !self.paused && button(ui, "Çok oyunculu", vec2(w, 34.0), Look::Plain).clicked() {
                             self.mp_screen = true;
@@ -1189,20 +1189,24 @@ impl Menu {
                         if button(ui, "Ayarlar", vec2(w, 34.0), Look::Plain).clicked() {
                             self.sound_screen = true;
                         }
+                        // on the start screen it sits beside "Çık": this row is full there
+                        if self.paused && button(ui, "Geri bildirim", vec2(w, 34.0), Look::Plain).clicked() {
+                            act = Some(MenuAction::Report);
+                        }
                         // updating replaces the program, so it is only offered where no world is running
                         if !self.paused && button(ui, "Sürüm", vec2(w, 34.0), Look::Plain).clicked() {
                             self.update_screen = true;
                         }
                     });
                     ui.add_space(2.0);
-                    if button(ui, "Geri bildirim", vec2(ui.available_width(), 34.0), Look::Plain).clicked() {
-                        act = Some(MenuAction::Report);
-                    }
-                    ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        let w = if self.paused { (ui.available_width() - 12.0) / 2.0 } else { ui.available_width() };
-                        if self.paused && button(ui, "Kaydet ve çık", vec2(w, 34.0), Look::Plain).clicked() {
-                            act = Some(MenuAction::SaveQuit);
+                        let w = (ui.available_width() - 12.0) / 2.0;
+                        if self.paused {
+                            if button(ui, "Kaydet ve çık", vec2(w, 34.0), Look::Plain).clicked() {
+                                act = Some(MenuAction::SaveQuit);
+                            }
+                        } else if button(ui, "Geri bildirim", vec2(w, 34.0), Look::Plain).clicked() {
+                            act = Some(MenuAction::Report);
                         }
                         if button(ui, "Çık", vec2(w, 34.0), Look::Danger).clicked() {
                             act = Some(MenuAction::Quit);
@@ -1541,6 +1545,20 @@ mod tests {
         let mut h = harness(menu);
         h.run();
         h.get_by_label("K7Q4-XM2P");
+    }
+
+    #[test]
+    fn the_feedback_button_shares_a_row_and_asks_for_the_form() {
+        for (paused, beside) in [(false, "Çık"), (true, "Ayarlar")] {
+            let mut h = harness(Menu::new(paused));
+            h.run_steps(60);
+            let (button, other) = (h.get_by_label("Geri bildirim").rect(), h.get_by_label(beside).rect());
+            assert_eq!(button.center().y, other.center().y, "paused {paused}");
+            assert!(!button.intersects(other));
+            h.get_by_label("Geri bildirim").click();
+            h.run_steps(2);
+            assert!(matches!(h.state().got, Some(MenuAction::Report)), "paused {paused}");
+        }
     }
 
     #[test]
