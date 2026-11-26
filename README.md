@@ -349,6 +349,10 @@ ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |
 
+## Geri bildirim sitesi
+
+`web/feedback/` oyundan gelen hata ve istek raporlarını alan web sitesidir (Next.js, Vercel). Henüz yayında değil; oyun tarafı da henüz yok. Kurulum: [`web/feedback/README.md`](web/feedback/README.md).
+
 ## Testler
 
 ```bash

@@ -10,6 +10,8 @@ const headers = [
 
 const config: NextConfig = {
   poweredByHeader: false,
+  // do not write an instruction file for coding agents into the project
+  agentRules: false,
   // the local development database loads its own files from disk
   serverExternalPackages: ['@electric-sql/pglite'],
   turbopack: { root: import.meta.dirname },

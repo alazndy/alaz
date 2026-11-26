@@ -1,5 +1,6 @@
 import { currentUser } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
+import { connection } from 'next/server';
 import { canRead, viewerFor, type Viewer } from './access';
 import { deps, type Deps } from './deps';
 
@@ -15,6 +16,8 @@ export async function currentViewer(d: Deps): Promise<Viewer | null> {
 
 /** For pages: the services and the person, who is signed in but may still be uninvited. */
 export async function gate(): Promise<{ d: Deps; viewer: Viewer; reader: boolean }> {
+  // these pages show live data to one person, so the build must never render them ahead of time
+  await connection();
   const d = await deps();
   if (!d) throw new Error('The site is not set up: see web/feedback/README.md');
   const viewer = await currentViewer(d);

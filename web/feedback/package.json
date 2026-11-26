@@ -11,6 +11,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "pnpm": {
+    "overrides": { "@vercel/cli-config>zod": "4.6.7" }
+  },
   "dependencies": {
     "@clerk/localizations": "4.26.0",
     "@clerk/nextjs": "7.10.4",
