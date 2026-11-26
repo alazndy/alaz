@@ -26,6 +26,7 @@ Rust ile yazılmış kendi motoru var: wgpu, winit ve egui. Simülasyon tamamen 
 - [Kayıtlar](#kayıtlar)
 - [Çok oyunculu](#çok-oyunculu)
 - [Geliştirici araçları ve debug kapıları](#geliştirici-araçları-ve-debug-kapıları)
+- [Geri bildirim](#geri-bildirim)
 - [Testler](#testler)
 - [Durum ve bilinen sorunlar](#durum-ve-bilinen-sorunlar)
 
@@ -104,7 +105,7 @@ Varsayılan tuşlar. Hepsi oyun içinden yeniden atanabilir.
 | R | Rotalar | G | Izgaraya oturt |
 | F1 | Yardım | F5 / F9 | Kaydet / yükle |
 | M | Harita | N | Ses |
-| Esc | Menü / iptal | | |
+| Esc | Menü / iptal | F8 | Geri bildirim |
 
 Fare ile:
 - **Sol tık:** yürü, bina ya da işçi aç.
@@ -335,11 +336,12 @@ ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
 |---|---|
 | `ALAZ_BENCH=30 ALAZ_NOVSYNC=1` | Performans ölçümü: kare, çizim ve sim süreleri |
 | `ALAZ_PERF=1` | 5 saniyede bir performans dökümü |
-| `WGPU_BACKEND=dx12` (ya da `vulkan`, `gl`) | Grafik arayüzünü seçer. Oyun açılırken sessizce kapanıyorsa (bazı Intel Vulkan sürücüleri çöker) `dx12` dene. Windows'ta çökme iletisi `%LOCALAPPDATA%\alaz\crash.txt` dosyasına yazılır |
+| `WGPU_BACKEND=dx12` (ya da `vulkan`, `gl`) | Grafik arayüzünü seçer. Oyun açılırken sessizce kapanıyorsa (bazı Intel Vulkan sürücüleri çöker) `dx12` dene. Çökme iletisi ve oyun logu veri klasöründeki `crash.txt` ve `game.log` dosyalarına yazılır ([Geri bildirim](#geri-bildirim)) |
+| `ALAZ_FEEDBACK_URL=http://localhost:3000` | Raporları başka bir siteye gönderir. Yalnız `https` ya da bu bilgisayara `http`; başka bir adreste raporlar bekletilir |
 | `ALAZ_DEMO_AT=coast\|swim\|forest\|peak\|…` | Gösteri sahnesinde yeri seçer |
 | `ALAZ_DEMO_WALK=dx,dy` | Yürüme tuşunu basılı tutar |
 | `ALAZ_DEMO_IDLE` | Gösteride el işi başlatmaz |
-| `ALAZ_DEMO_TAB=map\|bag\|craft\|build\|help\|creative` | Gösteriyi bu pencere açık başlatır |
+| `ALAZ_DEMO_TAB=map\|bag\|craft\|build\|help\|creative\|report` | Gösteriyi bu pencere açık başlatır |
 | `ALAZ_DEMO_HOUR`, `ALAZ_DEMO_WEATHER` | Saati ve havayı seçer |
 | `ALAZ_DEMO_EVO=0..9` | Beden ve portreyi bu evrim koordinatında çizer (kesirli olabilir: 4.5 iki aşamanın arası); `ALAZ_DEMO_EVO_CARD=<aşama>` yeni aşama kartını gösterir |
 | `ALAZ_DEMO_LINEUP=<kıyafet maskesi>[,lod\|walk\|sit\|back]` | Oyuncunun önüne on evrim aşamasını yan yana dizer (aynı kişi: `ALAZ_DEMO_LINEUP_ID`, varsayılan 12) |
@@ -349,9 +351,22 @@ ALAZ_CAVE_SLICE_DIR=/tmp/alaz-cave-preview ALAZ_CAVE_SEED=42 \
 | `ALAZ_WINDOW=x,y,w,h` | Pencere konumu ve boyutu |
 | `ALAZ_MUTE` | Sesi kapatır |
 
-## Geri bildirim sitesi
+## Geri bildirim
 
-`web/feedback/` oyundan gelen hata ve istek raporlarını alan web sitesidir (Next.js, Vercel). Henüz yayında değil; oyun tarafı da henüz yok. Kurulum: [`web/feedback/README.md`](web/feedback/README.md).
+`F8` (ya da menüdeki **Geri bildirim** düğmesi) hata ve istek formunu açar. Ayarlardan tuşu değiştirebilirsin.
+
+- Formda tür (Hata / İstek), açıklama ve isteğe bağlı isim var.
+- Üç ek açık gelir, istemediğini kapatırsın: **ekran görüntüsü** (yalnız oyun penceresi), **loglar**, **kayıt dosyası** (oyundaki dünyanın o anki hali; kayıt yuvana dokunulmaz).
+- Raporla birlikte oyun sürümü, işletim sistemi, ekran kartı, pencere boyutu, arayüz boyutu, tohum, dünya boyutu, gün ve oyun türü (tek, kuran, katılan, menü) gider.
+- Loglardan gönderilmeden önce ev klasörün, kullanıcı adın, ağ adresleri ve oda kodları silinir. Yazdığın metne dokunulmaz.
+- **Gönder** demeden hiçbir şey gitmez. Raporu geliştirici ve davetli testçiler görür.
+- Tek oyunculu dünya form açıkken durur; ortak dünya sürer.
+- İnternet yoksa rapor veri klasöründeki `reports/` içinde bekler ve sonraki açılışta ya da sonraki raporda gider. En çok 10 rapor bekler. Sunucunun kabul etmediği rapor `reports/refused/` içine taşınır.
+- Oyun çökerse bir sonraki açılışta raporu göndermek isteyip istemediğin sorulur.
+
+Veri klasörü: Linux'ta `~/.local/share/alaz`, Windows'ta `%APPDATA%\ALAZ`; `ALAZ_SAVE_DIR` ile değişir. İçinde `game.log` (bu açılış), `game.old.log` (önceki) ve çökme olduysa `crash.last.txt` bulunur.
+
+Raporları alan site `web/feedback/` içindedir (Next.js, Vercel). **Henüz yayında değil:** yayına alınana kadar raporlar bilgisayarında bekler. Kurulum: [`web/feedback/README.md`](web/feedback/README.md).
 
 ## Testler
 

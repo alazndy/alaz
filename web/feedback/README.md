@@ -18,6 +18,9 @@ cp .env.example .env.local     # IP_HASH_SECRET doldur, FEEDBACK_LOCAL_DIR=.loca
 pnpm dev                       # http://localhost:3000/api/reports
 ```
 
+Oyunu bu sunucuya yönlendirmek için: `ALAZ_FEEDBACK_URL=http://localhost:3000 cargo run --release -p alaz`.
+Gerçek yükleme testi: `ALAZ_FEEDBACK_URL=http://localhost:3000 cargo test -p alaz sends_to_a_local_site -- --ignored`.
+
 Rapor sayfalarını açmak için ayrıca bir Clerk geliştirme anahtarı gerekir. Anahtar yoksa yalnızca yükleme yolu kullanılır.
 
 ## Yayına alma (site sahibinin adımları)
@@ -29,6 +32,7 @@ Rapor sayfalarını açmak için ayrıca bir Clerk geliştirme anahtarı gerekir
 5. Alan adı: Vercel projesine `feedback.alazlab.com` ekle. Cloudflare'de verilen kaydı **DNS only** olarak aç.
 6. Clerk'te üretim (production) örneği oluştur, istediği DNS kayıtlarını Cloudflare'e ekle, üretim anahtarlarını Vercel'e yaz.
 7. `ADMIN_EMAIL` ile gir, **Davetliler** sayfasından testçileri ekle.
+8. Yeni sürümü yayımlamadan önce Linux ve Windows derlemelerinden birer gerçek rapor gönder.
 
 Vercel'in önizleme adresleri varsayılan olarak korumalıdır; oyun oraya yükleyemez. Oyun yalnızca yayındaki adresi kullanır.
 
