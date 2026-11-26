@@ -69,6 +69,7 @@ dependencies = [
 name = "alaz"
 version = "0.6.0"
 dependencies = [
+ "alaz-feedback",
  "alaz-net",
  "alaz-render",
  "alaz-sim",

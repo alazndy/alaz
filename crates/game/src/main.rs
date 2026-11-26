@@ -26,6 +26,7 @@ mod portrait;
 mod pxpanel;
 mod pilot;
 mod progression_view;
+mod report_ui;
 mod pxui;
 mod fx;
 mod gfxcfg;
@@ -1388,6 +1389,8 @@ impl App {
             }
             // handled above, before the menu check
             A::Fullscreen => {}
+            // connected with the form
+            A::Report => {}
             A::Map => self.toggle_map(),
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame

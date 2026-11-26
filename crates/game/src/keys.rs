@@ -42,11 +42,13 @@ pub enum Action {
     Grip,
     /// The sandbox panel (items, clock, sky); only in a creative world.
     Creative,
+    /// Write a bug report or a request, with a screenshot and the logs.
+    Report,
     Menu,
 }
 
 impl Action {
-    pub const ALL: [Action; 32] = [
+    pub const ALL: [Action; 33] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -78,6 +80,7 @@ impl Action {
         Action::Drop,
         Action::Grip,
         Action::Creative,
+        Action::Report,
         Action::Menu,
     ];
 
@@ -114,6 +117,7 @@ impl Action {
             Action::Drop => "Eşya bırak (Shift: hepsi)",
             Action::Grip => "Tut (işi diğer elinle sabitle, basılı tut)",
             Action::Creative => "Yaratıcı panel (eşya ver, zaman, hava)",
+            Action::Report => "Geri bildirim",
             Action::Menu => "Menü / iptal",
         }
     }
@@ -151,6 +155,7 @@ impl Action {
             Action::Drop => "drop",
             Action::Grip => "grip",
             Action::Creative => "creative",
+            Action::Report => "report",
             Action::Menu => "menu",
         }
     }
@@ -189,6 +194,7 @@ impl Action {
             Action::Drop => (K::KeyZ, None),
             Action::Grip => (K::KeyT, None),
             Action::Creative => (K::KeyY, None),
+            Action::Report => (K::F8, None),
             Action::Menu => (K::Escape, None),
         };
         [Some(a), b]
@@ -299,6 +305,7 @@ impl Keybinds {
     pub fn from_text(text: &str) -> Self {
         let mut k = Self::default();
         let mut knows_map = false;
+        let mut knows_report = false;
         for line in text.lines() {
             let Some((id, rest)) = line.split_once('=') else { continue };
             let Some(a) = Action::ALL.iter().copied().find(|a| a.id() == id.trim()) else { continue };
@@ -308,9 +315,14 @@ impl Keybinds {
             }
             k.map.insert(a, slots);
             knows_map |= a == Action::Map;
+            knows_report |= a == Action::Report;
         }
         if !knows_map {
             k.make_room_for_map();
+        }
+        // a file written before there was feedback: a key the player gave to something else stays where it is
+        if !knows_report && Action::ALL.iter().any(|&a| a != Action::Report && k.slots(a).contains(&Some(KeyCode::F8))) {
+            k.map.insert(Action::Report, [None, None]);
         }
         k
     }
@@ -469,5 +481,24 @@ mod tests {
     fn a_config_with_a_map_line_is_taken_as_written() {
         let (map, mute, _) = read("map=yok,yok\nmute=M,yok\n");
         assert_eq!((map.as_str(), mute.as_str()), ("-", "M"));
+    }
+
+    #[test]
+    fn feedback_is_on_f8() {
+        assert_eq!(Keybinds::default().actions_for(KeyCode::F8), vec![Action::Report]);
+    }
+
+    #[test]
+    fn an_old_config_keeps_a_chosen_f8() {
+        let k = Keybinds::from_text("drop=F8,yok\n");
+        assert_eq!(k.label(Action::Report), "-");
+        assert_eq!(k.actions_for(KeyCode::F8), vec![Action::Drop]);
+        assert_eq!(Keybinds::from_text("drop=Z,yok\n").label(Action::Report), "F8");
+    }
+
+    #[test]
+    fn a_config_with_a_feedback_line_is_taken_as_written() {
+        assert_eq!(Keybinds::from_text("report=yok,yok\n").label(Action::Report), "-");
+        assert_eq!(Keybinds::from_text("report=F7,yok\n").label(Action::Report), "F7");
     }
 }
