@@ -1340,6 +1340,8 @@ impl App {
             }
             // handled above, before the menu check
             A::Fullscreen => {}
+            // opened by the screen it belongs to (wired with the maps)
+            A::Map => {}
             A::Grid => self.grid_snap = !self.grid_snap,
             // held, not pressed: the minigames read it every frame
             A::Grip => {}

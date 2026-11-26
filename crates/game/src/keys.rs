@@ -28,6 +28,8 @@ pub enum Action {
     Journal,
     ItemGuide,
     Routes,
+    /// The large map of the explored surface.
+    Map,
     Help,
     Save,
     Load,
@@ -44,7 +46,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 31] = [
+    pub const ALL: [Action; 32] = [
         Action::MoveUp,
         Action::MoveDown,
         Action::Sprint,
@@ -66,6 +68,7 @@ impl Action {
         Action::Journal,
         Action::ItemGuide,
         Action::Routes,
+        Action::Map,
         Action::Help,
         Action::Save,
         Action::Load,
@@ -101,6 +104,7 @@ impl Action {
             Action::Journal => "Günlük",
             Action::ItemGuide => "Bu ne?",
             Action::Routes => "Rotalar",
+            Action::Map => "Harita",
             Action::Help => "Yardım",
             Action::Save => "Kaydet",
             Action::Load => "Kayıt yükle",
@@ -137,6 +141,7 @@ impl Action {
             Action::Journal => "journal",
             Action::ItemGuide => "item_guide",
             Action::Routes => "routes",
+            Action::Map => "map",
             Action::Help => "help",
             Action::Save => "save",
             Action::Load => "load",
@@ -177,7 +182,8 @@ impl Action {
             Action::Help => (K::F1, None),
             Action::Save => (K::F5, None),
             Action::Load => (K::F9, None),
-            Action::Mute => (K::KeyM, None),
+            Action::Map => (K::KeyM, None),
+            Action::Mute => (K::KeyN, None),
             Action::Fullscreen => (K::F11, None),
             Action::Grid => (K::KeyG, None),
             Action::Drop => (K::KeyZ, None),
@@ -292,6 +298,7 @@ impl Keybinds {
 
     pub fn from_text(text: &str) -> Self {
         let mut k = Self::default();
+        let mut knows_map = false;
         for line in text.lines() {
             let Some((id, rest)) = line.split_once('=') else { continue };
             let Some(a) = Action::ALL.iter().copied().find(|a| a.id() == id.trim()) else { continue };
@@ -300,8 +307,31 @@ impl Keybinds {
                 slots[i] = key_from_name(n.trim());
             }
             k.map.insert(a, slots);
+            knows_map |= a == Action::Map;
+        }
+        if !knows_map {
+            k.make_room_for_map();
         }
         k
+    }
+
+    /// A file written before there was a map has mute on M. Mute moves to N and the map takes M, but a key the
+    /// player gave to something else stays where it is: then the map has no key until they choose one.
+    fn make_room_for_map(&mut self) {
+        let taken = |k: &Self, code| Action::ALL.iter().any(|&a| !matches!(a, Action::Map | Action::Mute) && k.slots(a).contains(&Some(code)));
+        let n_taken = taken(self, KeyCode::KeyN);
+        let mut mute = self.slots(Action::Mute);
+        for slot in &mut mute {
+            match *slot {
+                Some(KeyCode::KeyM) if !n_taken => *slot = Some(KeyCode::KeyN),
+                // N came from the default (the file had no mute line), but the player uses it for something else
+                Some(KeyCode::KeyN) if n_taken => *slot = None,
+                _ => {}
+            }
+        }
+        self.map.insert(Action::Mute, mute);
+        let m_taken = taken(self, KeyCode::KeyM) || mute.contains(&Some(KeyCode::KeyM));
+        self.map.insert(Action::Map, [(!m_taken).then_some(KeyCode::KeyM), None]);
     }
 
     fn path() -> PathBuf {
@@ -383,5 +413,61 @@ mod tests {
         assert!(k.actions_for(KeyCode::Tab).is_empty());
         assert!(k.actions_for(KeyCode::F2).is_empty());
         assert_eq!(k.actions_for(KeyCode::KeyI), vec![Action::Bag]);
+    }
+
+    #[test]
+    fn a_fresh_setup_has_map_on_m_and_mute_on_n() {
+        let k = Keybinds::default();
+        assert_eq!(k.slots(Action::Map), [Some(KeyCode::KeyM), None]);
+        assert_eq!(k.slots(Action::Mute), [Some(KeyCode::KeyN), None]);
+        assert_eq!(k.actions_for(KeyCode::KeyM), vec![Action::Map]);
+        assert_eq!(k.actions_for(KeyCode::KeyN), vec![Action::Mute]);
+    }
+
+    fn read(text: &str) -> (String, String, Keybinds) {
+        let k = Keybinds::from_text(text);
+        (k.label(Action::Map), k.label(Action::Mute), k)
+    }
+
+    #[test]
+    fn an_old_config_moves_mute_to_n() {
+        let (map, mute, _) = read("mute=M,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("M", "N"));
+        let (map, mute, _) = read("mute=K,M\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("M", "K / N"), "the second slot moves too");
+    }
+
+    #[test]
+    fn an_old_config_keeps_a_chosen_n() {
+        let (map, mute, k) = read("mute=M,yok\ndrop=N,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("-", "M"));
+        assert_eq!(k.actions_for(KeyCode::KeyN), vec![Action::Drop]);
+        assert_eq!(k.actions_for(KeyCode::KeyM), vec![Action::Mute]);
+    }
+
+    #[test]
+    fn an_old_config_with_m_elsewhere_leaves_map_unbound() {
+        let (map, mute, k) = read("mute=K,yok\ndrop=M,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("-", "K"));
+        assert_eq!(k.actions_for(KeyCode::KeyM), vec![Action::Drop]);
+    }
+
+    #[test]
+    fn an_old_config_with_mute_elsewhere_gives_map_m() {
+        let (map, mute, _) = read("mute=K,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("M", "K"));
+    }
+
+    #[test]
+    fn an_old_config_without_a_mute_line_does_not_double_a_chosen_n() {
+        let (map, mute, k) = read("drop=N,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("M", "-"));
+        assert_eq!(k.actions_for(KeyCode::KeyN), vec![Action::Drop]);
+    }
+
+    #[test]
+    fn a_config_with_a_map_line_is_taken_as_written() {
+        let (map, mute, _) = read("map=yok,yok\nmute=M,yok\n");
+        assert_eq!((map.as_str(), mute.as_str()), ("-", "M"));
     }
 }

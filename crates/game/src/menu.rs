@@ -790,7 +790,7 @@ impl Menu {
     }
 
     /// How loud each kind of sound is. A change is heard at once.
-    fn draw_sound(&mut self, ctx: &egui::Context) {
+    fn draw_sound(&mut self, ctx: &egui::Context, binds: &Keybinds) {
         let t = self.intro(ctx);
         let screen = ctx.content_rect();
         let bg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::NULL.with("menu_bg")));
@@ -798,6 +798,10 @@ impl Menu {
         let e = ease(t / 0.35);
         let note = Color32::from_rgb(190, 176, 150);
         let mut prefs = crate::gfxcfg::prefs();
+        let master_hint = match binds.slots(Action::Mute) {
+            [None, None] => "Hepsinin birden sesi.".to_string(),
+            _ => format!("Hepsinin birden sesi. {} tuşu sesi kapatır.", binds.short(Action::Mute)),
+        };
         egui::Area::new(egui::Id::NULL.with("menu")).anchor(Align2::CENTER_TOP, [0.0, 56.0 + (1.0 - e) * 24.0]).show(ctx, |ui| {
             ui.set_opacity(e);
             card(ui, 470.0, |ui| {
@@ -806,7 +810,7 @@ impl Menu {
                 ui.add_space(6.0);
                 let v = &mut prefs.volumes;
                 for (label, hint, value) in [
-                    ("Genel", "Hepsinin birden sesi. M tuşu sesi kapatır.", &mut v.master),
+                    ("Genel", master_hint.as_str(), &mut v.master),
                     ("Efektler", "Vuruşlar, çıngıraklar, havlama.", &mut v.effects),
                     ("Ortam", "Rüzgâr, yağmur, kuşlar, su, ateş.", &mut v.ambience),
                     ("Müzik", "Oyunun içinde üretilen yavaş müzik.", &mut v.music),
@@ -997,7 +1001,7 @@ impl Menu {
             return None;
         }
         if self.sound_screen {
-            self.draw_sound(ctx);
+            self.draw_sound(ctx, binds);
             return None;
         }
         if self.update_screen {

@@ -103,7 +103,8 @@ Varsayılan tuşlar. Hepsi oyun içinden yeniden atanabilir.
 | J | Günlük | Z | Eşya bırak |
 | R | Rotalar | G | Izgaraya oturt |
 | F1 | Yardım | F5 / F9 | Kaydet / yükle |
-| M | Ses | Esc | Menü / iptal |
+| M | Harita | N | Ses |
+| Esc | Menü / iptal | | |
 
 Fare ile:
 - **Sol tık:** yürü, bina ya da işçi aç.
