@@ -136,6 +136,8 @@ pub fn item_name(k: ItemKind) -> &'static str {
         ItemKind::SteelHelm => "Çelik miğfer",
         ItemKind::WorkApron => "İş önlüğü",
         ItemKind::Bag => "Dokuma torba",
+        ItemKind::LeatherPack => "Deri sırt çantası",
+        ItemKind::FramePack => "Çerçeveli sırt çantası",
         ItemKind::Wheel => "Tekerlek",
         ItemKind::Cart => "Araba",
         ItemKind::Plow => "Saban",

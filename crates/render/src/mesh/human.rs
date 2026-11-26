@@ -54,6 +54,10 @@ pub const OUT_APRON: u16 = 128;
 pub const OUT_FELT: u16 = 256;
 /// A leather jerkin: drawn like the breastplate, in brown leather.
 pub const OUT_LEATHER: u16 = 512;
+/// A leather pack on the back.
+pub const OUT_PACK: u16 = 1024;
+/// A pack on a wooden frame, with a bedroll on top; it replaces the leather pack.
+pub const OUT_FRAME_PACK: u16 = 2048;
 
 /// A person's looks, fixed by the id: skin, hair, dye, build.
 pub struct Look {
@@ -91,10 +95,12 @@ pub fn look(id: u32) -> Look {
 /// What a person wears, from what they carry. A tunic replaces the fibre wrap; the rest layer over each other.
 pub fn outfit_bits(inv: &alaz_sim::world::Inventory) -> u16 {
     use alaz_sim::ItemKind as I;
-    [(I::FiberWrap, OUT_WRAP), (I::HideCloak, OUT_CLOAK), (I::HideBoots, OUT_BOOTS), (I::Tunic, OUT_TUNIC), (I::LinenHood, OUT_HOOD), (I::BronzePlate, OUT_PLATE), (I::SteelHelm, OUT_HELM), (I::WorkApron, OUT_APRON), (I::FeltCloak, OUT_FELT), (I::LeatherArmor, OUT_LEATHER)]
+    let bits = [(I::FiberWrap, OUT_WRAP), (I::HideCloak, OUT_CLOAK), (I::HideBoots, OUT_BOOTS), (I::Tunic, OUT_TUNIC), (I::LinenHood, OUT_HOOD), (I::BronzePlate, OUT_PLATE), (I::SteelHelm, OUT_HELM), (I::WorkApron, OUT_APRON), (I::FeltCloak, OUT_FELT), (I::LeatherArmor, OUT_LEATHER), (I::LeatherPack, OUT_PACK), (I::FramePack, OUT_FRAME_PACK)]
         .iter()
         .filter(|(k, _)| inv.counts[*k as usize] > 0)
-        .fold(0, |m, (_, b)| m | b)
+        .fold(0, |m, (_, b)| m | b);
+    // one back, one pack: the better one is the one worn
+    if bits & OUT_FRAME_PACK != 0 { bits & !OUT_PACK } else { bits }
 }
 
 /// A person this tall on the screen (pixels) or less is drawn with `Pose::lod`; the figure is 1.9 m.
@@ -377,7 +383,47 @@ pub(crate) fn push_human(out: &mut Mesh, x: f32, z: f32, pose: Pose) {
     // a gatherer's woven sack on the hip, hung from a strap across the chest
     let clothed = tunic || plate || cloak || apron || wrap;
     let skin_out = if clothed { 0.045 } else { 0.0 };
-    if ev.sack > 0.03 {
+    let (frame_pack, leather_pack) = (o & OUT_FRAME_PACK != 0, o & (OUT_PACK | OUT_FRAME_PACK) == OUT_PACK);
+    if frame_pack || leather_pack {
+        // the pack sits on the back, further out over a cloak
+        let back = if cloak { -0.31 } else { -0.23 };
+        let strap = [0.3, 0.19, 0.1];
+        let (bag, bag_dk) = if frame_pack { ([0.4, 0.44, 0.3], [0.3, 0.33, 0.22]) } else { ([0.62, 0.27, 0.13], [0.86, 0.68, 0.42]) };
+        if frame_pack {
+            let wood = [0.5, 0.36, 0.2];
+            upart(out, ub(back - 0.04, 1.28, 0.0), 0.2, 0.28, 0.13, tilt, bag, 8);
+            upart(out, ub(back - 0.15, 1.18, 0.0), 0.13, 0.12, 0.05, tilt, bag_dk, 7);
+            // two poles and a top bar, with a bedroll lashed above the bag
+            for side in [-1.0f32, 1.0] {
+                limb(out, ub(back + 0.04, 0.94, side * 0.21), ub(back + 0.01, 1.72, side * 0.21), 0.022, 0.022, wood, 5);
+            }
+            limb(out, ub(back + 0.01, 1.7, -0.23), ub(back + 0.01, 1.7, 0.23), 0.02, 0.02, wood, 5);
+            limb(out, ub(back - 0.07, 1.61, -0.25), ub(back - 0.07, 1.61, 0.25), 0.085, 0.085, [0.66, 0.56, 0.4], 8);
+        } else {
+            upart(out, ub(back, 1.24, 0.0), 0.165, 0.21, 0.11, tilt, bag, 8);
+            // a pale flap over the top, so the pack reads against skin and hide from far off
+            upart(out, ub(back - 0.025, 1.37, 0.0), 0.175, 0.085, 0.12, tilt, bag_dk, 7);
+            limb(out, ub(back - 0.115, 1.15, -0.13), ub(back - 0.115, 1.15, 0.13), 0.018, 0.018, strap, 5);
+            if !lod {
+                sphere(out, ub(back - 0.135, 1.3, 0.0), [0.022; 3], [0.85, 0.68, 0.3], 5, 3, 0.0, 1);
+            }
+        }
+        // shoulder straps: from the top of the pack over each shoulder and down the chest to the side
+        let chest_out = if clothed { 0.045 } else { 0.0 };
+        for side in [-1.0f32, 1.0] {
+            let top = ub(-0.02, 1.51, side * 0.13);
+            limb(out, ub(back + 0.06, 1.42, side * 0.12), top, 0.02, 0.02, strap, 5);
+            limb(out, top, ub(0.155 + chest_out, 1.34, side * 0.13), 0.02, 0.02, strap, 5);
+            if !lod {
+                limb(out, ub(0.155 + chest_out, 1.34, side * 0.13), ub(0.04 + chest_out, 1.12, side * 0.18), 0.018, 0.018, strap, 5);
+            }
+        }
+        if frame_pack && !lod {
+            // the hip belt that takes the weight
+            limb(out, ub(0.14 + chest_out, 1.0, -0.14), ub(0.14 + chest_out, 1.0, 0.14), 0.03, 0.03, strap, 5);
+        }
+    }
+    if ev.sack > 0.03 && !frame_pack && !leather_pack {
         let k = ev.sack;
         let (a, m, b) = (ub(0.06 + skin_out, 1.45, 0.14), ub(0.165 + skin_out, 1.27, 0.0), ub(0.1 + skin_out, 1.1, -0.15));
         limb(out, a, m, 0.022 * k, 0.022 * k, [0.74, 0.62, 0.36], 5);
@@ -802,7 +848,7 @@ fn tool_file(tool: Tool) -> Option<std::sync::Arc<assets::Model>> {
 /// Garments that have a model file (`models/outfit_cloak.vox` ...) are stamped at the person's feet, turned with them;
 /// returns the bits of the ones that were, so the body does not draw its own.
 fn file_outfit(out: &mut Mesh, x: f32, z: f32, pose: &Pose) -> u16 {
-    const FILES: [(u16, &str); 10] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron"), (OUT_FELT, "outfit_felt_cloak"), (OUT_LEATHER, "outfit_leather_armor")];
+    const FILES: [(u16, &str); 12] = [(OUT_WRAP, "outfit_wrap"), (OUT_CLOAK, "outfit_cloak"), (OUT_BOOTS, "outfit_boots"), (OUT_TUNIC, "outfit_tunic"), (OUT_HOOD, "outfit_hood"), (OUT_PLATE, "outfit_plate"), (OUT_HELM, "outfit_helm"), (OUT_APRON, "outfit_apron"), (OUT_FELT, "outfit_felt_cloak"), (OUT_LEATHER, "outfit_leather_armor"), (OUT_PACK, "outfit_leather_pack"), (OUT_FRAME_PACK, "outfit_frame_pack")];
     let mut done = 0;
     for (bit, name) in FILES {
         if pose.outfit & bit != 0

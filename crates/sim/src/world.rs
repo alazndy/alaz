@@ -20,6 +20,10 @@ const REACH_MM: i64 = 1500;
 pub const INVENTORY_CAPACITY: u16 = 40;
 /// Extra room a woven bag gives a person.
 pub const BAG_EXTRA: u16 = 15;
+/// Extra room a leather pack gives a person.
+pub const LEATHER_PACK_EXTRA: u16 = 30;
+/// Extra room a frame pack gives a person.
+pub const FRAME_PACK_EXTRA: u16 = 50;
 /// Animals within this distance of a pen's centre are in it.
 pub const PEN_RADIUS_MM: i64 = 3_500;
 /// Extra load an ox or a horse pulls in a cart.
@@ -1118,7 +1122,18 @@ impl Agent {
 
     /// What this agent can carry: its kind's load, plus a woven bag for a person who has one.
     pub fn capacity(&self) -> u16 {
-        let bag = if self.kind == AgentKind::Human && self.inventory.get(ItemKind::Bag) > 0 { BAG_EXTRA } else { 0 };
+        // only the best pack counts; they do not add up
+        let bag = if self.kind != AgentKind::Human {
+            0
+        } else if self.inventory.get(ItemKind::FramePack) > 0 {
+            FRAME_PACK_EXTRA
+        } else if self.inventory.get(ItemKind::LeatherPack) > 0 {
+            LEATHER_PACK_EXTRA
+        } else if self.inventory.get(ItemKind::Bag) > 0 {
+            BAG_EXTRA
+        } else {
+            0
+        };
         let cart = if matches!(self.kind, AgentKind::Ox | AgentKind::Horse) && self.inventory.get(ItemKind::Cart) > 0 { CART_EXTRA } else { 0 };
         // bred animals grow stronger: 5% more load a generation, up to ten
         let base = if matches!(self.kind, AgentKind::Ox | AgentKind::Horse | AgentKind::Dog) {

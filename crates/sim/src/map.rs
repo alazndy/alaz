@@ -335,6 +335,10 @@ pub enum ItemKind {
     PureSilicon,
     /// A chip printed on pure silicon: many transistors on a fingernail.
     Chip,
+    /// A tanned-leather pack on the back: a person carries much more; kept.
+    LeatherPack,
+    /// A pack on a wooden frame, leather straps and a hip belt: the most a person can carry; kept.
+    FramePack,
 }
 
 impl ItemKind {
@@ -355,6 +359,8 @@ impl ItemKind {
                 | ItemKind::Quern
                 | ItemKind::Tunic
                 | ItemKind::Bag
+                | ItemKind::LeatherPack
+                | ItemKind::FramePack
                 | ItemKind::Cart
                 | ItemKind::Plow
                 | ItemKind::Hammer
@@ -395,7 +401,7 @@ impl ItemKind {
         crate::rules::rules().garment(self)
     }
 
-    pub const COUNT: usize = 165;
+    pub const COUNT: usize = 167;
     pub const ALL: [ItemKind; Self::COUNT] = [
         ItemKind::Stone,
         ItemKind::Wood,
@@ -562,6 +568,8 @@ impl ItemKind {
         ItemKind::VacuumTube,
         ItemKind::PureSilicon,
         ItemKind::Chip,
+        ItemKind::LeatherPack,
+        ItemKind::FramePack,
     ];
 }
 
