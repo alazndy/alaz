@@ -96,3 +96,4 @@ The Book links discovery paths to recipes and the item guide. Check deterministi
 - [2026-11-26] [Claude Kaira]: Added leather and frame back packs (capacity, recipes, icons, worn look, tests).
 - [2026-11-26] [Claude Kaira]: Merged back packs (PR #15). Wrote the surface map design (`docs/superpowers/specs/2026-11-26-surface-map-design.md`, branch `feat/map`); the user approved it. Plan: `docs/superpowers/plans/2026-11-26-surface-map.md`.
 - [2026-11-26] [Claude Kaira]: Built the surface map on `feat/map` (small and large map, camp mark, remembered resources, storage, `M` key). Merged into local `main` (user choice), 611 tests pass. Not pushed to `origin/main`. Not tried by real play.
+- [2026-11-26] [Claude Kaira]: Wrote the draft design for in-game feedback reports (`docs/superpowers/specs/2026-11-26-feedback-reports-design.md`, branch `feat/feedback`): Vercel site with invited email sign-in, direct upload from the game. Waiting for approval. No code yet.
