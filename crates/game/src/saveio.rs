@@ -2,8 +2,10 @@
 //! Location: `$ALAZ_SAVE_DIR`, else on Windows `%APPDATA%\ALAZ`, else `$XDG_DATA_HOME/alaz`, else `~/.local/share/alaz`.
 
 mod discovery;
+mod surface;
 
 use crate::cave_map::KnownTiles;
+use crate::surface_map::Records;
 use alaz_sim::{AgentId, World};
 use std::fs;
 use std::io::{self, Write};
@@ -13,11 +15,14 @@ pub const SLOTS: u8 = 3;
 static SLOT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 const MAIN: &str = "save.alz";
 const BACKUP: &str = "save.alz.bak";
+const GUEST_DIR: &str = "guest-maps";
+const GUEST_MAGIC: &[u8; 4] = b"ASG1";
 static KNOWN_PRIMARY: std::sync::Mutex<Option<(PathBuf, Vec<u8>)>> = std::sync::Mutex::new(None);
 
 pub struct LoadedSave {
     pub world: World,
     pub seen: KnownTiles,
+    pub surface: Records,
     /// The main file was missing or damaged and the backup (the save before it) was opened instead: the player lost
     /// what happened since that older save and has to be told.
     pub recovered: bool,
@@ -61,7 +66,7 @@ pub fn base_dir() -> PathBuf {
 }
 
 /// Rotate only a loadable primary into the backup. A recovered backup survives the next save.
-pub fn save_in(dir: &Path, world: &World, me: AgentId, seen: &KnownTiles) -> io::Result<SaveOutcome> {
+pub fn save_in(dir: &Path, world: &World, me: AgentId, seen: &KnownTiles, surface: &Records) -> io::Result<SaveOutcome> {
     let mut known = KNOWN_PRIMARY.lock().unwrap_or_else(|e| e.into_inner());
     fs::create_dir_all(dir)?;
     let main = dir.join(MAIN);
@@ -86,7 +91,9 @@ pub fn save_in(dir: &Path, world: &World, me: AgentId, seen: &KnownTiles) -> io:
         let retained = retained.or_else(|| discovery::read_fingerprint(&backup));
         // Commit the matching pair of exploration records before replacing the world.
         // A save interrupted here can still open the old primary or the retained backup.
-        discovery::update(dir, fingerprint, retained, me, seen)
+        let cave = discovery::update(dir, &discovery::CAVE, fingerprint, retained, me, &discovery::encode_cave(seen));
+        let land = discovery::update(dir, &discovery::SURFACE, fingerprint, retained, me, &surface::encode(surface));
+        cave.and(land)
     });
     write_atomic(&main, &bytes)?;
     *known = Some((main, bytes));
@@ -150,12 +157,17 @@ pub fn load_in(dir: &Path, me: AgentId) -> Result<Option<LoadedSave>, String> {
     }
     result.map(|save| {
         save.map(|(world, bytes)| {
-            let seen = discovery::load(dir, &bytes, &world, me);
+            let seen = discovery::find(dir, &discovery::CAVE, &bytes, me)
+                .and_then(|payload| discovery::decode_cave(&payload, &world))
+                .unwrap_or_default();
+            let surface = discovery::find(dir, &discovery::SURFACE, &bytes, me)
+                .and_then(|payload| surface::decode(&payload, &world))
+                .unwrap_or_default();
             if !recovered {
                 let mut known = KNOWN_PRIMARY.lock().unwrap_or_else(|e| e.into_inner());
                 *known = Some((dir.join(MAIN), bytes));
             }
-            LoadedSave { world, seen, recovered }
+            LoadedSave { world, seen, surface, recovered }
         })
     })
 }
@@ -163,7 +175,44 @@ pub fn load_in(dir: &Path, me: AgentId) -> Result<Option<LoadedSave>, String> {
 pub fn delete_in(dir: &Path) {
     let _ = fs::remove_file(dir.join(MAIN));
     let _ = fs::remove_file(dir.join(BACKUP));
-    let _ = fs::remove_file(dir.join(discovery::FILE_NAME));
+    let _ = fs::remove_file(dir.join(discovery::CAVE.file));
+    let _ = fs::remove_file(dir.join(surface::FILE_NAME));
+}
+
+fn guest_file(base: &Path, world: &World) -> PathBuf {
+    base.join(GUEST_DIR).join(format!("{:016x}.alz", world.seed))
+}
+
+/// A joined player saves no world, so their map is kept on its own, one per world seed.
+pub fn guest_save_in(base: &Path, world: &World, surface: &Records) -> io::Result<()> {
+    let payload = surface::encode(surface);
+    // nothing learned yet (the world has only just arrived) must not wipe what an earlier visit kept
+    if payload.is_empty() {
+        return Ok(());
+    }
+    let mut bytes = GUEST_MAGIC.to_vec();
+    bytes.extend_from_slice(&payload);
+    bytes.extend_from_slice(&discovery::checksum(&payload).to_le_bytes());
+    fs::create_dir_all(base.join(GUEST_DIR))?;
+    write_atomic(&guest_file(base, world), &bytes)
+}
+
+/// The kept map of this world; empty when there is none or it cannot be read.
+pub fn guest_load_in(base: &Path, world: &World) -> Records {
+    let read = || {
+        let file = fs::read(guest_file(base, world)).ok()?;
+        let (payload, sum) = file.strip_prefix(GUEST_MAGIC)?.split_last_chunk::<8>()?;
+        (discovery::checksum(payload) == u64::from_le_bytes(*sum)).then(|| surface::decode(payload, world))?
+    };
+    read().unwrap_or_default()
+}
+
+pub fn guest_save(world: &World, surface: &Records) -> io::Result<()> {
+    guest_save_in(&base_dir(), world, surface)
+}
+
+pub fn guest_load(world: &World) -> Records {
+    guest_load_in(&base_dir(), world)
 }
 
 /// Slot 1 lives in the base directory (so older saves keep working), the others in `slotN/`.
@@ -207,8 +256,8 @@ fn slot_info_in(dir: &Path) -> Option<Result<alaz_sim::SaveInfo, String>> {
         .transpose()
 }
 
-pub fn save(world: &World, me: AgentId, seen: &KnownTiles) -> io::Result<SaveOutcome> {
-    save_in(&dir(), world, me, seen)
+pub fn save(world: &World, me: AgentId, seen: &KnownTiles, surface: &Records) -> io::Result<SaveOutcome> {
+    save_in(&dir(), world, me, seen, surface)
 }
 
 pub fn load(me: AgentId) -> Result<Option<LoadedSave>, String> {
@@ -240,7 +289,7 @@ mod tests {
     }
 
     fn save_world(dir: &Path, world: &World) {
-        save_in(dir, world, AgentId(0), &KnownTiles::new()).unwrap();
+        save_in(dir, world, AgentId(0), &KnownTiles::new(), &Records::default()).unwrap();
     }
 
     fn load_recovered(dir: &Path) -> Option<bool> {
@@ -347,19 +396,19 @@ mod tests {
         let (sx, sy) = w.spawn_mm;
         let guest = w.spawn_agent(sx, sy);
         let host = AgentId(0);
-        save_in(&d, &w, host, &explored(10)).unwrap();
+        save_in(&d, &w, host, &explored(10), &Records::default()).unwrap();
         let loaded = load_in(&d, host).unwrap().unwrap();
         assert_eq!(loaded.world.hash(), w.hash());
         assert_eq!(loaded.seen, explored(10));
         assert!(load_in(&d, guest).unwrap().unwrap().seen.is_empty());
         assert_eq!(fs::read(d.join(MAIN)).unwrap(), w.to_bytes());
 
-        save_in(&d, &w, guest, &explored(20)).unwrap();
+        save_in(&d, &w, guest, &explored(20), &Records::default()).unwrap();
         assert_eq!(load_in(&d, host).unwrap().unwrap().seen, explored(10));
         assert_eq!(load_in(&d, guest).unwrap().unwrap().seen, explored(20));
 
         delete_in(&d);
-        assert!(!d.join(discovery::FILE_NAME).exists());
+        assert!(!d.join(discovery::CAVE.file).exists());
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -369,16 +418,16 @@ mod tests {
         let mut w = world(4);
         let me = AgentId(0);
         let old = w.hash();
-        save_in(&d, &w, me, &explored(10)).unwrap();
+        save_in(&d, &w, me, &explored(10), &Records::default()).unwrap();
         w.step(&[]);
-        save_in(&d, &w, me, &explored(20)).unwrap();
+        save_in(&d, &w, me, &explored(20), &Records::default()).unwrap();
         assert_eq!(load_in(&d, me).unwrap().unwrap().seen, explored(20));
         fs::write(d.join(MAIN), b"invalid primary").unwrap();
         let mut recovered = load_in(&d, me).unwrap().unwrap();
         assert_eq!(recovered.world.hash(), old);
         assert_eq!(recovered.seen, explored(10));
         recovered.world.step(&[]);
-        save_in(&d, &recovered.world, me, &explored(15)).unwrap();
+        save_in(&d, &recovered.world, me, &explored(15), &Records::default()).unwrap();
         assert_eq!(load_in(&d, me).unwrap().unwrap().seen, explored(15));
         fs::remove_file(d.join(MAIN)).unwrap();
         let recovered = load_in(&d, me).unwrap().unwrap();
@@ -392,16 +441,17 @@ mod tests {
         let d = temp_dir("cave-interrupted");
         let mut w = world(4);
         let me = AgentId(0);
-        save_in(&d, &w, me, &explored(10)).unwrap();
+        save_in(&d, &w, me, &explored(10), &Records::default()).unwrap();
         let previous = w.to_bytes();
         write_atomic(&d.join(BACKUP), &previous).unwrap();
         w.step(&[]);
         discovery::update(
             &d,
+            &discovery::CAVE,
             discovery::save_fingerprint(&w.to_bytes()).unwrap(),
             discovery::save_fingerprint(&previous),
             me,
-            &explored(20),
+            &discovery::encode_cave(&explored(20)),
         )
         .unwrap();
         assert_eq!(load_in(&d, me).unwrap().unwrap().seen, explored(10));
@@ -413,8 +463,8 @@ mod tests {
         let d = temp_dir("cave-map-damaged");
         let w = world(4);
         let me = AgentId(0);
-        save_in(&d, &w, me, &explored(10)).unwrap();
-        let path = d.join(discovery::FILE_NAME);
+        save_in(&d, &w, me, &explored(10), &Records::default()).unwrap();
+        let path = d.join(discovery::CAVE.file);
         let mut bytes = fs::read(&path).unwrap();
         bytes[12] ^= 1;
         fs::write(&path, bytes).unwrap();
@@ -429,12 +479,127 @@ mod tests {
         let d = temp_dir("cave-map-unwritable");
         let w = world(4);
         let me = AgentId(0);
-        fs::create_dir_all(d.join(discovery::FILE_NAME)).unwrap();
-        let outcome = save_in(&d, &w, me, &explored(10)).unwrap();
+        fs::create_dir_all(d.join(discovery::CAVE.file)).unwrap();
+        let outcome = save_in(&d, &w, me, &explored(10), &Records::default()).unwrap();
         assert!(matches!(outcome, SaveOutcome::WorldOnly(_)));
         let restored = load_in(&d, me).unwrap().unwrap();
         assert_eq!(restored.world.hash(), w.hash());
         assert!(restored.seen.is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    fn marked(x: i32) -> Records {
+        use alaz_sim::{BuildingKind, map::NodeKind};
+        let mut r = Records::default();
+        let mut mask = [0u64; 64];
+        mask[10] = 1 << (x % 64);
+        r.explored.insert((0, 0), mask);
+        r.resources.insert((x, 10), NodeKind::StoneOutcrop);
+        r.buildings.insert((x, 11), BuildingKind::Campfire);
+        r.camp = Some((x, 12));
+        r
+    }
+
+    #[test]
+    fn the_surface_map_returns_with_its_save_and_player() {
+        let d = temp_dir("surface-players");
+        let mut w = world(4);
+        let (sx, sy) = w.spawn_mm;
+        let guest = w.spawn_agent(sx, sy);
+        let host = AgentId(0);
+        save_in(&d, &w, host, &explored(10), &marked(10)).unwrap();
+        assert!(load_in(&d, guest).unwrap().unwrap().surface.is_empty());
+        save_in(&d, &w, guest, &KnownTiles::new(), &marked(20)).unwrap();
+        let loaded = load_in(&d, host).unwrap().unwrap();
+        assert_eq!(loaded.surface, marked(10));
+        assert_eq!(loaded.seen, explored(10), "the two maps do not disturb each other");
+        assert_eq!(load_in(&d, guest).unwrap().unwrap().surface, marked(20));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_backup_restore_brings_the_matching_surface_map() {
+        let d = temp_dir("surface-backup");
+        let mut w = world(4);
+        let me = AgentId(0);
+        save_in(&d, &w, me, &KnownTiles::new(), &marked(10)).unwrap();
+        w.step(&[]);
+        save_in(&d, &w, me, &KnownTiles::new(), &marked(20)).unwrap();
+        assert_eq!(load_in(&d, me).unwrap().unwrap().surface, marked(20));
+        fs::write(d.join(MAIN), b"invalid primary").unwrap();
+        let recovered = load_in(&d, me).unwrap().unwrap();
+        assert!(recovered.recovered);
+        assert_eq!(recovered.surface, marked(10));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_damaged_surface_map_gives_an_empty_map() {
+        let d = temp_dir("surface-damaged");
+        let w = world(4);
+        let me = AgentId(0);
+        save_in(&d, &w, me, &explored(10), &marked(10)).unwrap();
+        let path = d.join(surface::FILE_NAME);
+        let mut bytes = fs::read(&path).unwrap();
+        let at = bytes.len() / 2;
+        bytes[at] ^= 1;
+        fs::write(&path, bytes).unwrap();
+        let loaded = load_in(&d, me).unwrap().unwrap();
+        assert_eq!(loaded.world.hash(), w.hash());
+        assert!(loaded.surface.is_empty());
+        assert_eq!(loaded.seen, explored(10));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn decode_rejects_bad_records() {
+        let w = world(4);
+        let good = surface::encode(&marked(10));
+        assert_eq!(surface::decode(&good, &w), Some(marked(10)));
+        assert!(surface::encode(&Records::default()).is_empty());
+        assert_eq!(surface::decode(&[], &w), Some(Records::default()));
+        assert_eq!(surface::decode(&good[..good.len() - 1], &w), None, "short");
+        let mut long = good.clone();
+        long.push(0);
+        assert_eq!(surface::decode(&long, &w), None, "extra bytes");
+        // chunks: count, then one entry of 8 + 512 bytes; the resource's kind follows its count and tile
+        let kind_at = 4 + 520 + 4 + 8;
+        let mut unknown = good.clone();
+        unknown[kind_at] = 200;
+        assert_eq!(surface::decode(&unknown, &w), None, "unknown resource");
+        let mut far = marked(10);
+        far.camp = Some((w.map.w, 0));
+        assert_eq!(surface::decode(&surface::encode(&far), &w), None, "camp off the map");
+        let mut far = marked(10);
+        far.explored.insert((-1, 0), [1; 64]);
+        assert_eq!(surface::decode(&surface::encode(&far), &w), None, "chunk off the map");
+    }
+
+    #[test]
+    fn deleting_a_slot_removes_the_surface_map() {
+        let d = temp_dir("surface-delete");
+        let w = world(4);
+        save_in(&d, &w, AgentId(0), &KnownTiles::new(), &marked(10)).unwrap();
+        assert!(d.join(surface::FILE_NAME).exists());
+        delete_in(&d);
+        assert!(!d.join(surface::FILE_NAME).exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_guest_map_is_kept_by_world_seed() {
+        let d = temp_dir("surface-guest");
+        let (here, there) = (world(4), world(5));
+        guest_save_in(&d, &here, &marked(10)).unwrap();
+        assert_eq!(guest_load_in(&d, &here), marked(10));
+        assert!(guest_load_in(&d, &there).is_empty());
+        guest_save_in(&d, &here, &Records::default()).unwrap();
+        assert_eq!(guest_load_in(&d, &here), marked(10), "an empty map never wipes a kept one");
+        let file = d.join("guest-maps").join(format!("{:016x}.alz", here.seed));
+        let mut bytes = fs::read(&file).unwrap();
+        bytes[8] ^= 1;
+        fs::write(&file, bytes).unwrap();
+        assert!(guest_load_in(&d, &here).is_empty());
         let _ = fs::remove_dir_all(&d);
     }
 }

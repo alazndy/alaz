@@ -1671,13 +1671,13 @@ impl App {
             return;
         }
         self.cave_map.observe(&self.world, self.me);
-        match saveio::save(&self.world, self.me, self.cave_map.known()) {
+        match saveio::save(&self.world, self.me, self.cave_map.known(), &Default::default()) {
             Ok(outcome) => {
                 self.last_save_tick = self.world.tick;
                 match outcome {
                     saveio::SaveOutcome::WorldOnly(e) => {
-                        eprintln!("mağara haritası kaydedilemedi ({e})");
-                        self.say("Dünya kaydedildi. Mağara haritası kaydedilemedi.");
+                        eprintln!("harita kaydedilemedi ({e})");
+                        self.say("Dünya kaydedildi. Harita kaydedilemedi.");
                     }
                     saveio::SaveOutcome::Complete if announce => self.say("Kaydedildi."),
                     saveio::SaveOutcome::Complete => {}

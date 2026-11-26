@@ -84,7 +84,7 @@ mod tests {
 
         let dir =
             std::env::temp_dir().join(format!("alaz-exploration-reopen-{}", std::process::id()));
-        crate::saveio::save_in(&dir, &world, me, map.known()).unwrap();
+        crate::saveio::save_in(&dir, &world, me, map.known(), &Default::default()).unwrap();
         let restored = crate::saveio::load_in(&dir, me).unwrap().unwrap();
         assert_eq!(restored.world.hash(), world.hash());
         assert_eq!(CaveMap::from_known(restored.seen).known(), map.known());
